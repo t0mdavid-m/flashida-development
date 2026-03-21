@@ -1,0 +1,7 @@
+[submodule "FlashIDA"]
+	path = FlashIDA
+	url = git@github.com:t0mdavid-m/FlashIDA.git
+[submodule "OpenMS"]
+	path = OpenMS
+	url = git@github.com:t0mdavid-m/OpenMS.git
+	branch = FIdevelop
