@@ -554,57 +554,281 @@ for label, ces in results.items():
 
 ## Phased Migration
 
-### Phase 1: C++ Foundation (Build #1)
+**Guiding principles:**
+- The application must be a **working, testable product** after every phase.
+- No gradual coexistence of old and new code paths for the same responsibility. Each responsibility has an explicit **switch-over** point: old path is disabled and new path takes over in a single commit, protected by a feature flag that defaults to the old behavior until the switch is verified.
+- Issue 8 (JSON config) is the foundation — zero dependencies, zero risk, implemented first.
+- Issue 9 (OptimizationMetadata) is purely additive — implemented early for zero-risk value.
+- FAIMS absorption is the highest-risk migration step and gets its own isolated phase with dedicated testing.
+- Old bridge functions are removed as soon as their callers are deleted, not kept around as a "just in case" parallel API.
 
-ProcessScan stub, GetNextScanCommand with queue, JSON constructor, OptimizationMetadata, TRACK logging.
+---
 
-**C++:** `FLASHIda.h/.cpp`, `FLASHIdaBridgeFunctions.h/.cpp`, NEW `OptimizationMetadata.h`, `DeconvolvedSpectrum.h/.cpp`
-**C#:** `FLASHIdaWrapper.cs`, `Parameter.cs` (ToJSON), `ScanFactory.cs` (BuildFromCommand)
+### Phase 1: JSON Configuration (no C++ build required)
+
+**Goal:** Implement full JSON config serialization on the C# side. C++ auto-detects JSON vs. legacy format. This is Issue 8 and has zero dependencies.
+
+**What changes:**
+- C# `Parameter.cs` gains `ToJSON()` method that serializes the full `method.xml` content (ms_settings, scheduling, exploration, FAIMS, files) into JSON matching the schema in Issue 8.
+- C# `FLASHIdaWrapper.cs` calls `CreateFLASHIda` with the JSON string instead of the legacy space-delimited format.
+- C++ `FLASHIda.h/.cpp` constructor auto-detects: `if (arg[0] == '{') parseJSON(arg); else parseLegacy(arg);` — the legacy path is untouched.
+- C++ JSON parsing uses bundled `nlohmann_json`. New parameters (ms_settings, scheduling, faims, exploration) are parsed and stored but not yet acted upon.
+
+**Files modified:**
+- `Parameter.cs` — add `ToJSON()`, add `[Description]` attributes
+- `FLASHIdaWrapper.cs` — pass JSON to `CreateFLASHIda`
+- `FLASHIda.h/.cpp` — add JSON parsing branch, store new config fields
+- `FLASHIdaBridgeFunctions.cpp` — no change (constructor signature unchanged, string arg reinterpreted)
+- NEW `MethodConfig.cs` — typed C# model for JSON serialization
+
+**C++ build required:** Yes (Build #1-prep). Minimal change: JSON parsing in constructor only. All existing behavior untouched.
+
+**Working Product Verification:**
+1. `Flash.exe -t` runs successfully with JSON config — deconvolution results identical to legacy config.
+2. Unit test: round-trip `method.xml` → `ToJSON()` → C++ parse → verify all fields match.
+3. Legacy format still works (auto-detect fallback).
+
+**Scope:** S
+
+---
+
+### Phase 2: OptimizationMetadata (batched with Build #1)
+
+**Goal:** Add `OptimizationMetadata` struct to `DeconvolvedSpectrum`. This is Issue 9 — purely additive, zero overhead when disabled, no behavioral change.
+
+**What changes:**
+- NEW `OptimizationMetadata.h` — the struct definition.
+- `DeconvolvedSpectrum.h/.cpp` — add `std::optional<OptimizationMetadata> opt_metadata_` and accessors.
+- `DeconvolvedSpectrum::toSpectrum()` — serialize metadata fields via `setMetaValue()` when present.
+
+**Files modified:**
+- NEW `OptimizationMetadata.h`
+- `DeconvolvedSpectrum.h/.cpp`
+
+**C++ build required:** Yes (batched with Phase 1 into Build #1).
+
+**Working Product Verification:**
+1. `Flash.exe -t` runs successfully — no behavioral change since no code populates metadata yet.
+2. OpenMS unit test: create `DeconvolvedSpectrum`, set metadata, call `toSpectrum()`, verify `getMetaValue()` returns correct values.
+3. Verify `hasOptimizationMetadata()` returns false for all spectra in normal operation (zero overhead confirmed).
+
+**Scope:** S
+
+---
+
+### Phase 3: ScanCommand Struct + Bridge Stubs (Build #1)
+
+**Goal:** Define `ScanCommand`/`IsolationStage` structs, implement `ProcessScan` stub and `GetNextScanCommand` with priority queue, implement `GetNextTrackingId`. These are the core of Issues 1, 2, 3. Old bridge functions remain active and are still called by C#. New functions exist in parallel but are only called for **shadow validation** (C# calls both old and new, logs discrepancies, trusts old results).
+
+**What changes:**
+- C++ `FLASHIda.h` — add `ScanCommand`, `IsolationStage` structs, priority queue (`std::deque<ScanCommand> queues_[4]`), `queue_mutex_`, tracking ID counter, `pending_scan_map_`.
+- C++ `FLASHIdaBridgeFunctions.h/.cpp` — export `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId`. `ProcessScan` is a **stub**: it deconvolves and scores (reusing existing internal logic) but does NOT push commands to the queue yet. It returns 0.
+- C++ `GetNextScanCommand` — implements the full priority dequeue logic (AGC-first, cycle time, timeout cleanup, priority 3→0, empty→MS1) but queue is always empty because `ProcessScan` does not push yet.
+- C# `FLASHIdaWrapper.cs` — add P/Invoke declarations for the 3 new functions alongside the existing 18. Add `ScanCommand` struct with `[StructLayout(LayoutKind.Sequential)]`.
+- C# `ScanFactory.cs` — add `BuildFromCommand(ScanCommand cmd)` that translates `ScanCommand` → `IFusionCustomScan`.
+- C# shadow validation: after each old-path `ProcessMS1`/`ProcessMS2`, also call `ProcessScan` and log TRACK audit entries. No behavioral change.
+
+**Files modified:**
+- `FLASHIda.h/.cpp` — structs, queue, tracking, ProcessScan stub, GetNextScanCommand
+- `FLASHIdaBridgeFunctions.h/.cpp` — 3 new exports
+- `FLASHIdaWrapper.cs` — 3 new P/Invoke declarations, `ScanCommand` struct
+- `ScanFactory.cs` — `BuildFromCommand` method
+
+**C++ build required:** Yes (Build #1, batched with Phases 1 + 2).
+
+**Working Product Verification:**
+1. `Flash.exe -t` runs successfully — all existing behavior unchanged. Shadow calls to `ProcessScan` produce TRACK log entries.
+2. Verify `ScanCommand` struct marshaling: C# writes known values → C++ reads them back → values match (alignment/packing test).
+3. Verify `GetNextScanCommand` returns MS1 (queue is empty, so it always falls through to empty→MS1).
+4. Verify tracking ID generation: sequential base-36 IDs, no collisions across 10,000 calls.
+
 **Scope:** L
 
-### Phase 2: C# Simplification (no C++ build)
+---
 
-UnifiedScanProcessor, simplified DataPipe, feature-flagged.
+### Phase 4: ProcessScan Full Routing — The Switch-Over (Build #2)
 
-**C#:** NEW `UnifiedScanProcessor.cs`, `IScanProcessor.cs`, `DataPipe.cs`, `Flash.cs`, `MethodConfig.cs`
+**Goal:** `ProcessScan` handles all MS1 and MS2 modes: standard DDA, deep/inclusion/exclusion, tag-based targeting, conditional MS2 follow-ups, isobaric quant (`isDifferentiallyAbundant`), and all 4 MS3 trigger modes. Scoring (Issue 5) is integrated. This completes Issues 1 and 5. After verification, the **switch-over** happens: C# stops calling old bridge functions and starts trusting `ProcessScan` + `GetNextScanCommand` for scan decisions.
+
+**What changes:**
+- C++ `FLASHIda.cpp` — full `processScan()` implementation as described in Issue 5 pseudocode. MS1 path: deconvolve → score/sort (all 6 branches) → filter (mass exclusion, targeting, thresholds) → select top N → push MS2 commands. MS2 path: resolve from `pending_scan_map_` → deconvolve → route by mode (tag targeting, quant, conditional follow-up) → MS3 targeting.
+- C++ `FLASHIda.cpp` — `pushCommand_()` populates queue with priority. MS3 commands get priority 3, conditional follow-ups get priority 2, standard MS2 gets priority 1, exploration gets priority 0.
+- C# scan processors — **switch-over commit**: replace the multi-step bridge call sequences (`GetPeakGroupSize` → `GetIsolationWindows` for MS1; `DeconvolveMS2` → `ProcessMS2ForTagBasedTargeting` → `GetBestMS2Masses` → `ClearMS2Deconvolution` for MS2) with single `ProcessScan` + `GetNextScanCommand` loop. Old bridge functions are still exported but no longer called.
+- C# `Flash.cs` — `ProcessSpectrum` callback now calls `GetNextScanCommand` in a loop (up to N commands per scan event) instead of relying on `OutputMS` → `ScanScheduler`.
+- **Feature flag**: `method.xml` gains `<UseUnifiedBridge>True</UseUnifiedBridge>`. Defaults to `False`. Set to `True` to activate the switch-over. This allows reverting to old behavior if issues arise during testing.
+
+**Critical: modes that must work after switch-over:**
+- Standard DDA (MS1 deconvolution → top-N MS2)
+- Deep mode / inclusion list / exclusion list
+- Tag-based targeting (MS2 deconvolution → conditional MS2)
+- Conditional MS2 follow-ups (IsConditional AND IsMS3Trigger simultaneously)
+- Isobaric quant filtering (`isDifferentiallyAbundant`)
+- MS3 in all 4 modes (Source CID, SPS, HCD-triggered, EThcD-triggered)
+
+**Files modified:**
+- `FLASHIda.h/.cpp` — full processScan routing, pushCommand, all mode handling
+- `FLASHIdaBridgeFunctions.cpp` — ProcessScan now returns actual command count
+- `IScanProcessor.cs` — existing processors updated to call ProcessScan
+- `Flash.cs` — ProcessSpectrum uses GetNextScanCommand loop
+- `method.xml` — add `UseUnifiedBridge` flag
+
+**C++ build required:** Yes (Build #2).
+
+**Working Product Verification:**
+1. `Flash.exe -t` with `UseUnifiedBridge=False` — identical to Phase 3 behavior (regression check).
+2. `Flash.exe -t` with `UseUnifiedBridge=True` — standard DDA produces same deconvolution results and same scan commands (compare log output line-by-line).
+3. Test each mode individually with `UseUnifiedBridge=True`: deep mode, inclusion list, exclusion list, tag targeting, conditional MS2, quant, MS3 (all 4 sub-modes).
+4. Verify TRACK audit trail: every pushed command has `[TRACK-CREATE]`, every resolved scan has `[TRACK-RESOLVE]`, stale entries get `[TRACK-EXPIRE]`.
+5. Verify the race condition fix: `ProcessScan` returns atomic command count, no `GetPeakGroupSize` → `GetIsolationWindows` size mismatch possible.
+
+**Scope:** XL
+
+---
+
+### Phase 5: C# Simplification (no C++ build)
+
+**Goal:** With `ProcessScan` + `GetNextScanCommand` handling all scan logic, simplify the C# architecture. This is Issue 6. `UnifiedScanProcessor` replaces the 3 existing processors. DataPipe collapses to 2 stages. `OutputMS` and null sentinel pattern removed.
+
+**Prerequisite:** Phase 4 switch-over verified with `UseUnifiedBridge=True` for all modes.
+
+**What changes:**
+- NEW `UnifiedScanProcessor.cs` — single `ProcessMS(IMsScan)` that extracts centroids, calls `ProcessScan`, done. No scan decision logic.
+- `IScanProcessor.cs` — interface simplified to `void ProcessMS(IMsScan)` (OutputMS removed).
+- `DataPipe.cs` — collapse to `BufferBlock<IMsScan>` → `ActionBlock<IMsScan>`. Remove `TransformManyBlock` stage and `OutputMS` linking.
+- `Flash.cs` — `ProcessSpectrum` calls `dataPipe.Push(msScan)` then `GetNextScanCommand` loop (already done in Phase 4). Remove processor-type selection logic.
+- DELETE `QuantScanProcessor.cs` — quant filtering now in C++ `processScan`.
+- **ScanScheduler.cs remains** — it is still needed for FAIMS CV cycling until Phase 6.
+- Remove `UseUnifiedBridge` feature flag — the unified path is now the only path.
+
+**Files modified:**
+- NEW `UnifiedScanProcessor.cs`
+- `IScanProcessor.cs` — simplified interface
+- `DataPipe.cs` — 2-stage pipeline
+- `Flash.cs` — processor selection removed
+- DELETE `QuantScanProcessor.cs`
+
+**C++ build required:** No.
+
+**Working Product Verification:**
+1. `Flash.exe -t` runs with `UnifiedScanProcessor` — all modes produce identical results to Phase 4.
+2. Verify DataPipe correctly propagates completion (sentinel handling replaced by `ActionBlock` completion).
+3. Verify FAIMS mode still works — `ScanScheduler` still active for CV cycling, `FAIMSScanProcessor` still active (but now delegates to `UnifiedScanProcessor` internally for the ProcessScan call).
+4. Code coverage: confirm `QuantScanProcessor` is fully dead (no references remain).
+
 **Scope:** M
 
-### Phase 3: Wire All Modes + Eliminate Quant (batched with Build #1)
+---
 
-ProcessScan handles all MS1+MS2 modes. QuantScanProcessor deleted.
+### Phase 6: FAIMS Absorption — Highest Risk (Build #3)
 
-**C++:** `FLASHIda.cpp` full routing
-**C#:** Delete `QuantScanProcessor.cs`
+**Goal:** Port FAIMS CV cycling logic to C++. This is the completion of Issue 3 (C++ owns the full scan queue including CV state). `FAIMSScanProcessor` and `ScanScheduler` are deleted. This is the highest-risk phase because the adaptive CV skipping logic (`updateCV` with precursor count thresholds) must be exactly replicated.
+
+**What changes:**
+- C++ `FLASHIda.h/.cpp` — FAIMS CV state machine:
+  - `faims_cv_values_` array from JSON config.
+  - `current_cv_index_` tracking.
+  - `updateCV_()` — adaptive CV skipping: if precursor count for current CV < threshold AND `max_cv_skip` not exceeded, skip to next CV. Otherwise cycle normally.
+  - `GetNextScanCommand` injects CV value into every `ScanCommand.faims_cv` field.
+  - CV cycling happens at the queue level: when `GetNextScanCommand` detects a CV transition, it returns an MS1 scan with the new CV before dequeuing any pending MS2s.
+- C# `Flash.cs` — `ProcessSpectrum` no longer consults `ScanScheduler` for CV state. The CV is embedded in every `ScanCommand`.
+- **Switch-over**: `ScanScheduler` calls are removed in a single commit. `GetNextScanCommand` is now the sole source of scan commands including CV management.
+
+**Critical behaviors that must be preserved:**
+- Adaptive CV skipping (`updateCV` precursor count threshold logic).
+- `FAIMSScanProcessor.ProcessMS` currently calls `scanScheduler.AddScan()` directly inside ProcessMS (bypasses OutputMS) — this pattern is absorbed into C++ `pushCommand_()`.
+- CV cycling order and skip limits from `method.xml` / JSON config.
+
+**Files modified:**
+- `FLASHIda.h/.cpp` — FAIMS CV state machine, updateCV logic
+- `FLASHIdaBridgeFunctions.cpp` — no API change
+- `Flash.cs` — remove ScanScheduler usage
+- DELETE `FAIMSScanProcessor.cs`
+- DELETE `ScanScheduler.cs`
+
+**C++ build required:** Yes (Build #3).
+
+**Working Product Verification:**
+1. `Flash.exe -t` without FAIMS config — all non-FAIMS modes unchanged (regression).
+2. `Flash.exe -t` with FAIMS config (3 CVs) — CV cycling order matches old behavior exactly. Log CV transitions and compare.
+3. Test adaptive CV skipping: configure low precursor threshold, verify CVs are skipped when precursor count is below threshold and `max_cv_skip` is not exceeded.
+4. Test CV skip limit: verify that after `max_cv_skip` consecutive skips, the CV is forced even with low precursor count.
+5. Verify `ScanScheduler.cs` has zero remaining references in codebase before deletion.
+6. Stress test: rapid scan events during CV transition — verify no race between `ProcessScan` (which may push commands for old CV) and `GetNextScanCommand` (which manages CV transitions) under `queue_mutex_`.
+
 **Scope:** L
 
-### Phase 4: FAIMS Absorption (Build #2, highest risk)
+---
 
-FAIMS CV cycling in C++. FAIMSScanProcessor eliminated. ScanScheduler deleted.
+### Phase 7: Exploration Engine (Build #4)
 
-**C++:** `FLASHIda.h/.cpp` — CV state machine
-**C#:** Delete `FAIMSScanProcessor.cs`, `ScanScheduler.cs`
-**Scope:** M
+**Goal:** Implement MSn-generalized parameter exploration. This is Issue 4 — entirely new functionality with no existing code to migrate. C++ manages exploration groups, variant tracking, scoring, and MS1 cycle time suppression during exploration.
 
-### Phase 5: Exploration Engine (batched with Build #2)
+**What changes:**
+- C++ `FLASHIda.h/.cpp` — `ExplorationGroup` and `ExplorationVariant` structs. `processScan` MS2 routing gains exploration branch: when `ctx.exploration_group_id > 0`, feed result to `feedExplorationResult_()` which scores the variant and potentially triggers next variant or declares winner.
+- C++ `FLASHIda.cpp` — exploration initiation: when exploration is enabled and a high-scoring precursor is found, create `ExplorationGroup` with CE variants, push variant scans at priority 0.
+- C++ `FLASHIda.cpp` — MS1 cycle time suppression: while any `ExplorationGroup` is active, cycle time enforcement is paused to avoid interrupting exploration.
+- C++ `FLASHIda.cpp` — MS3 exploration: when `MS3Exploration.Enabled`, after MS2 winner is found, create child exploration group for MS3 CE variants on top fragments.
+- `OptimizationMetadata` — populated by exploration engine when a variant completes.
 
-MSn-generalized parameter optimization.
+**Files modified:**
+- `FLASHIda.h/.cpp` — ExplorationGroup, ExplorationVariant, feedExplorationResult, exploration initiation, MS1 suppression, MS3 exploration
 
-**C++:** `FLASHIda.h/.cpp` — ExplorationGroup, variant tracking, scoring
+**C++ build required:** Yes (Build #4).
+
+**Working Product Verification:**
+1. `Flash.exe -t` with exploration disabled — identical to Phase 6 (regression).
+2. `Flash.exe -t` with exploration enabled, MS2 CE optimization (20-40, step 5) — verify 5 variant scans pushed per selected precursor.
+3. Verify exploration convergence: after all variants return, winner is selected by `FragmentationQuality` score, winner's CE is used for subsequent scans of same precursor.
+4. Verify queue overflow protection: with `MaxQueueForExploration=50`, exploration is suppressed when queue exceeds threshold.
+5. Verify MS1 cycle time suppression: during active exploration, MS1 is not injected by cycle time even if deadline passes. Resumes after exploration completes.
+6. Verify `OptimizationMetadata` is populated on exploration spectra and serialized to mzML.
+7. If MS3 exploration enabled: verify recursive group creation (MS2 winner → MS3 variants on top 3 fragments = up to 15 scans, not 75).
+
 **Scope:** L
 
-### Phase 6: Cleanup (Build #3)
+---
 
-Remove 12+ old bridge exports, dead C# code. NEW `MethodDocGenerator.cs`.
+### Phase 8: Cleanup + Documentation (Build #4)
+
+**Goal:** Remove all old bridge function exports, dead C# code, and legacy config path. This is the completion of Issue 7. After this phase, only 5 bridge functions exist.
+
+**What changes:**
+- C++ `FLASHIdaBridgeFunctions.h/.cpp` — remove 13 old exports: `GetPeakGroupSize`, `GetIsolationWindows`, `DeconvolveMS2`, `ProcessMS2ForTagBasedTargeting`, `GetBestMS2Masses`, `ClearMS2Deconvolution`, `GetRepresentativeMass`, `GetAllMonoisotopicMasses`, `RemoveFromExclusionList`, and remaining legacy functions. Only 5 remain: `CreateFLASHIda`, `DisposeFLASHIda`, `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId`.
+- C++ `FLASHIda.h/.cpp` — remove internal methods that were only called by old bridge functions (if any remain).
+- C++ `FLASHIda.cpp` — remove legacy config parsing branch (`parseLegacy`). JSON is the only format.
+- C# `FLASHIdaWrapper.cs` — remove 13 old P/Invoke declarations.
+- C# `Parameter.cs` — remove `ToFLASHDeconvInput()` (legacy serializer).
+- NEW `MethodDocGenerator.cs` — reflection utility that generates documentation from `[Description]` attributes on `Parameter.cs` / `MethodConfig.cs`.
+
+**Files modified:**
+- `FLASHIdaBridgeFunctions.h/.cpp` — remove 13 exports
+- `FLASHIda.h/.cpp` — remove legacy internal methods, remove parseLegacy
+- `FLASHIdaWrapper.cs` — remove 13 old P/Invoke declarations
+- `Parameter.cs` — remove `ToFLASHDeconvInput()`
+- NEW `MethodDocGenerator.cs`
+
+**C++ build required:** Yes (batched with Phase 7 into Build #4).
+
+**Working Product Verification:**
+1. `Flash.exe -t` runs successfully — final form of the application.
+2. Verify only 5 exported symbols in `OpenMS.dll` bridge (use `dumpbin /exports` on Windows).
+3. Verify no C# code references any removed bridge function (compile succeeds with zero warnings).
+4. Verify `MethodDocGenerator` produces correct output from `[Description]` attributes.
+5. Full regression test: run `Flash.exe -t` with every configuration variant (standard DDA, deep, inclusion, exclusion, tag targeting, conditional MS2, quant, MS3 all modes, FAIMS, exploration) and compare output to Phase 7 baseline.
 
 **Scope:** M
+
+---
 
 ### Build Batching
 
-| Build | Phases |
-|-------|--------|
-| Build 1 | Phase 1 + 3 |
-| Build 2 | Phase 4 + 5 |
-| Build 3 | Phase 6 |
+| Build | Phases | What ships | Key risk |
+|-------|--------|------------|----------|
+| Build #1 | Phases 1 + 2 + 3 | JSON config, OptimizationMetadata, ScanCommand struct, ProcessScan stub, shadow validation | Low — no behavioral change, old path still active |
+| Build #2 | Phase 4 | Full ProcessScan routing, switch-over from old bridge calls | **High** — all modes must work through new path |
+| (no build) | Phase 5 | C# simplification, UnifiedScanProcessor | Low — C#-only refactor, ProcessScan already proven |
+| Build #3 | Phase 6 | FAIMS CV cycling in C++, ScanScheduler deleted | **High** — adaptive CV logic must be exact |
+| Build #4 | Phases 7 + 8 | Exploration engine, old bridge cleanup | Medium — new functionality + dead code removal |
 
 ---
 
@@ -618,5 +842,5 @@ Remove 12+ old bridge exports, dead C# code. NEW `MethodDocGenerator.cs`.
 6. **OptimizationMetadata on DeconvolvedSpectrum**, serialized via `setMetaValue`.
 7. **TRACK-CREATE/RESOLVE/EXPIRE** audit trail.
 8. **Thread safety:** `queue_mutex_` protects ProcessScan (TPL) + GetNextScanCommand (instrument).
-9. **Old bridge functions survive through Phase 5.**
-10. **ScanScheduler eliminated** in Phase 4.
+9. **Old bridge functions survive through Phase 4**, removed in Phase 8.
+10. **ScanScheduler eliminated** in Phase 6 (FAIMS absorption).
