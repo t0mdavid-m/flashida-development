@@ -56,17 +56,17 @@ jobs:
           submodules: recursive
 
       # --- Restore Thermo iAPI DLLs (proprietary, encrypted in repo) ---
-      # Strategy B: GPG-encrypted zip committed to repo, passphrase in secret.
+      # Strategy B: openssl-encrypted zip committed to repo, passphrase in secret.
       # See testing-strategy.md Section 3.3 for setup instructions.
       - name: Restore Thermo iAPI DLLs
         shell: bash
         env:
           THERMO_DLL_PASSPHRASE: ${{ secrets.THERMO_DLL_PASSPHRASE }}
         run: |
-          gpg --quiet --batch --yes --decrypt \
-            --passphrase="$THERMO_DLL_PASSPHRASE" \
-            --output thermo-dlls.zip \
-            FlashIDA/dependencies/thermo-dlls.zip.gpg
+          openssl enc -aes-256-cbc -d -pbkdf2 \
+            -in FlashIDA/dependencies/thermo-dlls.zip.enc \
+            -out thermo-dlls.zip \
+            -pass pass:"$THERMO_DLL_PASSPHRASE"
           unzip -o thermo-dlls.zip -d FlashIDA/dependencies/
           rm thermo-dlls.zip
           echo "Restored Thermo DLLs:"
