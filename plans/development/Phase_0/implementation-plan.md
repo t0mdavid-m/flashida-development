@@ -7,6 +7,7 @@
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 0 section and CI Environment Requirements
 - [../baseline-plan.md](../baseline-plan.md) — architecture context and design invariants
 - [../testing-strategy.md](../testing-strategy.md) — Phase 0 test plan, initial setup, and CI infrastructure
+- [../test-file-specification.md](../test-file-specification.md) — authoritative format reference for all test files (spectra, golden files, config files, and test infrastructure scripts)
 
 ---
 
@@ -32,17 +33,13 @@ Phase 0 is the starting point. There are no phase-level code prerequisites. Howe
    ```
    Or if already cloned: `git submodule update --init --recursive`
 
-2. **Thermo iAPI DLLs available locally.** The five assemblies (`API-2.0.dll`, `Fusion.API-1.0.dll`, `Spectrum-1.0.dll`, `Thermo.TNG.Factory.dll`, `Thermo.TNG.Client.API.dll`) must be present in `FlashIDA/dependencies/`. MSBuild cannot compile `Flash.sln` without them. See [../testing-strategy.md Section 3.3](../testing-strategy.md#33-handling-proprietary-dlls) for procurement instructions.
+2. **Thermo iAPI DLLs uploaded to GitHub secrets.** The five assemblies (`API-2.0.dll`, `Fusion.API-1.0.dll`, `Spectrum-1.0.dll`, `Thermo.TNG.Factory.dll`, `Thermo.TNG.Client.API.dll`) must be uploaded to GitHub secrets (Strategy A: base64 or Strategy B: encrypted archive). The CI `windows-tests` runner restores them automatically; no local copy is required. See [../testing-strategy.md Section 3.3](../testing-strategy.md#33-handling-proprietary-dlls) for procurement instructions.
 
-3. **OpenMS DLLs available locally.** Pre-built `OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll` must be in `FlashIDA/dll/`. Download from the latest `build-openms-dll.yml` CI artifact, or build locally (30-60 min). See [../testing-strategy.md Section 0.5](../testing-strategy.md#05-openms-dll-procurement).
+3. **OpenMS DLLs available as a CI artifact.** Pre-built `OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll` are available as a CI artifact from `build-openms-dll.yml`. The CI runner downloads and caches them; no local copy is required. See [../testing-strategy.md Section 0.5](../testing-strategy.md#05-openms-dll-procurement).
 
 4. **CI environment.** The CI environment (`windows-latest` GitHub Actions runner) provides MSBuild, NuGet, .NET 4.8, and Python. No local Windows machine is required.
 
-5. **Existing solution builds cleanly.** Before creating any new files, verify the baseline:
-   ```powershell
-   msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU"
-   ```
-   This must exit with code 0. Resolve any pre-existing build errors before proceeding.
+5. **Existing solution builds cleanly in CI.** Push the branch and verify the `windows-tests` job MSBuild step exits code 0 before proceeding.
 
 6. **GitHub repository secrets configured** (for CI). One of the two strategies from [../testing-strategy.md Section 3.3](../testing-strategy.md#33-handling-proprietary-dlls) must be set up:
    - Strategy A: `THERMO_IAPI_DLLS_BASE64` secret (preferred for DLLs < GitHub secret size limit)
@@ -50,29 +47,39 @@ Phase 0 is the starting point. There are no phase-level code prerequisites. Howe
 
 ---
 
+## User-Provided Inputs Checklist
+
+- [ ] **Source .mzML file** for extracting `ms1_smoke_test.txt` — any top-down proteomics experiment; `prepare-test-data.py` handles conversion (see test-file-specification.md §1.1)
+- [ ] **Thermo iAPI DLLs** (5 files: API-2.0.dll, Fusion.API-1.0.dll, Spectrum-1.0.dll, Thermo.TNG.Factory.dll, Thermo.TNG.Client.API.dll) — obtain from Thermo Scientific or an instrument control installation; upload to GitHub as a repository secret
+- [ ] **GitHub repository** with Actions enabled and the chosen DLL secret configured (`THERMO_IAPI_DLLS_BASE64` or `THERMO_DLL_PASSPHRASE`)
+- [ ] **Python 3.8+** with `pyopenms` installed for running `prepare-test-data.py`
+- [ ] **OpenMS DLLs** — trigger `build-openms-dll.yml` on the `flashida-v9-bridge` branch to produce the initial artifact, or download from an existing workflow run
+- Note: Later phases require additional data files — see `environment-and-workflows.md` §7 for the full cross-phase inventory.
+
+---
+
 ## Detailed Implementation Steps
 
 ### Step 1 — Verify Existing Build
 
-Before creating any files, confirm the current solution builds and runs.
+Build verification is performed by CI. The first push of Phase 0 files triggers the `windows-tests` job, which runs MSBuild as its first step. If MSBuild fails, the job log shows the error. No local Windows machine is needed.
 
-1.1. Run MSBuild on the existing solution:
+The following describes what CI does automatically:
+
+1.1. CI runs MSBuild on the existing solution:
 ```powershell
 msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU"
 ```
 Expected: exit code 0, `Flash.exe` present at `FlashIDA/src/Flash/bin/Debug/Flash.exe`.
 
-1.2. Copy OpenMS DLLs to the build output directory so `Flash.exe` can load them at runtime:
+1.2. CI copies OpenMS DLLs to the build output directory so `Flash.exe` can load them at runtime:
 ```powershell
 Copy-Item FlashIDA\dll\*.dll FlashIDA\src\Flash\bin\Debug\
 ```
 
-1.3. Verify `Flash.exe` exists:
-```powershell
-Test-Path FlashIDA\src\Flash\bin\Debug\Flash.exe
-```
+1.3. CI verifies `Flash.exe` exists in the build output — this is confirmed by test P0-U02.
 
-If either step fails, do not proceed until the issue is resolved. Record any pre-existing build warnings — they are part of the baseline.
+If MSBuild fails, do not proceed until the CI log error is resolved. Record any pre-existing build warnings visible in the CI log — they are part of the baseline.
 
 ---
 
@@ -130,7 +137,7 @@ FlashIDA/src/Flash.Tests/
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Flash\Flash.csproj">
-      <Project>{REPLACE-WITH-FLASH-PROJECT-GUID}</Project>
+      <Project>{9AED9425-D1FE-4E82-B658-BF3D8A27709A}</Project>
       <Name>Flash</Name>
     </ProjectReference>
   </ItemGroup>
@@ -146,7 +153,7 @@ FlashIDA/src/Flash.Tests/
 
 Notes on this file:
 - Replace `{REPLACE-WITH-NEW-GUID}` with a freshly generated GUID (use `[System.Guid]::NewGuid()` in PowerShell).
-- Replace `{REPLACE-WITH-FLASH-PROJECT-GUID}` with the GUID from `Flash.csproj` (search for `<ProjectGuid>` in that file).
+- The GUID `{9AED9425-D1FE-4E82-B658-BF3D8A27709A}` is the known ProjectGuid from Flash.csproj. Verify it matches before committing.
 - The NuGet package versions (`NUnit.3.13.3`, `NUnit3TestAdapter.4.3.1`) should match what is restored by the solution; adjust if the repo uses different versions.
 
 2.3. Create `FlashIDA/src/Flash.Tests/packages.config`:
@@ -429,19 +436,27 @@ FlashIDA/test-data/
 
 4.2. Create `FlashIDA/test-data/spectra/ms1_smoke_test.txt`.
 
-This file must contain a real MS1 scan extracted from an existing top-down `.mzML` file using `prepare-test-data.py` (see [../testing-strategy.md Section 8.6](../testing-strategy.md#86-data-preparation-script)). Do NOT construct peaks synthetically.
+This file must contain a real MS1 scan extracted from an existing top-down `.mzML` file using `prepare-test-data.py` (see [../test-file-specification.md Section 4.3](../test-file-specification.md#43-prepare-test-datapy)). Do NOT construct peaks synthetically.
 
-**Requirements for the extracted scan:**
-- Format: one header line (`Spec scan=N rt=R.RRRR`) followed by tab-delimited (m/z, intensity) pairs, one per line.
+See [../test-file-specification.md Section 1.1](../test-file-specification.md#11-ms1_smoke_testtxt) for exact format requirements, including the precise header syntax, decimal-place conventions, encoding, line endings, and blank-line rules.
+
+**Requirements for the extracted scan (summary):**
 - Must contain at least one charge envelope resolvable by FLASHDeconv (i.e., real measured isotope patterns from a top-down experiment).
-- 10–200 peaks (small enough for a fast smoke test).
+- 10–200 peaks (small enough for a fast smoke test, targeting < 20 KB on disk).
 - Must produce at least 1 row of output when run through `Flash.exe -t`.
+
+**Extraction command:**
+```bash
+python FlashIDA/test-scripts/prepare-test-data.py source.mzML \
+    FlashIDA/test-data/spectra/ms1_smoke_test.txt \
+    --scan-index 0 --max-scans 1
+```
 
 **Note:** `ms1_smoke_test.txt` must be committed with real data **before** the CI golden capture step (Step 6) can produce a valid baseline. See Step 6 for the ordering of commits.
 
 Acceptance criterion: `Flash.exe -t ms1_smoke_test.txt output.tsv method_default.xml` must produce at least one row in `output.tsv`.
 
-4.3. Inspect the existing `FlashIDA/src/Flash/etc/method.xml` file to understand the current method configuration format. Then create `FlashIDA/test-data/configs/method_default.xml` as a copy of the existing `method.xml` with standard DDA settings (the simplest operating mode, no FAIMS, no exploration, no inclusion/exclusion lists). This file will be used for all Phase 0 tests and as the regression anchor.
+4.3. Inspect the existing `FlashIDA/src/Flash/etc/method.xml` file to understand the current method configuration format. Then create `FlashIDA/test-data/configs/method_default.xml` as a copy of the existing `method.xml` with standard DDA settings (the simplest operating mode, no FAIMS, no exploration, no inclusion/exclusion lists). This file will be used for all Phase 0 tests and as the regression anchor. See [../test-file-specification.md Section 3](../test-file-specification.md#3-configuration-files-method-xmls--jsons) for the config file format specification and inventory.
 
 If `method.xml` already contains the correct defaults for standard DDA, simply copy it to the test data directory:
 ```powershell
@@ -471,7 +486,7 @@ When an intentional behavioral change is made (e.g., a scoring change
 in Phase 4), update golden files as follows:
 
 1. Trigger CI on the branch containing the code change.
-2. When the `csharp-tests` job completes, download the `regression-output`
+2. When the `windows-tests` job completes, download the `regression-output`
    artifact from the Actions UI.
 3. Inspect the diffs between the artifact output and the current golden files.
 4. If the diffs are expected, copy the updated files to `test-data/golden/`
@@ -520,11 +535,14 @@ The golden baseline is captured through CI, not by running `Flash.exe` locally. 
 - `FlashIDA/test-scripts/compare_golden.py` and `regression-runner.ps1`
 - `.github/workflows/flashida-ci.yml`
 
-6.2. The pushed commit triggers CI. The `csharp-tests` job builds the solution, runs `Flash.exe -t`, and uploads the output as a `golden-capture` artifact.
+6.2. The pushed commit triggers CI. The `windows-tests` job builds the solution, runs `Flash.exe -t`, and uploads the output as a `golden-capture` artifact.
 
-6.3. In the GitHub Actions UI, navigate to the completed `csharp-tests` run and download the `golden-capture` artifact. Inspect the TSV output:
+6.3. In the GitHub Actions UI, navigate to the completed `windows-tests` run and download the `golden-capture` artifact. Inspect the TSV output:
 - The file must contain a header row and at least one data row.
 - All expected columns must be present (`rt`, `mz1`, `mz2`, `qScore`, `charges`, `monoMasses`, `ccos`, `csnr`, `cos`, `snr`, `cScore`, `ppm`, `precursorIntensity`, `massIntensity`, `hcd`).
+- Verify float values are in plausible ranges for the given experiment.
+
+See [../test-file-specification.md Section 2.1](../test-file-specification.md#21-golden-file-format) for the full golden file format specification (TSV encoding, BOM, line endings, column types, and no-trailing-tab rule) and Section 2.3 for the complete capture procedure.
 
 If the output is empty or missing expected columns, the input spectrum (Step 4.2) does not satisfy the requirements. Replace it with a scan that yields at least one deconvolution result and repeat from 6.1.
 
@@ -538,15 +556,17 @@ If the output is empty or missing expected columns, the input spectrum (Step 4.2
 
 Create the Python script used by CI to compare TSV outputs against golden files. This script is used by all regression tests from Phase 0 onward.
 
-7.1. Create `FlashIDA/test-scripts/compare_golden.py` with the content specified in [../testing-strategy.md Section 6.2](../testing-strategy.md#62-comparison-logic). The script takes two positional arguments (golden file path, actual file path) and exits with code 1 on mismatch.
+7.1. Create `FlashIDA/test-scripts/compare_golden.py`. The script takes two positional arguments (golden file path, actual file path) and exits with code 1 on mismatch.
 
-Key comparison rules (from the testing strategy):
+See [../test-file-specification.md Section 4.1](../test-file-specification.md#41-compare_goldenpy) for the authoritative specification: usage, tolerance values, failure conditions, comparison algorithm, and line-ending normalization behavior.
+
+Key comparison rules (summary):
 - Row count must match exactly.
 - String columns (e.g., `charges`): exact match.
-- Float columns (`rt`, `mz1`, `mz2`, `qScore`, `monoMasses`, `ccos`, `csnr`, `cos`, `snr`, `cScore`, `ppm`, `precursorIntensity`, `massIntensity`): absolute tolerance 1e-6, or relative tolerance 1e-4 for values > 1.0.
+- Float columns (`rt`, `mz1`, `mz2`, `qScore`, `monoMasses`, `ccos`, `csnr`, `cos`, `snr`, `cScore`, `ppm`, `precursorIntensity`, `massIntensity`): absolute tolerance 1e-6 if |value| ≤ 1.0; relative tolerance 1e-4 if |value| > 1.0.
 - Integer columns (`hcd`): exact match.
 
-7.2. Create `FlashIDA/test-scripts/regression-runner.ps1` that runs `Flash.exe -t` for each configured (spectrum, method) pair and calls `compare_golden.py`. For Phase 0, only the smoke test configuration is included; subsequent phases add entries to this script.
+7.2. Create `FlashIDA/test-scripts/regression-runner.ps1` that runs `Flash.exe -t` for each configured (spectrum, method) pair and calls `compare_golden.py`. For Phase 0, only the smoke test configuration is included; subsequent phases add entries to this script. See [../test-file-specification.md Section 4.2](../test-file-specification.md#42-regression-runnerps1) for the full specification of parameters, invocation format, config array structure, and exit behavior as the script grows across phases.
 
 ```powershell
 # regression-runner.ps1
@@ -633,13 +653,25 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Restore CMake cache
+      - name: Get OpenMS submodule commit hash
+        id: openms-hash
+        shell: bash
+        run: echo "hash=$(git -C OpenMS rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Restore ccache
         uses: actions/cache@v4
         with:
-          path: OpenMS/build
-          key: cmake-${{ runner.os }}-${{ hashFiles('OpenMS/CMakeLists.txt') }}
+          path: ~/.ccache
+          key: ccache-ubuntu-${{ steps.openms-hash.outputs.hash }}-${{ hashFiles('OpenMS/CMakeLists.txt') }}
+          restore-keys: |
+            ccache-ubuntu-${{ steps.openms-hash.outputs.hash }}-
+            ccache-ubuntu-
+      # ccache caches compiled object files keyed by source hash.
+      # This is NOT a CMake build directory cache — it is much more reliable.
 
       - name: Build C++ test binaries only
+        env:
+          CCACHE_DIR: ~/.ccache
         run: |
           cmake -S OpenMS -B OpenMS/build -DCMAKE_BUILD_TYPE=Release
           cmake --build OpenMS/build --target FLASHIda_test --config Release
@@ -648,10 +680,10 @@ jobs:
         run: ctest --test-dir OpenMS/build -R FLASH --output-on-failure
 
   # ----------------------------------------------------------------
-  # C# unit tests + regression — windows-latest.
+  # C# unit tests + regression + bridge verification — windows-latest.
   # Requires Thermo DLLs (build only) + OpenMS DLLs (runtime).
   # ----------------------------------------------------------------
-  csharp-tests:
+  windows-tests:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -679,6 +711,8 @@ jobs:
         shell: bash
         run: echo "hash=$(git -C OpenMS rev-parse HEAD)" >> $GITHUB_OUTPUT
 
+      # DLL caching: this job caches pre-built OpenMS DLLs (not source).
+      # Different from ccache in cpp-unit-tests. Cache key is the OpenMS submodule commit hash.
       - name: Restore cached OpenMS DLLs
         id: dll-cache
         uses: actions/cache@v4
@@ -776,31 +810,14 @@ jobs:
           name: regression-output
           path: FlashIDA/test-output/
 
-  # ----------------------------------------------------------------
-  # Bridge smoke tests (Tier 2) — windows-latest.
-  # Reuses build artifacts from csharp-tests job.
-  # Phase 0: only CreateFLASHIda/DisposeFLASHIda smoke tests.
-  # ----------------------------------------------------------------
-  bridge-tests:
-    runs-on: windows-latest
-    needs: [csharp-tests]
-    steps:
-      - uses: actions/checkout@v4
-
-      # The NUnit tests in BridgeSmokeTests.cs already exercise the bridge.
-      # The bridge test job re-runs only the Tier2-categorized tests.
+      # --- Bridge smoke tests (Tier 2) ---
+      # P0-I01 and P0-I02 are run as part of the NUnit step above.
+      # This step confirms the results file reports no failures for Tier2 tests.
       # In Phase 3+, dumpbin /exports verification is added here.
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: nunit-results
-
-      - name: Verify bridge smoke tests passed
+      - name: Verify bridge smoke tests
+        if: always()
         shell: powershell
         run: |
-          # P0-I01 and P0-I02 are run as part of the csharp-tests job above.
-          # This step confirms the artifact exists (tests ran) and the
-          # results file reports no failures for Tier2 tests.
           [xml]$results = Get-Content TestResults.xml
           $tier2Failures = $results.SelectNodes(
             "//test-case[@result='Failed'][contains(@categories,'Tier2')]")
@@ -811,17 +828,12 @@ jobs:
           }
           Write-Host "Bridge smoke tests passed."
 
-  # ----------------------------------------------------------------
-  # Stress tests (Tier 4) — windows-latest.
-  # Phase 0: no stress tests. Job is defined but skipped.
-  # Activated in Phase 3 when queue/tracking tests are added.
-  # ----------------------------------------------------------------
-  stress-tests:
-    runs-on: windows-latest
-    needs: [csharp-tests]
-    if: false  # Phase 0: no stress tests yet. Remove this line in Phase 3.
-    steps:
-      - run: echo "Stress tests not yet active in Phase 0."
+      # --- Stress tests (Tier 4) ---
+      # Phase 0: no stress tests. Step is defined but skipped.
+      # Activated in Phase 3 when queue/tracking tests are added.
+      - name: Run stress tests
+        if: false  # Phase 0: no stress tests yet. Remove this line in Phase 3.
+        run: echo "Stress tests not yet active in Phase 0."
 ```
 
 8.2. Verify the workflow YAML is syntactically valid:
@@ -862,7 +874,7 @@ packages/
 
 ### Step 10 — Verification via CI
 
-Verification is performed by CI. After pushing to the branch (including `baseline_phase0.tsv` as captured in Step 6), verify that the `csharp-tests` and `bridge-tests` jobs both pass (green) in GitHub Actions. No local Windows build is required to confirm Phase 0 completion.
+Verification is performed by CI. After pushing to the branch (including `baseline_phase0.tsv` as captured in Step 6), verify that the `windows-tests` job passes (green) in GitHub Actions. No local Windows build is required to confirm Phase 0 completion.
 
 ---
 
@@ -876,13 +888,13 @@ Verification is performed by CI. After pushing to the branch (including `baselin
 | `FlashIDA/src/Flash.Tests/packages.config` | NuGet package declarations for NUnit 3, NUnit3TestAdapter, NUnitConsoleRunner. |
 | `FlashIDA/src/Flash.Tests/SmokeTests.cs` | P0-U01 through P0-U04: build verification and test-mode execution tests. |
 | `FlashIDA/src/Flash.Tests/BridgeSmokeTests.cs` | P0-I01, P0-I02: CreateFLASHIda/DisposeFLASHIda bridge smoke tests. |
-| `FlashIDA/test-data/spectra/ms1_smoke_test.txt` | Real MS1 scan (10–200 peaks) extracted from an existing top-down `.mzML` file. Must yield at least 1 deconvolution result. |
+| `FlashIDA/test-data/spectra/ms1_smoke_test.txt` | Real MS1 scan (10–200 peaks) extracted from an existing top-down `.mzML` file. Must yield at least 1 deconvolution result. See [../test-file-specification.md Section 1.1](../test-file-specification.md#11-ms1_smoke_testtxt) for exact format requirements. |
 | `FlashIDA/test-data/configs/method_default.xml` | Standard DDA method configuration (copy of existing `method.xml` defaults). |
 | `FlashIDA/test-data/golden/README.md` | Documents golden file provenance, update procedure, and review expectations. |
-| `FlashIDA/test-data/golden/baseline_phase0.tsv` | Captured output of `Flash.exe -t` on the current codebase, downloaded from the CI `golden-capture` artifact (Step 6). First golden file. |
-| `FlashIDA/test-scripts/compare_golden.py` | Python script for TSV golden file comparison with numeric tolerance. |
-| `FlashIDA/test-scripts/regression-runner.ps1` | PowerShell script that runs `Flash.exe -t` for each config and calls compare_golden.py. |
-| `.github/workflows/flashida-ci.yml` | Main CI workflow. Phase 0 skeleton: `csharp-tests` and `bridge-tests` active, `cpp-unit-tests` and `stress-tests` skipped. |
+| `FlashIDA/test-data/golden/baseline_phase0.tsv` | Captured output of `Flash.exe -t` on the current codebase, downloaded from the CI `golden-capture` artifact (Step 6). First golden file. See [../test-file-specification.md Section 2.1](../test-file-specification.md#21-golden-file-format) for the TSV format and Section 2.2 for the golden file inventory. |
+| `FlashIDA/test-scripts/compare_golden.py` | Python script for TSV golden file comparison with numeric tolerance. See [../test-file-specification.md Section 4.1](../test-file-specification.md#41-compare_goldenpy) for the full specification. |
+| `FlashIDA/test-scripts/regression-runner.ps1` | PowerShell script that runs `Flash.exe -t` for each config and calls compare_golden.py. See [../test-file-specification.md Section 4.2](../test-file-specification.md#42-regression-runnerps1) for the full specification. |
+| `.github/workflows/flashida-ci.yml` | Main CI workflow. Phase 0 skeleton: `windows-tests` active (includes bridge verification step; stress test step skipped). `cpp-unit-tests` skipped. |
 
 ### Modified Files
 
@@ -904,6 +916,18 @@ Verification is performed by CI. After pushing to the branch (including `baselin
 ## Test Cases
 
 All 7 Phase 0 tests. No C++ tests in this phase. No stress tests in this phase.
+
+### Test Summary (Quick Reference)
+
+| Test ID | Name | Summary |
+|---------|------|---------|
+| P0-U01 | SolutionCompilesWithoutError | Confirms the NUnit test assembly compiles as part of Flash.sln. Acts as a compile-time canary — if this fails, the build itself is broken. |
+| P0-U02 | FlashExeExistsInBuildOutput | Confirms MSBuild produces Flash.exe at the expected output path. Guards against misconfigured output paths or missing project references. |
+| P0-U03 | TestModeRunsAndExitsCleanly | Confirms Flash.exe -t starts, processes the smoke spectrum, and exits code 0. The most fundamental end-to-end check: if DLLs fail to load or test mode crashes, this fails. |
+| P0-U04 | TestModeOutputIsNonEmptyValidTsv | Confirms Flash.exe -t produces a non-empty TSV with all 15 expected column headers. Guards against silent regressions where the app exits cleanly but writes empty/malformed output. |
+| P0-I01 | CreateFLASHIda_DoesNotCrash | Confirms the P/Invoke call to CreateFLASHIda in OpenMS.dll succeeds and returns a valid pointer. Establishes that the C#-to-C++ bridge is functional before migration begins. |
+| P0-I02 | DisposeFLASHIda_DoesNotCrash | Confirms DisposeFLASHIda cleanly frees the engine object without crashing. Together with P0-I01, documents the full bridge lifecycle as the pre-migration baseline. |
+| P0-R01 | Golden baseline regression | Runs Flash.exe -t and compares output to baseline_phase0.tsv within numeric tolerance. This is the regression anchor: any future phase that changes deconvolution output will break this test. |
 
 ### Tier 1 — Unit Tests (windows-latest, < 5 min)
 
@@ -931,7 +955,7 @@ These tests require both OpenMS DLLs (`FlashIDA/dll/`) and Thermo DLLs (`FlashID
 
 Note: P0-U03 and P0-U04 are classified as Tier 1 tests in their NUnit category but they exercise `Flash.exe` as a subprocess, so they are grouped here with the regression tier for DLL dependency purposes.
 
-P0-R01 is automated by the `regression-runner.ps1` script in the `csharp-tests` CI job. `baseline_phase0.tsv` must be committed before CI runs so that the comparison has a reference file.
+P0-R01 is automated by the `regression-runner.ps1` script in the `windows-tests` CI job. `baseline_phase0.tsv` must be committed before CI runs so that the comparison has a reference file.
 
 ---
 
@@ -942,9 +966,7 @@ P0-R01 is automated by the `regression-runner.ps1` script in the `csharp-tests` 
 | CI Job | Status in Phase 0 | Notes |
 |--------|-------------------|-------|
 | `cpp-unit-tests` (ubuntu-latest) | Skipped (`if: false`) | No C++ tests exist yet. Activated in Phase 2. |
-| `csharp-tests` (windows-latest) | Active | Builds solution, runs NUnit tests, runs regression suite. |
-| `bridge-tests` (windows-latest) | Active (lightweight) | Verifies P0-I01/P0-I02 passed in csharp-tests job. No additional tests. |
-| `stress-tests` (windows-latest) | Skipped (`if: false`) | No stress tests yet. Activated in Phase 3. |
+| `windows-tests` (windows-latest) | Active | Builds solution, runs NUnit tests, runs regression suite. Bridge verification and stress tests are steps within this job (bridge step active; stress step skipped with `if: false`). |
 
 ### Secrets Required in Phase 0
 
@@ -956,7 +978,7 @@ If Thermo DLLs exceed the GitHub secret size limit, switch to Strategy B (encryp
 
 ### OpenMS DLL Caching
 
-The `csharp-tests` job caches OpenMS DLLs keyed by the OpenMS submodule commit hash. On the first CI run (no cache), it downloads the DLL artifact from the `build-openms-dll.yml` workflow. Subsequent runs with no OpenMS submodule changes will hit the cache and skip the download.
+The `windows-tests` job caches OpenMS DLLs keyed by the OpenMS submodule commit hash. On the first CI run (no cache), it downloads the DLL artifact from the `build-openms-dll.yml` workflow. Subsequent runs with no OpenMS submodule changes will hit the cache and skip the download.
 
 If no `build-openms-dll.yml` artifact is available for the current submodule hash (e.g., after advancing the submodule), a new build must be triggered manually before CI can pass.
 
@@ -975,25 +997,25 @@ The migration work is done on `flashida-v9-migration`. Each phase can optionally
 At the end of Phase 0, the following must all be true before the phase is considered complete.
 
 **WPV-1: Solution builds without error.**
-- Automated by: CI job `csharp-tests` (step: "Build solution (Debug)"). MSBuild must exit with code 0 and `Flash.exe` must be present in the build output.
+- Automated by: CI job `windows-tests` (step: "Build solution (Debug)"). MSBuild must exit with code 0 and `Flash.exe` must be present in the build output.
 - Confirmed by: P0-U01, P0-U02 passing in CI.
 
 **WPV-2: `Flash.exe -t` runs and produces valid TSV output.**
-- Automated by: CI job `csharp-tests` (steps: "Run NUnit unit tests" for P0-U03/P0-U04, and "Run regression tests" for P0-R01).
+- Automated by: CI job `windows-tests` (steps: "Run NUnit unit tests" for P0-U03/P0-U04, and "Run regression tests" for P0-R01).
 - Confirmed by: P0-U03 and P0-U04 passing in CI (exit code 0, header row + at least 1 data row, all 15 columns present).
 
 **WPV-3: Bridge calls (Create/Dispose) complete without crash.**
-- Automated by: CI job `csharp-tests` (step: "Run NUnit unit tests") and CI job `bridge-tests` (step: "Verify bridge smoke tests passed").
+- Automated by: CI job `windows-tests` (step: "Run NUnit unit tests") and bridge verification step in `windows-tests` (step: "Verify bridge smoke tests").
 - Confirmed by: P0-I01 and P0-I02 passing in CI (non-null pointer returned; no crash on dispose).
 
 **WPV-4: Golden baseline captured and committed.**
 - Verify: `FlashIDA/test-data/golden/baseline_phase0.tsv` exists in the repository (committed following the CI artifact workflow in Step 6).
-- Automated by: CI job `csharp-tests` (step: "Run regression tests") running `compare_golden.py`. Confirmed by: P0-R01 passing in CI.
+- Automated by: CI job `windows-tests` (step: "Run regression tests") running `compare_golden.py`. Confirmed by: P0-R01 passing in CI.
 
 **WPV-5: CI workflow runs and all active jobs pass.**
 - Push to `flashida-v9-migration` branch.
-- Verify: `csharp-tests` job passes (green). `bridge-tests` job passes (green).
-- `cpp-unit-tests` and `stress-tests` jobs are skipped (not failed).
+- Verify: `windows-tests` job passes (green).
+- `cpp-unit-tests` job is skipped (not failed). Stress test step within `windows-tests` is skipped.
 
 ---
 
@@ -1008,8 +1030,8 @@ At the end of Phase 0, the following must all be true before the phase is consid
 - [ ] `golden/README.md` created and committed.
 - [ ] `compare_golden.py` created and committed. `compare_golden.py X X` (same file) outputs `PASS`.
 - [ ] `regression-runner.ps1` created and committed.
-- [ ] `.github/workflows/flashida-ci.yml` created with the Phase 0 skeleton. `cpp-unit-tests` and `stress-tests` jobs are explicitly skipped with `if: false`.
+- [ ] `.github/workflows/flashida-ci.yml` created with the Phase 0 skeleton. `cpp-unit-tests` job skipped with `if: false`. Stress test step within `windows-tests` skipped with `if: false`.
 - [ ] `.gitignore` updated: `FlashIDA/dependencies/*.dll` is excluded.
 - [ ] All 7 Phase 0 tests pass in CI: P0-U01 through P0-U04 (4 unit/smoke) + P0-I01, P0-I02 (2 bridge) + P0-R01 (1 regression).
-- [ ] CI workflow passes on `flashida-v9-migration` branch: `csharp-tests` and `bridge-tests` jobs are green. No jobs are red.
+- [ ] CI workflow passes: `cpp-unit-tests` and `windows-tests` jobs are green.
 - [ ] No code in `FlashIDA/src/Flash/` has been modified. Phase 0 is test infrastructure only — zero changes to production code.

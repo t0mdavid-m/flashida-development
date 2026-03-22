@@ -7,6 +7,7 @@
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 2 section and CI environment requirements
 - [../baseline-plan.md](../baseline-plan.md) — Issue 9 specification
 - [../testing-strategy.md](../testing-strategy.md) — Phase 2 test plan
+- [../test-file-specification.md](../test-file-specification.md) — Authoritative reference for all test file formats, golden file schema, and config file inventory (Sections 1–5)
 
 ---
 
@@ -22,16 +23,18 @@ This phase is purely additive. No existing code path reads, writes, or checks th
 
 The following must be complete and passing before starting Phase 2 implementation:
 
-1. **Phase 0 done:** `Flash.Tests.csproj` exists. `baseline_phase0.tsv` is committed to `FlashIDA/test-data/golden/`. The `flashida-ci.yml` workflow skeleton exists and the `csharp-tests` job is active.
+1. **Phase 0 done:** `Flash.Tests.csproj` exists. `baseline_phase0.tsv` is committed to `FlashIDA/test-data/golden/`. The `flashida-ci.yml` workflow skeleton exists and the `windows-tests` job is active.
 2. **Phase 1 done (or in-flight, same Build #1 batch):** JSON config parsing is in place in C++. Because Phases 1, 2, and 3 are batched into a single Build #1, they may be developed in parallel on feature branches and merged together. Phase 2 has no functional dependency on Phase 1 beyond sharing the same build.
 3. **C++ unit test infrastructure active:** The `cpp-unit-tests` CI job in `flashida-ci.yml` must be active and capable of building and running OpenMS class tests on `ubuntu-latest`. This is the first phase that introduces C++ unit tests; see the CI configuration section below.
 4. **`executables.cmake` FLASH entries uncommented:** The FLASH test entries in `OpenMS/src/tests/class_tests/openms/executables.cmake` are currently commented out. They must be uncommented (or new entries added for the Phase 2 test binary) before `ctest -R FLASH` can discover and run the tests.
 5. **Golden file baseline available:** `FlashIDA/test-data/golden/baseline_phase0.tsv` (from Phase 0) and the Phase 1 golden files (`config_default.json`, `config_full.json`, the `Flash.exe -t` regressions) are committed, so P2-R01 has a baseline to compare against.
-6. **`ms1_standard.txt` exists with real data:** `FlashIDA/test-data/spectra/ms1_standard.txt` must be real top-down MS1 data meeting all of the following criteria:
-   - At least 5 independently deconvolvable charge envelopes.
-   - Masses spanning the 5–100 kDa range.
-   - Precursor intensity dynamic range covering at least 2 orders of magnitude.
-   - Do not fabricate values — extract from existing lab .mzML data using `prepare-test-data.py`.
+6. **`ms1_smoke_test.txt` and `baseline_phase0.tsv` are committed (from Phase 0).** `ms1_standard.txt` is not required by Phase 2 — it is first needed in Phase 4.
+
+---
+
+### User-Provided Inputs
+
+No new user-provided data is needed for Phase 2. C++ unit tests are self-contained (no file I/O). The regression test reuses `ms1_smoke_test.txt` from Phase 0.
 
 ---
 
@@ -382,6 +385,17 @@ No C# files change in this phase. No bridge functions change. No `method.xml` or
 
 All six tests for Phase 2 come from the testing strategy. Five are C++ unit tests (Tier 1) run on `ubuntu-latest`; one is a regression test (Tier 3) run on `windows-latest`.
 
+### Test Summary (Quick Reference)
+
+| Test ID | Tier | One-line summary |
+|---------|------|-----------------|
+| P2-U01 | 1 (C++ unit) | A default-constructed `DeconvolvedSpectrum` reports no metadata (`hasOptimizationMetadata()` returns `false`). |
+| P2-U02 | 1 (C++ unit) | Calling `getOrCreateOptimizationMetadata()` creates the metadata object and transitions `hasOptimizationMetadata()` to `true`. |
+| P2-U03 | 1 (C++ unit) | All 15 checked fields of a freshly created `OptimizationMetadata` carry the specified default values (e.g. `variant_index == -1`, `fragmentation_quality_score == -1.0`). |
+| P2-U04 | 1 (C++ unit) | `toSpectrum()` writes all five `optimization_*` metavalues onto the output `MSSpectrum` when metadata is present and populated. |
+| P2-U05 | 1 (C++ unit) | `toSpectrum()` sets none of the five `optimization_*` metavalues when no metadata has been created, confirming zero overhead on normal spectra. |
+| P2-R01 | 3 (regression) | `Flash.exe -t` with `ms1_smoke_test.txt` and `method_default.xml` produces output identical to `baseline_phase0.tsv`, confirming zero behavioral change. |
+
 ### P2-U01
 
 | Field | Value |
@@ -449,10 +463,12 @@ All six tests for Phase 2 come from the testing strategy. Five are C++ unit test
 | Test ID | P2-R01 |
 | Tier | 3 (regression) |
 | Description | `Flash.exe -t` produces output identical to the Phase 0/1 golden files |
-| Implementation | Run `Flash.exe -t test-data/spectra/ms1_standard.txt output.tsv test-data/configs/method_default.xml`. Compare `output.tsv` to `FlashIDA/test-data/golden/baseline_phase0.tsv` using `compare_golden.py`. |
+| Implementation | Run `Flash.exe -t test-data/spectra/ms1_smoke_test.txt output.tsv test-data/configs/method_default.xml`. Compare `output.tsv` to `FlashIDA/test-data/golden/baseline_phase0.tsv` using `compare_golden.py`. |
 | Expected outcome | `PASS` — row count identical, all floating-point values within tolerance, all string columns exact match. No `optimization_*` keys appear in the TSV (because no code populates metadata during normal operation). |
 | CI runner | `windows-latest` (requires OpenMS DLLs in `FlashIDA/dll/` and Thermo iAPI DLLs in `FlashIDA/dependencies/`) |
-| Test file | `flashida-ci.yml` `csharp-tests` job, regression step |
+| Test file | `flashida-ci.yml` `windows-tests` job, regression step |
+
+**Cross-reference note:** Resolved: P2-R01 uses `ms1_smoke_test.txt` per spec doc §1.1. Phase 2 is a zero-behavioral-change phase; using the minimal smoke test input is sufficient. The golden file format and column schema are specified in spec doc Section 2.1; `baseline_phase0.tsv` provenance is in Section 2.2. The `compare_golden.py` comparison rules (float tolerances, exact-match columns) are in spec doc Section 4.1.
 
 ---
 
@@ -460,7 +476,7 @@ All six tests for Phase 2 come from the testing strategy. Five are C++ unit test
 
 ### Jobs affected
 
-Phase 2 activates the `cpp-unit-tests` job for the first time. The `csharp-tests` job continues unchanged (P2-R01 is a straight `Flash.exe -t` regression). No new jobs are needed.
+Phase 2 activates the `cpp-unit-tests` job for the first time. The `cpp-unit-tests` job activates as a separate job (unchanged from the workflow skeleton established in Phase 0). The `windows-tests` job continues unchanged (P2-R01 is a straight `Flash.exe -t` regression). No new jobs are needed.
 
 ### `cpp-unit-tests` job requirements
 
@@ -513,9 +529,9 @@ Uncommenting FLASH test entries in `executables.cmake` means CTest will attempt 
 
 If older FLASH tests are broken or not yet applicable, add only the Phase 2 test entry (`DeconvolvedSpectrum_OptimizationMetadata_test`) in a minimal change, and uncomment the remaining entries incrementally in subsequent phases.
 
-### P2-R01 in the `csharp-tests` job
+### P2-R01 in the `windows-tests` job
 
-No changes to the `csharp-tests` job configuration. The regression step already runs `Flash.exe -t` and compares against golden files. P2-R01 passes when the output is byte-for-byte compatible with `baseline_phase0.tsv` (within floating-point tolerance). No new step is needed.
+No changes to the `windows-tests` job configuration. The regression step already runs `Flash.exe -t` and compares against golden files. P2-R01 passes when the output is byte-for-byte compatible with `baseline_phase0.tsv` (within floating-point tolerance). No new step is needed.
 
 ---
 
@@ -529,7 +545,7 @@ Verified by the `cpp-unit-tests` CI job on `ubuntu-latest`. The job builds and r
 
 ### 2. `Flash.exe -t` runs with no behavioral change
 
-Verified by the `csharp-tests` CI job on `windows-latest`. The job runs `Flash.exe -t` and compares `output.tsv` against `baseline_phase0.tsv`. Expected: process exits 0, `output.tsv` is produced, content is identical to `baseline_phase0.tsv`.
+Verified by the `windows-tests` CI job on `windows-latest`. The job runs `Flash.exe -t` and compares `output.tsv` against `baseline_phase0.tsv`. Expected: process exits 0, `output.tsv` is produced, content is identical to `baseline_phase0.tsv`. The 15-column TSV schema and float tolerance rules used by `compare_golden.py` are defined in [../test-file-specification.md](../test-file-specification.md) Sections 2.1 and 4.1. `baseline_phase0.tsv` provenance is documented in spec doc Section 2.2; update procedure in Section 2.4. Golden file changes during Phase 2 (a zero-behavioral-change phase) are a red flag per spec doc Section 2.4.
 
 ### 3. `hasOptimizationMetadata()` returns false in normal operation
 
@@ -537,11 +553,11 @@ This is confirmed by P2-U01 and by P2-R01: if any code in the normal deconvoluti
 
 ### 4. No changes to the P/Invoke bridge
 
-Verified by the `csharp-tests` CI job on `windows-latest`. The Phase 0 bridge smoke tests (P0-I01, P0-I02) confirm that `CreateFLASHIda` and `DisposeFLASHIda` are unaffected. Expected: both P0-I01 and P0-I02 pass.
+Verified by the `windows-tests` CI job on `windows-latest`. The Phase 0 bridge smoke tests (P0-I01, P0-I02) confirm that `CreateFLASHIda` and `DisposeFLASHIda` are unaffected. Expected: both P0-I01 and P0-I02 pass.
 
 ### 5. All prior tests still pass
 
-Verified by the `csharp-tests` CI job on `windows-latest`. Expected: all Phase 0 and Phase 1 tests pass. No regressions introduced.
+Verified by the `windows-tests` CI job on `windows-latest`. Expected: all Phase 0 and Phase 1 tests pass. No regressions introduced.
 
 ---
 
@@ -559,7 +575,7 @@ The following checklist must be satisfied before Phase 2 is considered complete 
 - [ ] P2-U03 passes: all 15 checked fields have correct defaults.
 - [ ] P2-U04 passes: `toSpectrum()` sets all five `optimization_*` metavalues correctly when metadata is present.
 - [ ] P2-U05 passes: `toSpectrum()` sets none of the five `optimization_*` metavalues when metadata is absent.
-- [ ] P2-R01 passes: `Flash.exe -t` output matches Phase 0/1 golden files exactly (within tolerance).
+- [ ] P2-R01 passes: `Flash.exe -t` with `ms1_smoke_test.txt` and `method_default.xml` produces output matching `baseline_phase0.tsv` exactly (within tolerance).
 - [ ] All Phase 0 tests (P0-U01 through P0-R01) continue to pass.
 - [ ] All Phase 1 tests (P1-U01 through P1-R02) continue to pass.
 - [ ] `cpp-unit-tests` CI job is active and passes on `ubuntu-latest` with no Thermo or Windows dependency.

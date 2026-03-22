@@ -7,6 +7,7 @@
 - [../baseline-plan.md](../baseline-plan.md) — Issue 7 and Phase 8 specification
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 8 roadmap entry
 - [../testing-strategy.md](../testing-strategy.md) — Phase 8 test plan
+- [../test-file-specification.md](../test-file-specification.md) — Authoritative format, content, and naming specification for all test data files (spectrum files, golden TSVs, config XMLs, test scripts)
 
 ---
 
@@ -51,6 +52,10 @@ The following must be true before starting Phase 8:
 5. **Legacy config format is no longer passed from C#.** Phase 1 (JSON Configuration)
    switched `FLASHIdaWrapper.cs` to pass JSON via `Parameter.ToJSON()`. The legacy
    space-delimited string path must not be reachable from any live C# code path.
+
+### User-Provided Inputs
+
+No new user-provided data is required for Phase 8. All spectrum files, golden files, and config files were established in prior phases. Phase 8 is a cleanup and documentation phase.
 
 ---
 
@@ -98,7 +103,7 @@ exactly 5 exports remain.
 
 ### Step 1 — Verify no live callers exist before touching C++ (pre-condition check)
 
-These checks are automated by **P8-U01** and **P8-U02** in the `csharp-tests` CI job.
+These checks are automated by **P8-U01** and **P8-U02** in the `windows-tests` CI job.
 Do not proceed to Steps 2+ unless P8-U01 and P8-U02 pass in CI on the current state of
 the branch.
 
@@ -348,7 +353,7 @@ cmake --build <build-dir> --config Release
 The build must succeed with zero errors. No warnings about undefined symbols or missing
 exports are acceptable.
 
-**C# (CI `windows-latest` — `csharp-tests` job):**
+**C# (CI `windows-latest` — `windows-tests` job):**
 
 ```powershell
 msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /warnaserror
@@ -370,7 +375,7 @@ File: `FlashIDA/test-data/` (update any hard-coded export counts or lists)
 The integration test P8-I01 checks `dumpbin /exports` for exactly 5 bridge symbols and
 verifies that none of the removed names are present. If the test script contains a hard-coded
 list of expected absent names, add all 13 removed function names to it. See Section 5.4 of
-testing-strategy.md for the baseline `dumpbin` CI step; extend the `findstr` block to also
+`testing-strategy.md` for the baseline `dumpbin` CI step; extend the `findstr` block to also
 assert absence:
 
 ```cmd
@@ -401,36 +406,40 @@ findstr /C:"GetDeconvolutionQuality"        exports.txt && exit /b 1
 
 ### Step 11 — Run the full regression suite
 
-The full regression suite is automated by **P8-R01** in the `csharp-tests` CI job. Do not
+The full regression suite is automated by **P8-R01** in the `windows-tests` CI job. Do not
 proceed to committing until P8-R01 passes in CI for the current branch state.
 
-The script below is the reference implementation that runs in CI. All 12 configurations
-must produce `PASS`. Any failure indicates a regression introduced during cleanup.
+The authoritative orchestration for this step is `regression-runner.ps1`
+(`FlashIDA/test-scripts/regression-runner.ps1`). Its full config array, correct golden file
+names, and per-config spectrum file assignments are specified in
+[../test-file-specification.md §4.2](../test-file-specification.md). The canonical config
+array as of Phase 8 (all 13 entries) is reproduced there; use that as the single source of
+truth when extending or verifying the script. Note in particular:
+
+- `ms2_hcd_fragment.txt` (spec §1.3) is the required second spectrum argument for
+  `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`,
+  `method_ms3_mode2.xml`, and `method_ms3_mode3.xml`.
+- `ms1_faims_3cv.txt` (spec §1.4) is the required spectrum for `method_faims_3cv.xml` and
+  `method_faims_skip.xml`.
+- All other configs use `ms1_standard.txt` (spec §1.2).
+
+Golden file canonical names follow the `phase4_*` / `faims_*` / `phase7_*` convention
+defined in spec §2.2. All 12 configurations must produce `PASS`. Any failure indicates a
+regression introduced during cleanup.
+
+For reference, the runner invokes `Flash.exe -t` and `compare_golden.py` in the pattern:
 
 ```powershell
-# Reference — runs in CI as part of P8-R01 (csharp-tests job, windows-latest)
-# From FlashIDA/src/Flash/bin/Debug/
-$testData = "..\..\..\..\test-data"
-$configs = @(
-    "method_default.xml",
-    "method_deep.xml",
-    "method_inclusion.xml",
-    "method_exclusion.xml",
-    "method_tag_targeting.xml",
-    "method_quant.xml",
-    "method_ms3_mode1.xml",
-    "method_ms3_mode2.xml",
-    "method_ms3_mode3.xml",
-    "method_faims_3cv.xml",
-    "method_faims_skip.xml",
-    "method_exploration.xml"
-)
-foreach ($cfg in $configs) {
-    $name = $cfg -replace "method_", "" -replace ".xml", ""
-    .\Flash.exe -t "$testData\spectra\ms1_standard.txt" "output\$name.tsv" "$testData\configs\$cfg"
-    python compare_golden.py "$testData\golden\$name.tsv" "output\$name.tsv"
-}
+# Reference — runs in CI as part of P8-R01 (windows-tests job, windows-latest)
+# Canonical config array and golden file names: see test-file-specification.md §4.2
+# Four-argument form used when ms2 is non-null:
+& $FlashExe -t $ms1File $outputFile $methodFile [$ms2File]
+python compare_golden.py "$TestDataDir\golden\$goldenFile" "$OutputDir\$name.tsv"
 ```
+
+The `compare_golden.py` tolerance rules (absolute 1e-6 for |v| ≤ 1.0, relative 1e-4 for
+|v| > 1.0; exact match for `charges` and `hcd`) are defined in
+[../test-file-specification.md §4.1](../test-file-specification.md).
 
 ---
 
@@ -456,6 +465,20 @@ indicates an unresolved call site from Step 1 that must be addressed first.
 
 All 7 tests added in this phase. They run as part of the full cumulative suite (96 tests
 total including all prior phases).
+
+### Test Summary (Quick Reference)
+
+| Test | Summary |
+|------|---------|
+| P8-U01 | Counts `[DllImport]` declarations in `FLASHIdaWrapper.cs` and asserts exactly 5 remain. Ensures no legacy P/Invoke declaration was accidentally left behind after the 13 removals. |
+| P8-U02 | Scans all C# source files for any reference to `ToFLASHDeconvInput` and asserts zero hits outside `Parameter.cs`. Confirms the legacy serialization method and all its call sites are fully gone. |
+| P8-U03 | Calls `MethodDocGenerator.Generate(typeof(Parameter))` and verifies the returned string is non-empty and contains at least 3 known `[Description]`-annotated property names. Validates that the new reflection utility works correctly on real `Parameter` properties. |
+| P8-U04 | Passes a non-JSON (legacy space-delimited) string to the `FLASHIda` C++ constructor and asserts that it throws `std::invalid_argument`. Confirms the `parseLegacy_` fallback was removed and invalid input is rejected rather than silently accepted. |
+| P8-I01 | Runs `dumpbin /exports` on the built `OpenMS.dll` and asserts all 5 keeper functions are present and all 13 removed functions are absent. Verifies the compiled DLL export table matches the intended final bridge API exactly. |
+| P8-I02 | Builds `Flash.sln` with `/warnaserror` and asserts the build exits with zero warnings. Confirms that removing dead declarations and methods left no dangling references or orphaned `using` directives. |
+| P8-R01 | Runs `Flash.exe -t` against all 12 method configuration files and compares each output to the corresponding Phase 7 golden file. Verifies that the cleanup phase changed no observable behaviour across every supported acquisition mode. |
+
+---
 
 ### P8-U01 — Exactly 5 P/Invoke declarations (Tier 1, C#, `windows-latest`)
 
@@ -570,7 +593,7 @@ mode). The legacy input is not silently accepted.
 **Description:** Run `dumpbin /exports` on the built `OpenMS.dll`. Verify that all 5 keeper
 functions are present and all 13 removed functions are absent.
 
-**Implementation:** CI step in the `bridge-tests` job of `flashida-ci.yml` (see Step 10 for
+**Implementation:** Bridge verification step in `windows-tests` job of `flashida-ci.yml` (see Step 10 for
 the full cmd script). This test replaces and extends the Phase 3 DLL export check (P3-I05).
 
 **Expected outcome:** All 5 presence checks pass (`findstr` finds each name). All 13 absence
@@ -588,7 +611,7 @@ Phase 3 P3-I05; no new dependency).
 build must succeed, demonstrating that removing dead code and dead declarations left no
 dangling references that the compiler silently accepted with a warning.
 
-**Implementation:** CI step in the `csharp-tests` job:
+**Implementation:** CI step in the `windows-tests` job:
 
 ```yaml
 - name: Build with warnings-as-errors
@@ -614,24 +637,30 @@ comprehensive validation that cleanup removed only dead code and changed no beha
 
 **Configurations covered (minimum 12):**
 
-| Config file | Golden file |
-|-------------|-------------|
-| `method_default.xml` | `standard_dda.tsv` |
-| `method_deep.xml` | `deep_mode.tsv` |
-| `method_inclusion.xml` | `inclusion.tsv` |
-| `method_exclusion.xml` | `exclusion.tsv` |
-| `method_tag_targeting.xml` | `tag_targeting.tsv` |
-| `method_quant.xml` | `quant.tsv` |
-| `method_ms3_mode1.xml` | `ms3_mode1.tsv` |
-| `method_ms3_mode2.xml` | `ms3_mode2.tsv` |
-| `method_ms3_mode3.xml` | `ms3_mode3.tsv` |
-| `method_faims_3cv.xml` | `faims_3cv.tsv` |
-| `method_faims_skip.xml` | `faims_skip.tsv` |
-| `method_exploration.xml` | `exploration.tsv` |
+Canonical golden file names are defined in [../test-file-specification.md §2.2](../test-file-specification.md).
+Spectrum file assignments per config are defined in spec §1.2–§1.4 and §4.2.
 
-**Implementation:** The `regression-runner.ps1` script (Section 6.1 of testing-strategy.md)
-extended to cover all 12 configs. Each invocation uses `compare_golden.py` for numeric
-comparison with tolerances (absolute 1e-6, relative 1e-4 for values > 1.0).
+| Config file | Spectrum file(s) | Golden file (canonical name from spec §2.2) |
+|-------------|-----------------|---------------------------------------------|
+| `method_default.xml` | `ms1_standard.txt` | `phase4_standard_dda.tsv` |
+| `method_deep.xml` | `ms1_standard.txt` | `phase4_deep_mode.tsv` |
+| `method_inclusion.xml` | `ms1_standard.txt` | `phase4_inclusion.tsv` |
+| `method_exclusion.xml` | `ms1_standard.txt` | `phase4_exclusion.tsv` |
+| `method_tag_targeting.xml` | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `phase4_tag_targeting.tsv` |
+| `method_quant.xml` | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `phase4_quant.tsv` |
+| `method_ms3_mode1.xml` | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `phase4_ms3_mode1.tsv` |
+| `method_ms3_mode2.xml` | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `phase4_ms3_mode2.tsv` |
+| `method_ms3_mode3.xml` | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `phase4_ms3_mode3.tsv` |
+| `method_faims_3cv.xml` | `ms1_faims_3cv.txt` | `faims_3cv.tsv` |
+| `method_faims_skip.xml` | `ms1_faims_3cv.txt` | `faims_skip.tsv` |
+| `method_exploration.xml` | `ms1_standard.txt` | `phase7_exploration.tsv` |
+
+**Implementation:** The `regression-runner.ps1` script (Section 6.1 of `testing-strategy.md`;
+canonical config array in [../test-file-specification.md §4.2](../test-file-specification.md))
+covers all 12 configs. Each invocation uses `compare_golden.py` for numeric comparison with
+tolerances defined in [../test-file-specification.md §4.1](../test-file-specification.md)
+(absolute 1e-6 for |v| ≤ 1.0, relative 1e-4 for |v| > 1.0; exact match for `charges` and `hcd`).
+The golden TSV column schema (15 columns) is specified in spec §2.1.
 
 **Expected outcome:** All 12 configs produce `PASS`. Any single failure is a regression.
 Golden files are the Phase 7 outputs; they are not updated in this phase unless a deliberate
@@ -650,14 +679,14 @@ concurrently, or run the 4 fastest configs sequentially and batch the rest.
 
 These changes to `.github/workflows/flashida-ci.yml` are required for Phase 8:
 
-### 1. Extend DLL export verification in the `bridge-tests` job
+### 1. Extend DLL export verification in the bridge verification step in `windows-tests`
 
 Replace the Phase 3 verification step (P3-I05: "exports include new functions") with the
 Phase 8 step (P8-I01: "exactly 5 exports, 13 absent"). The new step both asserts presence
 of the 5 keepers and asserts absence of the 13 removed functions. See Step 10 for the
 complete `cmd` script.
 
-### 2. Add zero-warnings build step to the `csharp-tests` job
+### 2. Add zero-warnings build step to the `windows-tests` job
 
 Add a dedicated MSBuild invocation with `/warnaserror` for P8-I02. Place it after the
 normal build succeeds, so the normal build output (artifacts, test DLLs) is available for
@@ -681,7 +710,10 @@ invocation in the `cpp-unit-tests` job will pick it up automatically.
 
 The regression runner script must include all 12 method configs listed in P8-R01. If the
 script was built incrementally (each phase adds its new configs), confirm the Phase 8 version
-runs all prior configs plus any new ones. No new method configs are added in Phase 8 itself.
+runs all prior configs plus any new ones. The canonical full config array (names, spectrum
+file assignments, golden file names) is defined in
+[../test-file-specification.md §4.2](../test-file-specification.md). No new method configs
+are added in Phase 8 itself.
 
 ### Workflow trigger branches
 
@@ -697,14 +729,14 @@ by the test suite; this section maps each check to its test.
 
 | Verification | Test | CI verification method |
 |-------------|------|------------------------|
-| `Flash.exe -t` runs in final form | P8-R01 | `csharp-tests` job on `windows-latest`; check run logs and artifacts for `regression-runner` step |
-| Exactly 5 DLL exports | P8-I01 | `bridge-tests` job on `windows-latest`; inspect the "Verify DLL exports" step output in CI run artifacts |
-| Zero C# compile warnings | P8-I02 | `csharp-tests` job on `windows-latest`; "Build with warnings-as-errors" step must exit 0 |
-| MethodDocGenerator produces output | P8-U03 | Automated by P8-U03 NUnit test that asserts the generator returns a non-empty string; see `csharp-tests` job NUnit results |
-| No legacy P/Invoke declarations | P8-U01 | `csharp-tests` job NUnit results for `CleanupTests.P8_U01` |
-| ToFLASHDeconvInput absent | P8-U02 | `csharp-tests` job NUnit results for `CleanupTests.P8_U02` |
+| `Flash.exe -t` runs in final form | P8-R01 | `windows-tests` job on `windows-latest`; check run logs and artifacts for `regression-runner` step |
+| Exactly 5 DLL exports | P8-I01 | Bridge verification step in `windows-tests` on `windows-latest`; inspect the "Verify DLL exports" step output in CI run artifacts |
+| Zero C# compile warnings | P8-I02 | `windows-tests` job on `windows-latest`; "Build with warnings-as-errors" step must exit 0 |
+| MethodDocGenerator produces output | P8-U03 | Automated by P8-U03 NUnit test that asserts the generator returns a non-empty string; see `windows-tests` job NUnit results |
+| No legacy P/Invoke declarations | P8-U01 | `windows-tests` job NUnit results for `CleanupTests.P8_U01` |
+| ToFLASHDeconvInput absent | P8-U02 | `windows-tests` job NUnit results for `CleanupTests.P8_U02` |
 | Legacy config rejected by C++ | P8-U04 | `cpp-unit-tests` job on `ubuntu-latest`; `ctest -R FLASH` output |
-| Full regression passes | P8-R01 | Automated by P8-R01 in the `csharp-tests` CI job. All 12 regression configs pass in CI. |
+| Full regression passes | P8-R01 | Automated by P8-R01 in the `windows-tests` CI job. All 12 regression configs pass in CI. |
 
 ---
 

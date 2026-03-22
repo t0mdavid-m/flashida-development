@@ -6,6 +6,7 @@
 - [../baseline-plan.md](../baseline-plan.md) — Issues 1 (completion) and 5 (Scoring in Unified Architecture)
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 4 section, CI Environment Requirements
 - [../testing-strategy.md](../testing-strategy.md) — Phase 4 test plan
+- [../test-file-specification.md](../test-file-specification.md) — Authoritative format, content requirements, and size constraints for all test data files: spectrum files (§1), golden files (§2), config files (§3), and test infrastructure scripts (§4)
 
 ---
 
@@ -35,7 +36,7 @@ The following must be in place before beginning Phase 4 implementation:
 
 2. **Phase 3 golden files exist.** `baseline_phase3.tsv` (or equivalent per-mode golden files from Phase 3) is committed to `FlashIDA/test-data/golden/`. These are the regression baseline for P4-R01.
 
-3. **Mode-specific method config files exist** or are created as part of this phase before golden files are captured:
+3. **Mode-specific method config files exist** or are created as part of this phase before golden files are captured. The XML schema, key parameters, and per-file descriptions for all Phase 4 configs are defined in [`../test-file-specification.md §3`](../test-file-specification.md) (§3.1 for the XML section structure, §3.2 for the full inventory including the `UseUnifiedBridge` lifecycle). Files required:
    - `test-data/configs/method_default.xml`
    - `test-data/configs/method_deep.xml`
    - `test-data/configs/method_inclusion.xml`
@@ -50,19 +51,29 @@ The following must be in place before beginning Phase 4 implementation:
    - `test-data/spectra/ms1_standard.txt`
    - `test-data/spectra/ms2_hcd_fragment.txt`
 
-   **`ms1_standard.txt` specification (DATA-5):** Must be real top-down MS1 data meeting all of the following criteria:
-   - At least 5 independently deconvolvable charge envelopes.
+   **`ms1_standard.txt` specification (DATA-5):** The full format definition, size constraints, extraction command, and content requirements are in [`../test-file-specification.md §1.2`](../test-file-specification.md). Summary of mandatory content criteria:
+   - At least 5 independently deconvolvable charge envelopes across all scans.
    - Masses spanning the 5–100 kDa range.
    - Precursor intensity dynamic range covering at least 2 orders of magnitude.
-   - Do not fabricate values — extract from existing lab .mzML data using `prepare-test-data.py`.
+   - Must include scans that produce targets for all scoring branches (QScore, IDScore representative, IDScore all-charges), so that all 6 scoring paths in `processScan()` are reachable during regression tests.
+   - Do not fabricate values — extract from existing lab .mzML data using `prepare-test-data.py` (see `test-file-specification.md §4.3` for script details and invocation).
 
-   **`ms2_hcd_fragment.txt` specification (DATA-6):** Must be a real MS2 HCD spectrum meeting all of the following criteria:
-   - Acquired from a known protein (protein identity documented alongside the file).
+   **`ms2_hcd_fragment.txt` specification (DATA-6):** The full format definition, size constraints, extraction command, and content requirements are in [`../test-file-specification.md §1.3`](../test-file-specification.md). Summary of mandatory content criteria:
+   - Acquired from a known protein (protein identity documented in `FlashIDA/test-data/golden/README.md`).
    - Precursor mass known and matching an entry in the inclusion list used for the corresponding regression tests.
    - Real measured fragment ions — not simulated.
    - If isobaric labeling was used during acquisition, reporter ions must be present in the spectrum to support quant mode tests (P4-R07, P4-U07).
+   - At least 5 high-intensity fragment ions, so that `selectMS3Targets_()` has candidates to return for MS3 mode tests (P4-R08 through P4-R10).
 
 5. **OpenMS submodule is on the `flashida-v9-bridge` branch** and the Build #1 commit is the working base.
+
+### User-Provided Inputs
+
+Before golden file capture can proceed, the following real data files must be committed to `FlashIDA/test-data/spectra/`:
+
+- [ ] `ms1_standard.txt` — real top-down MS1 data with 5+ deconvolvable envelopes, 5-100 kDa, 2+ orders intensity range; extract from lab .mzML using `prepare-test-data.py` (spec §1.2)
+- [ ] `ms2_hcd_fragment.txt` — single HCD MS2 scan from a known protein with reporter ions; extract from .mzML (spec §1.3)
+- Note: Both must be committed before golden file capture can proceed.
 
 ---
 
@@ -439,17 +450,20 @@ test-data/golden/phase4_ms3_mode2.tsv
 test-data/golden/phase4_ms3_mode3.tsv
 ```
 
+The authoritative golden file format (15-column TSV, column definitions, numeric tolerances, line ending normalization) and the inspection checklist are defined in [`../test-file-specification.md §2`](../test-file-specification.md). See §2.1 for the column schema, §2.2 for the complete inventory of Phase 4 golden files and their inputs, §2.3 for the step-by-step capture procedure, and §2.4 for the update procedure when a behavioral change requires a golden file refresh.
+
 Golden files are captured entirely through CI — there is no local `Flash.exe -t` invocation. The capture workflow is:
 
 1. Push the Phase 4 implementation branch to GitHub.
-2. The CI `capture-golden` job (or a manually triggered workflow dispatch) runs the regression suite in golden-capture mode: instead of comparing against an existing golden file, it writes the output to a named artifact.
+2. The CI `capture-golden` job (or a manually triggered workflow dispatch) runs the regression suite in golden-capture mode using `regression-runner.ps1 -captureMode` (see `test-file-specification.md §4.2` for script interface): instead of comparing against an existing golden file, it writes the output to a named artifact.
 3. Download the artifact from the GitHub Actions run summary page.
-4. Inspect the downloaded `.tsv` files to confirm correctness (the standard DDA output must match the Phase 3 standard DDA golden; mode-specific files must show expected mode behavior).
+4. Inspect the downloaded `.tsv` files to confirm correctness per the checklist in `test-file-specification.md §2.3` (header row matches the 15-column format, row count non-zero, float values in plausible ranges). The standard DDA output must match the Phase 3 standard DDA golden; mode-specific files must show expected mode behavior.
 5. Commit the reviewed `.tsv` files to `FlashIDA/test-data/golden/` and push.
+6. Update `FlashIDA/test-data/golden/README.md` to document provenance (branch, CI run URL, OpenMS commit hash, spectrum source) as required by `test-file-specification.md §2.3`.
 
-Subsequent CI runs use the committed files as the comparison baseline for P4-R01 through P4-R10.
+Subsequent CI runs use the committed files as the comparison baseline for P4-R01 through P4-R10. Comparisons are performed by `compare_golden.py` (see `test-file-specification.md §4.1` for the comparison algorithm, tolerance values, and failure conditions).
 
-The regression runner script (`regression-runner.ps1`) must be updated to include Phase 4 configs and golden files, and must support a `-captureMode` switch that writes output files rather than comparing them.
+The regression runner script (`regression-runner.ps1`) must be updated to include Phase 4 configs and golden files, and must support a `-captureMode` switch that writes output files rather than comparing them. The full script interface is defined in `test-file-specification.md §4.2`.
 
 ---
 
@@ -479,19 +493,21 @@ The regression runner script (`regression-runner.ps1`) must be updated to includ
 
 ### Test Data Files
 
+Config file format, key parameters per file, and the `UseUnifiedBridge` lifecycle are specified in [`../test-file-specification.md §3`](../test-file-specification.md). Golden file column schema, numeric tolerances, and the capture/update workflow are specified in `../test-file-specification.md §2`.
+
 | File | Change | Description |
 |------|--------|-------------|
-| `FlashIDA/test-data/configs/method_default.xml` | Verify/create | Standard DDA config with `UseUnifiedBridge=True` for Phase 4 regression tests. |
-| `FlashIDA/test-data/configs/method_deep.xml` | Verify/create | Deep mode config. |
-| `FlashIDA/test-data/configs/method_inclusion.xml` | Verify/create | Inclusion list mode config with a sample inclusion list entry. |
-| `FlashIDA/test-data/configs/method_exclusion.xml` | Verify/create | Exclusion list mode config with a sample exclusion list entry. |
-| `FlashIDA/test-data/configs/method_tag_targeting.xml` | Verify/create | Tag-based targeting mode config. |
-| `FlashIDA/test-data/configs/method_quant.xml` | Verify/create | Isobaric quant mode config with reporter m/z settings. |
-| `FlashIDA/test-data/configs/method_ms3_mode1.xml` | Verify/create | MS3 Source CID mode config. |
-| `FlashIDA/test-data/configs/method_ms3_mode2.xml` | Verify/create | MS3 SPS mode config. |
-| `FlashIDA/test-data/configs/method_ms3_mode3.xml` | Verify/create | MS3 HCD-triggered mode config. |
-| `FlashIDA/test-data/golden/phase4_*.tsv` | Create | Per-mode golden output files captured from a verified build (see Step 8). |
-| `FlashIDA/test-data/golden/README.md` | Modify | Document Phase 4 golden file provenance and the meaning of the `UseUnifiedBridge=True` golden files. |
+| `FlashIDA/test-data/configs/method_default.xml` | Verify/create | Standard DDA config with `UseUnifiedBridge=True` for Phase 4 regression tests. Key parameters: see `test-file-specification.md §3.2`. |
+| `FlashIDA/test-data/configs/method_deep.xml` | Verify/create | Deep mode config: higher `MaxMassCount`, lower `ScoreThreshold`. See `test-file-specification.md §3.2`. |
+| `FlashIDA/test-data/configs/method_inclusion.xml` | Verify/create | Inclusion list mode config. Inclusion list must contain the precursor mass from `ms2_hcd_fragment.txt`. See `test-file-specification.md §3.2`. |
+| `FlashIDA/test-data/configs/method_exclusion.xml` | Verify/create | Exclusion list mode config. Exclusion list must contain a mass present in `ms1_standard.txt`. See `test-file-specification.md §3.2`. |
+| `FlashIDA/test-data/configs/method_tag_targeting.xml` | Verify/create | Tag-based targeting mode config. See `test-file-specification.md §3.2`. |
+| `FlashIDA/test-data/configs/method_quant.xml` | Verify/create | Isobaric quant mode config: reporter m/z tolerance and fold change threshold must match reporter ions in `ms2_hcd_fragment.txt`. See `test-file-specification.md §3.2`. |
+| `FlashIDA/test-data/configs/method_ms3_mode1.xml` | Verify/create | MS3 Source CID mode config. See `test-file-specification.md §3.2`. |
+| `FlashIDA/test-data/configs/method_ms3_mode2.xml` | Verify/create | MS3 SPS mode config. See `test-file-specification.md §3.2`. |
+| `FlashIDA/test-data/configs/method_ms3_mode3.xml` | Verify/create | MS3 HCD-triggered mode config. See `test-file-specification.md §3.2`. |
+| `FlashIDA/test-data/golden/phase4_*.tsv` | Create | Per-mode golden output files captured from a verified build (see Step 8; full column schema at `test-file-specification.md §2.1`; provenance table at `test-file-specification.md §2.2`). |
+| `FlashIDA/test-data/golden/README.md` | Modify | Document Phase 4 golden file provenance and the meaning of the `UseUnifiedBridge=True` golden files, following the format described in `test-file-specification.md §2.3`. |
 
 ### CI Files
 
@@ -504,7 +520,33 @@ The regression runner script (`regression-runner.ps1`) must be updated to includ
 
 ## Test Cases
 
-All 19 tests added in this phase, with full descriptions, expected outcomes, and CI runner assignments.
+All 21 tests added in this phase, with full descriptions, expected outcomes, and CI runner assignments.
+
+### Test Summary (Quick Reference)
+
+| Test ID | What it verifies and why |
+|---------|--------------------------|
+| P4-U01 | `processScan` MS1 path correctly deconvolves a real peak array and pushes MS2 commands. Confirms the atomic command-count return replaces the racy `GetPeakGroupSize`/`GetIsolationWindows` pattern. |
+| P4-U02 | All 6 scoring branches (3 flag combinations × 2 depth modes) produce deterministic, distinct sort orders on the same peak array. Confirms every dispatch path is reachable and active. |
+| P4-U03 | Mass exclusion filtering suppresses previously-seen masses within the RT exclusion window while still targeting unexcluded masses. Confirms the exclusion state is applied in the MS1 path. |
+| P4-U04 | The MS2 path resolves a tracking ID from `scan_description`, logs `[TRACK-RESOLVE]`, and removes the entry from `pending_scan_map_`. Confirms the round-trip from MS1 command creation to MS2 tracking resolution. |
+| P4-U05 | MS3 commands are generated from MS2 deconvolution results and arrive with `msn_level=3` and `priority=3`. Confirms `selectMS3Targets_` and `buildMS3Command_` are reachable for any MS3 mode. |
+| P4-U06 | Conditional MS2 follow-ups satisfying the conditional criteria are pushed at `priority=2` and dequeued before `priority=1` commands. Confirms priority-queue ordering is correct. |
+| P4-U07 | `isDifferentiallyAbundant` gates a follow-up MS2 command: only spectra with reporter-ion ratio above `fold_change_threshold` produce a follow-up. Confirms the quant routing branch is active and selective. |
+| P4-U08 | Tag-based targeting expands the inclusion list from MS2 fragment matches so that a previously below-threshold mass receives an MS2 command on the next MS1 scan. Confirms the tag targeting integration into `processScan`. |
+| P4-U09 | Ten MS1+MS2 round-trips produce exactly 10 `[TRACK-CREATE]` and 10 `[TRACK-RESOLVE]` log entries with zero `[TRACK-EXPIRE]` and zero unresolved entries. A stale entry triggers `[TRACK-EXPIRE]`. Confirms the full TRACK audit trail. |
+| P4-I01 | With `UseUnifiedBridge=False`, the old bridge call sequence (`GetPeakGroupSize`, `GetIsolationWindows`) produces the same commands as Phase 3. Confirms the feature-flag gate leaves the legacy path completely intact. |
+| P4-I02 | With `UseUnifiedBridge=True`, `ProcessScan` returns > 0 and the returned commands match what the old path would generate for `ms1_standard.txt`. Confirms bridge-level correctness of the switch-over. |
+| P4-R01 | Flag-off (`UseUnifiedBridge=False`) regression: output must match the Phase 3 golden file line-for-line. Guards against any accidental behavioral change in the old code path from Phase 4 edits. |
+| P4-R02 | Standard DDA with `UseUnifiedBridge=True` matches `phase4_standard_dda.tsv`. The primary equivalence check that the unified path reproduces legacy DDA behavior. |
+| P4-R03 | Deep mode produces more precursor targets than standard DDA (lower score threshold). Confirms that the deep-mode scoring branch is active end-to-end and reflected in golden output. |
+| P4-R04 | Inclusion list mode: only masses listed in the inclusion list appear as MS2 targets. Confirms that the targeting filter suppresses unlisted masses in the unified path. |
+| P4-R05 | Exclusion list mode: masses in the exclusion list are absent from MS2 targets while others proceed normally. Confirms the exclusion filter applies in the unified path. |
+| P4-R06 | Tag-based targeting mode: tag-matched masses appear as MS2 targets even if below the top-N threshold. Confirms the tag targeting route runs within a full `Flash.exe -t` invocation. |
+| P4-R07 | Isobaric quant mode: differential-abundance gating is reflected in the golden output (follow-up MS2 commands present only for above-threshold spectra). Confirms the quant routing route end-to-end. |
+| P4-R08 | MS3 mode 1 (Source CID): MS3 commands at `priority=3` appear in output for a known MS2 scan. Confirms source-CID MS3 target selection and command generation. |
+| P4-R09 | MS3 mode 2 (SPS): MS3 commands with `num_isolation_stages=2` appear in output. Confirms SPS-specific command building end-to-end. |
+| P4-R10 | MS3 mode 3 (HCD-triggered): MS3 commands targeting charge-reduced precursor ions appear in output. Confirms HCD-triggered MS3 selection logic end-to-end. |
 
 ### Unit Tests — C++ (Tier 1, `ubuntu-latest`)
 
@@ -553,7 +595,7 @@ All regression tests run `Flash.exe -t` with a method config and compare output 
 | P4-R10 | MS3 mode 3 | `Flash.exe -t ms1_standard.txt output.tsv method_ms3_mode3.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode3.tsv`. |
 
 **Timing budget note:** 10 regression configs (P4-R01 through P4-R10) each invoke `Flash.exe -t` as a separate process. With process startup overhead, this easily reaches 10-20 minutes of the 20-minute Tier 3 budget. Monitor CI wall time on the first run. If the budget is exceeded:
-1. Parallelize: split the 10 configs across two jobs (`bridge-tests` and a new `regression-extended` job) using `needs` to share build artifacts.
+1. Parallelize: split the 10 configs across two jobs (`windows-tests` and a new `regression-extended` job) using `needs` to share build artifacts.
 2. Reduce: identify configs that are functionally redundant in test mode (e.g., if exclusion and inclusion list modes exercise the same code paths on the same small spectrum, they may be fast). Optimize test spectrum size.
 3. The flag-off regression (P4-R01) should be kept as a single fast run using the minimal smoke test spectrum, not the full `ms1_standard.txt`, to minimize its overhead.
 
@@ -579,7 +621,9 @@ The `cpp-unit-tests` CI job already runs `ctest -R FLASH` on `ubuntu-latest`. Th
 
 #### 2. Update Regression Runner with Phase 4 Configs
 
-In the CI `csharp-tests` job, the regression step that calls `regression-runner.ps1` must include all 10 Phase 4 configs. The script already loops over a `$configs` array — add the Phase 4 entries:
+The full `regression-runner.ps1` interface (parameters, invocation format, config array schema, `-captureMode` flag, and exit behavior) is defined in [`../test-file-specification.md §4.2`](../test-file-specification.md). The `compare_golden.py` tolerance rules applied per regression run are in `../test-file-specification.md §4.1`.
+
+In the CI `windows-tests` job, the regression step that calls `regression-runner.ps1` must include all 10 Phase 4 configs. The script already loops over a `$configs` array — add the Phase 4 entries:
 
 ```powershell
 @{ name="p4_standard_dda"; method="method_default.xml"; unified=$true; ms1="ms1_standard.txt"; ms2=$null; golden="phase4_standard_dda.tsv" },
@@ -597,27 +641,26 @@ If P4-R01 through P4-R10 exceed the 20-minute Tier 3 budget, split into two para
 ```yaml
 regression-core:
   runs-on: windows-latest
-  needs: [csharp-tests]
+  needs: [windows-tests]
   steps:
     - run: regression-runner.ps1 -configs core  # P4-R01, P4-R02, P4-R03
 
 regression-extended:
   runs-on: windows-latest
-  needs: [csharp-tests]
+  needs: [windows-tests]
   steps:
     - run: regression-runner.ps1 -configs extended  # P4-R04 through P4-R10
 ```
 
-Both jobs download the same build artifacts from `csharp-tests` using `actions/download-artifact`.
+Both jobs download the same build artifacts from `windows-tests` using `actions/download-artifact`.
 
-#### 4. Add P4-I01 and P4-I02 to `bridge-tests` Job
+#### 4. Add P4-I01 and P4-I02 as bridge verification steps in `windows-tests`
 
-The integration tests P4-I01 and P4-I02 are added to the `bridge-tests` job alongside the existing Phase 3 bridge tests:
+The integration tests P4-I01 and P4-I02 are added as bridge verification steps in `windows-tests` alongside the existing Phase 3 bridge tests:
 
 ```yaml
-bridge-tests:
+windows-tests:
   runs-on: windows-latest
-  needs: [csharp-tests]
   steps:
     - run: bridge-test-runner.exe  # existing Phase 3 tests
     - run: bridge-test-runner.exe --phase4  # P4-I01, P4-I02
@@ -652,11 +695,11 @@ Covered by the C++ unit test P4-U09 running in the `cpp-unit-tests` CI job on `u
 
 ### Verification 5: Race Condition Elimination
 
-Confirmed structurally by the passing of P4-I02 in the `bridge-tests` CI job: `ProcessScan` returning a non-zero count from a single call (no `GetPeakGroupSize` / `GetIsolationWindows` pair needed) is the observable proof. Document the elimination explicitly in the switch-over commit message.
+Confirmed structurally by the passing of P4-I02 in the bridge verification step in `windows-tests`: `ProcessScan` returning a non-zero count from a single call (no `GetPeakGroupSize` / `GetIsolationWindows` pair needed) is the observable proof. Document the elimination explicitly in the switch-over commit message.
 
 ### Verification 6: DLL Exports Still Include All Old Functions
 
-Automated by the `bridge-tests` CI job on `windows-latest`. The job runs `dumpbin /exports FlashIDA\dll\OpenMS.dll` as a step and asserts that all 5 new bridge functions (`ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId`, `CreateFLASHIda`, `DisposeFLASHIda`) and all legacy bridge functions (`GetPeakGroupSize`, `GetIsolationWindows`, `DeconvolveMS2`, etc.) are present in the export table. A green check on this step confirms the DLL export surface is correct without any local tooling.
+Automated by the bridge verification step in `windows-tests` on `windows-latest`. The step runs `dumpbin /exports FlashIDA\dll\OpenMS.dll` and asserts that all 5 new bridge functions (`ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId`, `CreateFLASHIda`, `DisposeFLASHIda`) and all legacy bridge functions (`GetPeakGroupSize`, `GetIsolationWindows`, `DeconvolveMS2`, etc.) are present in the export table. A green check on this step confirms the DLL export surface is correct without any local tooling.
 
 ---
 
@@ -697,7 +740,7 @@ The following checklist must be fully satisfied before Phase 4 is considered com
 
 - [ ] `FLASHIda_ProcessScan_test` is registered in `executables.cmake` and runs under `ctest -R FLASH`.
 - [ ] `regression-runner.ps1` includes all 10 Phase 4 configs.
-- [ ] CI total wall time for `csharp-tests` + regression jobs stays within budget (investigate parallelization if > 20 min).
+- [ ] CI total wall time for `windows-tests` + regression jobs stays within budget (investigate parallelization if > 20 min).
 - [ ] `flashida-ci.yml` triggers on `phase-4` branch and `flashida-v9-migration` branch.
 
 ### Documentation

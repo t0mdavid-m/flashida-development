@@ -7,6 +7,7 @@
 - [../baseline-plan.md](../baseline-plan.md) — Issue 3 (C++ Owns the Scan Queue, FAIMS portion) and Phase 6 specification
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 6 section and CI Environment Requirements
 - [../testing-strategy.md](../testing-strategy.md) — Phase 6 test plan
+- [../test-file-specification.md](../test-file-specification.md) — Authoritative reference for all test file formats, content requirements, size constraints, and directory layout. Sections referenced by this plan: 1.4 (`ms1_faims_3cv.txt`), 2.1–2.3 (golden file format and capture), 3.2 (`method_faims_3cv.xml` and `method_faims_skip.xml`), 4.1 (`compare_golden.py`).
 
 ---
 
@@ -37,14 +38,18 @@ The following must be in place before starting Phase 6 work.
 - Cache key matches the OpenMS submodule commit hash from Phase 4/5.
 
 **Phase 5 golden files exist:**
-- `FlashIDA/test-data/golden/standard_dda.tsv` (and all other mode golden files from Phase 4/5).
+- `FlashIDA/test-data/golden/phase4_standard_dda.tsv` (and all other mode golden files from Phase 4/5).
 - `FlashIDA/test-data/golden/faims_3cv.tsv` (FAIMS 3-CV cycling, captured during Phase 5 P5-R02 verification).
 - Both FAIMS method configs committed: `method_faims_3cv.xml` and `method_faims_skip.xml`.
 
 **Test data must be committed:**
-- `FlashIDA/test-data/spectra/ms1_faims_3cv.txt` — Real MS1 scans from a FAIMS acquisition. Must contain scans at multiple CV values (e.g., -40, -50, -60 V or whatever the actual experiment used), with CV annotation present in scan headers exactly as the instrument sets it, and different precursor populations at different CV values. For the adaptive skip test, some CV values should produce few precursors (to trigger the skip threshold) and some many. Do NOT construct this file synthetically — use real FAIMS experiment data.
-- `FlashIDA/test-data/configs/method_faims_3cv.xml` — FAIMS config with CV values matching those present in `ms1_faims_3cv.txt`, max_cv_skip=0. If the real data uses different CV values than the plan's defaults (-40, -50, -60), adjust the CV values in this file accordingly.
-- `FlashIDA/test-data/configs/method_faims_skip.xml` — FAIMS config with threshold and max_cv_skip > 0 (e.g., max_cv_skip=2, low precursor threshold). CV values must exactly match the CV annotations present in `ms1_faims_3cv.txt`. If the real data uses different CV values than the plan's defaults, adjust accordingly.
+- `FlashIDA/test-data/spectra/ms1_faims_3cv.txt` — Real MS1 scans from a FAIMS acquisition with CV annotations in every scan header. Full format specification, content requirements, size constraints, and the `prepare-test-data.py --include-cv` extraction command are in `../test-file-specification.md` Section 1.4. Phase 6-specific constraint: for the adaptive skip test (P6-R03), the file must contain at least one CV value that produces fewer than `cv_precursor_threshold` deconvolvable precursors and at least one that produces more — this precursor density variation must come from the real data, not from artificially discarding peaks.
+- `FlashIDA/test-data/configs/method_faims_3cv.xml` — FAIMS config with CV values matching those present in `ms1_faims_3cv.txt`, `max_cv_skip=0`. Format and CV value constraint are in `../test-file-specification.md` Section 3.2. If the real data uses different CV values than the plan's defaults (-40, -50, -60), adjust both this file and `method_faims_skip.xml` accordingly.
+- `FlashIDA/test-data/configs/method_faims_skip.xml` — FAIMS config with threshold and max_cv_skip > 0 (e.g., max_cv_skip=2, cv_precursor_threshold=15). CV values must exactly match the CV annotations in `ms1_faims_3cv.txt`. Format is in `../test-file-specification.md` Section 3.2. The `cv_precursor_threshold` value to use here is the value found in `ScanScheduler.cs` during Step 1 audit (read Step 1 before committing this file).
+
+### User-Provided Inputs
+
+Phase 6 requires `ms1_faims_3cv.txt` (introduced in Phase 5) to already be committed. No new user-provided spectrum data is needed. The FAIMS method configs must use CV values matching the actual annotations in your `ms1_faims_3cv.txt` data.
 
 ---
 
@@ -451,21 +456,23 @@ Adjust the `sourceDir` path to correctly resolve relative to the test DLL output
 
 Before triggering the C++ build, capture the Phase 5 FAIMS golden files that Phase 6 will regress against. The P6-R02 and P6-R03 tests compare Phase 6 output to these files.
 
-Because there is no local Windows machine available, golden file capture is done via CI artifact:
+**Golden file format and general capture procedure:** See `../test-file-specification.md` Sections 2.1 (TSV format and column definitions), 2.2 (inventory entry for `faims_3cv.tsv` and `faims_skip.tsv`), and 2.3 (CI artifact download and review steps). Golden files are never constructed manually.
+
+**Phase 6-specific capture workflow** (no local Windows machine available):
 
 1. Push the Phase 5 branch with `ms1_faims_3cv.txt`, `method_faims_3cv.xml`, and `method_faims_skip.xml` committed.
 2. The CI regression step runs `Flash.exe -t` for each config and uploads the output TSV files as artifacts.
 3. Download the artifacts from the CI run, review them to confirm the CV transition log entries and skip events are present and correct.
-4. Commit the downloaded files as `FlashIDA/test-data/golden/faims_3cv.tsv` and `FlashIDA/test-data/golden/faims_skip.tsv`.
+4. Commit the downloaded files as `FlashIDA/test-data/golden/faims_3cv.tsv` and `FlashIDA/test-data/golden/faims_skip.tsv`. Update `FlashIDA/test-data/golden/README.md` with the CI run URL and OpenMS commit hash per the procedure in `../test-file-specification.md` Section 2.3.
 
 Both golden files must be committed before the Phase 6 C++ build is triggered in CI.
 
 **P6-R02 golden file: `faims_3cv.tsv`**
-- Captured from the Phase 5 CI run with `method_faims_3cv.xml`.
+- Captured from the Phase 5 CI run with `method_faims_3cv.xml` and `ms1_faims_3cv.txt` (spec: `../test-file-specification.md` Section 2.2).
 - Must record the expected CV transition log entries alongside the deconvolution output.
 
 **P6-R03 golden file: `faims_skip.tsv`**
-- Captured from the Phase 5 CI run with `method_faims_skip.xml`.
+- Captured from the Phase 5 CI run with `method_faims_skip.xml` and `ms1_faims_3cv.txt` (spec: `../test-file-specification.md` Section 2.2).
 - Must contain log entries showing CV skip events (the skip count in the log must be non-zero).
 
 ---
@@ -479,10 +486,10 @@ After all code changes are committed:
 3. Wait for the build to complete (30-60 min).
 4. Trigger `flashida-ci.yml` and verify:
    - `cpp-unit-tests` job (ubuntu-latest): P6-U01 through P6-U06 all pass.
-   - `csharp-tests` job (windows-latest): P6-U07, P6-U08 pass; all prior-phase C# tests pass.
-   - `bridge-tests` job (windows-latest): P6-I01 passes.
-   - `csharp-tests` regression step: P6-R01, P6-R02, P6-R03 all pass.
-   - `stress-tests` job (windows-latest): P6-S01 passes.
+   - `windows-tests` job (windows-latest): P6-U07, P6-U08 pass; all prior-phase C# tests pass.
+   - bridge verification step in `windows-tests` (windows-latest): P6-I01 passes.
+   - `windows-tests` regression step: P6-R01, P6-R02, P6-R03 all pass.
+   - stress test step in `windows-tests` (windows-latest): P6-S01 passes.
 5. If any test fails, all debugging is done via CI. Add diagnostic logging to the relevant code paths, push a new commit, and inspect the CI job logs and uploaded artifacts to identify the failure. See the debugging guide in the Working Product Verification section.
 
 ---
@@ -545,11 +552,11 @@ The existing `FAIMSScanProcessor.ProcessMS` calls `scanScheduler.AddScan()` insi
 
 | File | Change type | Description |
 |------|-------------|-------------|
-| `FlashIDA/test-data/configs/method_faims_3cv.xml` | Create (if not from Phase 5) | FAIMS config: cv_values matching those in `ms1_faims_3cv.txt`, max_cv_skip=0, precursor threshold at default |
-| `FlashIDA/test-data/configs/method_faims_skip.xml` | Create (if not from Phase 5) | FAIMS config: cv_values matching those in `ms1_faims_3cv.txt`, max_cv_skip=2, cv_precursor_threshold=15 |
-| `FlashIDA/test-data/spectra/ms1_faims_3cv.txt` | Provide (real data) | Real MS1 scans from a FAIMS acquisition with CV annotations in scan headers, multiple CV values, and varying precursor populations. Do NOT construct synthetically. |
-| `FlashIDA/test-data/golden/faims_3cv.tsv` | Create | Phase 5 FAIMS 3-CV output, used as Phase 6 regression baseline |
-| `FlashIDA/test-data/golden/faims_skip.tsv` | Create | Phase 5 FAIMS adaptive skip output, used as Phase 6 regression baseline |
+| `FlashIDA/test-data/configs/method_faims_3cv.xml` | Create (if not from Phase 5) | FAIMS config: cv_values matching those in `ms1_faims_3cv.txt`, max_cv_skip=0, precursor threshold at default. Format spec: `../test-file-specification.md` Section 3.2. |
+| `FlashIDA/test-data/configs/method_faims_skip.xml` | Create (if not from Phase 5) | FAIMS config: cv_values matching those in `ms1_faims_3cv.txt`, max_cv_skip=2, cv_precursor_threshold per Step 1 audit. Format spec: `../test-file-specification.md` Section 3.2. |
+| `FlashIDA/test-data/spectra/ms1_faims_3cv.txt` | Provide (real data) | Real FAIMS MS1 scans with CV annotations; must include density variation across CV values for P6-R03 (see Prerequisites). Full format and extraction command: `../test-file-specification.md` Section 1.4. |
+| `FlashIDA/test-data/golden/faims_3cv.tsv` | Create | Phase 5 FAIMS 3-CV output, used as Phase 6 regression baseline. TSV format and capture procedure: `../test-file-specification.md` Sections 2.1 and 2.3. Inventory entry: Section 2.2. |
+| `FlashIDA/test-data/golden/faims_skip.tsv` | Create | Phase 5 FAIMS adaptive skip output, used as Phase 6 regression baseline. TSV format and capture procedure: `../test-file-specification.md` Sections 2.1 and 2.3. Inventory entry: Section 2.2. |
 
 ---
 
@@ -574,6 +581,26 @@ The existing `FAIMSScanProcessor.ProcessMS` calls `scanScheduler.AddScan()` insi
 | P6-S01 | 4 | windows-latest | Stress: 50 rapid scan events during CV transition, no mutex deadlock |
 
 Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
+
+---
+
+### Test Summary (Quick Reference)
+
+| Test ID | Summary |
+|---------|---------|
+| P6-U01 | Verifies that the C++ state machine cycles through the configured CV values in the correct order and wraps back to the first CV after the last, confirming the basic cycling invariant. |
+| P6-U02 | Verifies that when an MS1 scan produces fewer precursors than `cv_precursor_threshold`, the adaptive skip logic fires: `shouldSkipCV_()` returns true, the skip counter increments, and the CV advances, confirming the threshold comparison is correct. |
+| P6-U03 | Verifies that after `max_cv_skip` consecutive adaptive skips, the skip limit is enforced: `shouldSkipCV_()` returns false even with a still-sparse scan, the CV is force-advanced, and the skip counter resets to zero. |
+| P6-U04 | Verifies that every command returned by `getNextScanCommand()` — whether dequeued from a priority queue or generated as an MS1 fallback — has `faims_cv` set to the current CV value, with no bypass code paths. |
+| P6-U05 | Verifies that when a CV transition is triggered, the next command returned is an MS1 carrying the new CV value, and that all subsequent queued MS2 commands are re-stamped with the new CV at dequeue time. |
+| P6-U06 | Verifies that in non-FAIMS mode (empty `cv_values`), all dequeued commands have `faims_cv == 0.0` and no FAIMS state machine code path is activated, guarding against accidental interference with standard DDA operation. |
+| P6-U07 | Static analysis test confirming that `ScanScheduler.cs` has been fully excised: no `.cs` source file in the Flash project contains the string `ScanScheduler`, enforcing the deletion done in Step 9. |
+| P6-U08 | Static analysis test confirming that `FAIMSScanProcessor.cs` has been fully excised: no `.cs` source file in the Flash project contains the string `FAIMSScanProcessor`, enforcing the deletion done in Step 9. |
+| P6-I01 | Verifies end-to-end FAIMS CV cycling through the P/Invoke bridge: `ProcessScan` and `GetNextScanCommand` called from C# produce the correct CV-stamped command sequence across a full 3-CV cycle, confirming correct P/Invoke marshaling of the `faims_cv` field. |
+| P6-R01 | Regression test confirming that Phase 6 code changes did not alter non-FAIMS output: `Flash.exe -t` with `method_default.xml` must produce output identical to the Phase 5 `phase4_standard_dda.tsv` golden file. |
+| P6-R02 | Regression test confirming that the C++ FAIMS state machine replicates the deleted `ScanScheduler.cs` exactly for 3-CV cycling: output and CV transition log entries must match the Phase 5 `faims_3cv.tsv` golden file. |
+| P6-R03 | Regression test confirming that adaptive CV skipping behavior is preserved after the C# → C++ port: skip events, forced advances, and deconvolution output must match the Phase 5 `faims_skip.tsv` golden file. |
+| P6-S01 | Stress test that runs 50 rapid `ProcessScan` calls and concurrent `GetNextScanCommand` calls to verify `queue_mutex_` correctness during CV transitions: no deadlock, no data corruption, and no access violations within the 10-minute budget. |
 
 ---
 
@@ -649,7 +676,7 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 
 **Expected outcome:** Zero hits. Test fails if any C# source file outside the test project mentions `ScanScheduler`. This test is the enforcer for Step 9.
 
-**CI runner:** `windows-latest` (included in the `csharp-tests` job).
+**CI runner:** `windows-latest` (included in the `windows-tests` job).
 
 ---
 
@@ -661,7 +688,7 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 
 **Expected outcome:** Zero hits. Test fails if any C# source file outside the test project mentions `FAIMSScanProcessor`.
 
-**CI runner:** `windows-latest` (included in the `csharp-tests` job).
+**CI runner:** `windows-latest` (included in the `windows-tests` job).
 
 ---
 
@@ -678,7 +705,7 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 
 **Expected outcome:** CV values cycle correctly through the bridge boundary. The P/Invoke marshaling of the `double faims_cv` field in `ScanCommand` is verified to be correct (no endian or alignment issues).
 
-**Requirements:** Both `OpenMS.dll` and Thermo iAPI DLLs must be present. Runs in `bridge-tests` CI job on `windows-latest`.
+**Requirements:** Both `OpenMS.dll` and Thermo iAPI DLLs must be present. Runs in the bridge verification step in `windows-tests` on `windows-latest`.
 
 ---
 
@@ -688,9 +715,9 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 
 **Description:** Run `Flash.exe -t` with `method_default.xml` (standard DDA, no FAIMS) and compare output to the Phase 5 golden file for standard DDA.
 
-**Expected outcome:** Output matches the Phase 5 `standard_dda.tsv` golden file within numeric tolerance. Zero regressions in non-FAIMS modes. This test verifies that the FAIMS state machine code paths are completely bypassed when `faims_cv_values_` is empty, and that no code change in Phase 6 accidentally perturbed the non-FAIMS logic.
+**Expected outcome:** Output matches the Phase 5 `phase4_standard_dda.tsv` golden file within numeric tolerance. Zero regressions in non-FAIMS modes. This test verifies that the FAIMS state machine code paths are completely bypassed when `faims_cv_values_` is empty, and that no code change in Phase 6 accidentally perturbed the non-FAIMS logic.
 
-**Comparison tool:** `compare_golden.py` from `testing-strategy.md` Section 6.2.
+**Comparison tool:** `compare_golden.py` — usage, tolerance rules, and failure conditions are specified in `../test-file-specification.md` Section 4.1.
 
 ---
 
@@ -734,7 +761,7 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 
 **Iteration count:** 50 `ProcessScan` calls (reduced from production-scale to fit within the 10-minute Tier 4 budget).
 
-**CI runner:** `windows-latest` (requires both DLL sets; included in the `stress-tests` job).
+**CI runner:** `windows-latest` (requires both DLL sets; included in the stress test step in `windows-tests`).
 
 **Implementation:** This test is a C# NUnit test using `Task.WhenAll` with `CancellationToken` for the watchdog. The synthetic spectrum passed to `ProcessScan` must produce at least 1 precursor to ensure `precursor_count_for_cv_` increments and `updateCV_()` is called from Thread A.
 
@@ -744,7 +771,7 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 
 ### Workflow file: `.github/workflows/flashida-ci.yml`
 
-Phase 6 requires one new CI job (`stress-tests`) if it was not already added in an earlier phase, and minor additions to the existing jobs. The overall structure from `testing-strategy.md` Section 3.1 is unchanged.
+Phase 6 requires one new stress test step in `windows-tests` if it was not already added in an earlier phase, and minor additions to the existing jobs. The overall structure from `testing-strategy.md` Section 3.1 is unchanged.
 
 #### Additions to `cpp-unit-tests` job (ubuntu-latest)
 
@@ -752,11 +779,11 @@ The existing `ctest -R FLASH` command will automatically pick up `FLASHIdaFAIMS_
 
 If the Phase 6 C++ test binary is in a new file (`FLASHIdaFAIMS_test.cpp`), verify the CMakeLists includes it. The cmake filter `ctest -R FLASH` should match if the test name contains "FLASH" — confirm the test is registered with a name matching this pattern. If not, update the filter to `ctest -R "FLASH|FAIMS"`.
 
-#### Additions to `csharp-tests` job (windows-latest)
+#### Additions to `windows-tests` job (windows-latest)
 
 No structural changes to the job. `DeadCodeTests.cs` is compiled as part of `Flash.Tests.csproj` and run automatically by `nunit3-console`. The P6-U07 and P6-U08 tests will be picked up without YAML changes.
 
-#### Additions to `bridge-tests` job (windows-latest)
+#### Bridge verification step in `windows-tests` job (windows-latest)
 
 Add a step to run P6-I01:
 
@@ -768,7 +795,7 @@ Add a step to run P6-I01:
 
 Adjust the filter to match the NUnit test name as defined in `BridgeTests.cs` or wherever P6-I01 is implemented.
 
-#### Additions to `stress-tests` job (windows-latest)
+#### Stress test step in `windows-tests` job (windows-latest)
 
 Add a step to run P6-S01:
 
@@ -781,7 +808,7 @@ Add a step to run P6-S01:
 
 The `timeout-minutes: 10` step-level timeout is in addition to the NUnit internal watchdog. If `nunit3-console` hangs (deadlock), the step-level timeout terminates it and the job fails with a clear message.
 
-#### Regression step in `csharp-tests` job
+#### Regression step in `windows-tests` job
 
 Add the following configs to the regression runner (`regression-runner.ps1` or equivalent):
 
@@ -809,13 +836,13 @@ After Build #3 is complete and all CI jobs pass, verify the following via the au
 
 ### 1. Non-FAIMS modes are unchanged
 
-Confirmed by the `csharp-tests` CI job regression step running `Flash.exe -t` with `method_default.xml` and comparing to the Phase 5 standard DDA golden file. (Automated: P6-R01.)
+Confirmed by the `windows-tests` CI job regression step running `Flash.exe -t` with `method_default.xml` and comparing to the Phase 5 standard DDA golden file. (Automated: P6-R01.)
 
 If P6-R01 fails, it indicates that code changes in `getNextScanCommand()` accidentally altered behavior in the non-FAIMS code paths. The `isFAIMS_()` guard in `injectCVIntoCommand_()` must return false and inject 0.0 without any side effects.
 
 ### 2. 3-CV cycling matches old behavior exactly
 
-Confirmed by the `csharp-tests` CI job regression step running `Flash.exe -t` with `method_faims_3cv.xml`. Inspect the CI log output and downloaded artifact for CV transition messages. Verify:
+Confirmed by the `windows-tests` CI job regression step running `Flash.exe -t` with `method_faims_3cv.xml`. Inspect the CI log output and downloaded artifact for CV transition messages. Verify:
 - First CV transition: from the first CV to the second (appears after the first MS1 cycle).
 - Subsequent transitions follow the configured CV order with correct wrap-around.
 - Each transition is preceded by exactly one MS1 injection with the new CV.
@@ -825,7 +852,7 @@ Confirmed by the `csharp-tests` CI job regression step running `Flash.exe -t` wi
 
 ### 3. Adaptive CV skipping works correctly
 
-Confirmed by the `csharp-tests` CI job regression step running `Flash.exe -t` with `method_faims_skip.xml`. Inspect the CI log output for CV skip events with the correct skip count and forced advance after `max_cv_skip` consecutive skips. (Automated: P6-R03, P6-U02, P6-U03.)
+Confirmed by the `windows-tests` CI job regression step running `Flash.exe -t` with `method_faims_skip.xml`. Inspect the CI log output for CV skip events with the correct skip count and forced advance after `max_cv_skip` consecutive skips. (Automated: P6-R03, P6-U02, P6-U03.)
 
 ### 4. Skip limit is enforced
 
@@ -833,11 +860,11 @@ Confirmed by inspecting the same CI log as item 3 above. Verify that no sequence
 
 ### 5. ScanScheduler and FAIMSScanProcessor are fully deleted
 
-Confirmed by the `csharp-tests` CI job running P6-U07 and P6-U08. (Automated: P6-U07, P6-U08.)
+Confirmed by the `windows-tests` CI job running P6-U07 and P6-U08. (Automated: P6-U07, P6-U08.)
 
 ### 6. No race conditions under load
 
-P6-S01 runs as the `stress-tests` CI job. If P6-S01 reports a deadlock, diagnose by inspecting the CI log output for the `stress-tests` job. Check that `queue_mutex_` acquisition points in `processScan()` and `getNextScanCommand()` hold the lock for the entire duration of their queue operations, and that no code path inside `updateCV_()` attempts to re-acquire it (it must not; it is a private method that assumes the lock is already held).
+P6-S01 runs as the stress test step in `windows-tests`. If P6-S01 reports a deadlock, diagnose by inspecting the CI log output for the stress test step in `windows-tests`. Check that `queue_mutex_` acquisition points in `processScan()` and `getNextScanCommand()` hold the lock for the entire duration of their queue operations, and that no code path inside `updateCV_()` attempts to re-acquire it (it must not; it is a private method that assumes the lock is already held).
 
 ### 7. Full prior-phase regression
 
@@ -852,7 +879,7 @@ Confirmed by the full CI run. All 64 prior-phase tests must still pass (cumulati
 4. The first divergence point in the traces identifies the behavioral difference. Iterate: fix the code, push a new commit, inspect CI logs again.
 
 **If P6-S01 fails with a deadlock:**
-1. Diagnose by inspecting CI log output from the `stress-tests` job.
+1. Diagnose by inspecting CI log output from the stress test step in `windows-tests`.
 2. Verify that `updateCV_()` is called only from within a context where `queue_mutex_` is already held (i.e., from inside `processScan()` which holds the lock, or from inside `getNextScanCommand()` which holds the lock).
 3. Verify there is no call to `getNextScanCommand()` or `processScan()` from within `updateCV_()` or any method it calls.
 4. Check whether the synthetic spectrum used in the stress test contains more than `MAX_ISOLATION_STAGES` peaks — oversized input could cause issues.
@@ -881,7 +908,7 @@ All of the following must be true before Phase 6 is considered complete:
 - [ ] P6-R02 CI run: `Flash.exe -t` with `method_faims_3cv.xml` produces CV transition log entries matching the Phase 5 golden file exactly.
 - [ ] P6-R03 CI run: `Flash.exe -t` with `method_faims_skip.xml` produces skip event log entries matching the Phase 5 golden file exactly.
 - [ ] P6-R01 CI run: `Flash.exe -t` with `method_default.xml` (non-FAIMS) produces output matching the Phase 5 standard DDA golden file exactly.
-- [ ] P6-S01 passes in the `stress-tests` CI job within the 10-minute budget with no deadlock, no data corruption, and no access violations.
+- [ ] P6-S01 passes in the stress test step in `windows-tests` within the 10-minute budget with no deadlock, no data corruption, and no access violations.
 - [ ] Build #3 `OpenMS.dll` artifact is stored in CI with cache key matching the Phase 6 OpenMS submodule commit hash.
 - [ ] Phase 6 golden files (`faims_3cv.tsv`, `faims_skip.tsv`) are committed to `FlashIDA/test-data/golden/` and the `golden/README.md` is updated to document their provenance.
 - [ ] The written behavioral audit from Step 1 is preserved (as a comment block in `FLASHIda.cpp` or as a committed document in `plans/development/Phase_6/`) for future reference.

@@ -7,6 +7,7 @@
 - [../baseline-plan.md](../baseline-plan.md) — Issue 8 specification (authoritative)
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 1 section and CI requirements
 - [../testing-strategy.md](../testing-strategy.md) — Phase 1 test plan
+- [../test-file-specification.md](../test-file-specification.md) — Authoritative format requirements for all test files (spectrum files, golden TSVs, config XMLs, JSON reference files)
 
 ---
 
@@ -23,8 +24,8 @@ Replace the fragile space-delimited token string (`ToFLASHDeconvInput()`) that C
 The following must exist and pass before Phase 1 work begins:
 
 - `FlashIDA/src/Flash/Flash.Tests/Flash.Tests.csproj` — NUnit test project compiles and runs.
-- `FlashIDA/test-data/spectra/ms1_smoke_test.txt` — Minimal test spectrum committed.
-- `FlashIDA/test-data/golden/baseline_phase0.tsv` — Golden file captured from current `Flash.exe -t` run and committed.
+- `FlashIDA/test-data/spectra/ms1_smoke_test.txt` — Minimal test spectrum committed. See [test-file-specification.md](../test-file-specification.md) Section 1.1 for exact format requirements.
+- `FlashIDA/test-data/golden/baseline_phase0.tsv` — Golden file captured from current `Flash.exe -t` run and committed. See [test-file-specification.md](../test-file-specification.md) Sections 2.1 and 2.3 for column layout, comparison tolerances, and capture procedure.
 - `FlashIDA/test-data/golden/README.md` — Documents golden file provenance.
 - All P0-U01 through P0-I02 and P0-R01 pass in CI.
 
@@ -38,6 +39,10 @@ The following must exist and pass before Phase 1 work begins:
 ### Branch state
 
 Working on branch `flashida-v9-migration` (FlashIDA) with OpenMS submodule on branch `flashida-v9-bridge`.
+
+### User-Provided Inputs
+
+No new user-provided data is required for Phase 1. All inputs (`ms1_smoke_test.txt`, `baseline_phase0.tsv`, Thermo DLLs, OpenMS DLLs) were established in Phase 0.
 
 ---
 
@@ -202,11 +207,11 @@ The `DllImport` declaration for `CreateFLASHIda` does not change — it still ta
 
 ### Step 5 — Add test data files
 
-The following files must be created and committed to the repository:
+The following files must be created and committed to the repository. See [test-file-specification.md](../test-file-specification.md) for the canonical directory layout (Section 5), config file inventory (Section 3.2), and JSON reference file format (Section 3.3).
 
 **`FlashIDA/test-data/configs/method_json_roundtrip.xml`**
 
-A full-featured `method.xml` variant that exercises every JSON field. Start from `FlashIDA/src/Flash/etc/method.xml` and add values for:
+A full-featured `method.xml` variant that exercises every JSON field. The canonical description of this file (key parameters, purpose) is in [test-file-specification.md](../test-file-specification.md) Section 3.2. In summary: start from `FlashIDA/src/Flash/etc/method.xml` and add values for:
 - `PrecursorSelection`: non-default values for `MinCharge`, `MaxCharge`, `HCDEnergy`, `Tolerances`
 - `AcquisitionModes`: `TargetingMode=None`, `Developer.PrecursorSelection.UseIDScore=False`
 - `MSSettings.FAIMS`: `CVValues` with 3 values (e.g., `[-40, -50, -60]`)
@@ -214,20 +219,24 @@ A full-featured `method.xml` variant that exercises every JSON field. Start from
 - `MSSettings.ParameterOptimization`: `Active=False`
 - Multiple MS2 entries (at least 2) to verify the `ms2` JSON array
 
+File must be < 5 KB. Stored in `FlashIDA/test-data/configs/`.
+
 **`FlashIDA/test-data/json/config_default.json`**
 
-The expected JSON output when `ToJSON()` is called on a `MethodParameters` loaded from `FlashIDA/src/Flash/etc/method.xml` (the default config). Generated via CI artifact capture:
+The expected JSON output when `ToJSON()` is called on a `MethodParameters` loaded from `FlashIDA/src/Flash/etc/method.xml` (the default config). See [test-file-specification.md](../test-file-specification.md) Section 3.3 for format requirements: standard JSON, UTF-8, 2-space indentation; keys must exactly match the JSON schema in `baseline-plan.md` Issue 8.
+
+Generated via CI artifact capture:
 1. Push the implementation branch with a temporary CI step that writes `ToJSON()` output to an artifact.
-2. The CI `csharp-tests` job runs, uploads the generated JSON as a build artifact.
+2. The CI `windows-tests` job runs, uploads the generated JSON as a build artifact.
 3. Developer downloads the artifact from the GitHub Actions run, reviews it, and commits it as the golden file.
 
 This is the same CI-artifact-based golden file capture workflow used in Phase 0. No local Windows execution is required.
 
 **`FlashIDA/test-data/json/config_full.json`**
 
-The expected JSON output when `ToJSON()` is called on `method_json_roundtrip.xml`. Generated via the same CI artifact capture procedure. This exercises all array fields and non-default values.
+The expected JSON output when `ToJSON()` is called on `method_json_roundtrip.xml`. Generated via the same CI artifact capture procedure. This exercises all array fields and non-default values. See [test-file-specification.md](../test-file-specification.md) Section 3.3 for format: standard JSON, UTF-8, 2-space indentation; keys match `baseline-plan.md` Issue 8 schema.
 
-Both JSON files must be valid JSON (parseable by `JavaScriptSerializer`). Use 2-space indented formatting if `JavaScriptSerializer` supports it, otherwise minified is acceptable (the comparison test does semantic comparison, not string comparison).
+Both JSON files are stored in `FlashIDA/test-data/json/` (see Section 5 directory layout in the spec). The P1-U03 and P1-U05 comparison tests perform semantic comparison (deserialize both and compare field values), not string comparison, so formatting differences between a 2-space-indented golden file and minified actual output do not cause false failures.
 
 ---
 
@@ -707,11 +716,13 @@ internal static class TestBridgeHelper
 
 ### Test data files
 
+See [test-file-specification.md](../test-file-specification.md) for exact format requirements: Section 3.2 for config XML files, Section 3.3 for JSON reference files, and Section 5 for the expected directory layout under `FlashIDA/test-data/`.
+
 | File | Action | Description |
 |------|--------|-------------|
-| `FlashIDA/test-data/configs/method_json_roundtrip.xml` | Create | Full-featured method config exercising all JSON schema fields; multiple MS2 entries; non-default values |
-| `FlashIDA/test-data/json/config_default.json` | Create | Expected `ToJSON()` output for `method_default.xml`; committed golden file |
-| `FlashIDA/test-data/json/config_full.json` | Create | Expected `ToJSON()` output for `method_json_roundtrip.xml`; committed golden file |
+| `FlashIDA/test-data/configs/method_json_roundtrip.xml` | Create | Full-featured method config exercising all JSON schema fields; multiple MS2 entries; non-default values. See spec Section 3.2. |
+| `FlashIDA/test-data/json/config_default.json` | Create | Expected `ToJSON()` output for `method_default.xml`; committed golden file. See spec Section 3.3 for format (UTF-8, 2-space indent, keys from Issue 8 schema). |
+| `FlashIDA/test-data/json/config_full.json` | Create | Expected `ToJSON()` output for `method_json_roundtrip.xml`; committed golden file. See spec Section 3.3. |
 
 ### No changes to these files
 
@@ -730,6 +741,21 @@ internal static class TestBridgeHelper
 ## Test Cases
 
 All 10 Phase 1 tests plus full regression of Phase 0 (7 tests) must pass.
+
+### Test Summary (Quick Reference)
+
+| Test ID | Summary |
+|---------|---------|
+| P1-U01 | Verifies that `ToJSON()` produces a string that is syntactically valid JSON. This is the baseline sanity check — if serialization is broken entirely, all downstream tests catch it here first. |
+| P1-U02 | Verifies that the JSON output contains all 8 required top-level section keys (`deconvolution`, `precursor_selection`, `quantification`, `faims`, `ms_settings`, `scheduling`, `exploration`, `files`). Ensures no section is accidentally omitted during construction of `JsonMethodConfig`. |
+| P1-U03 | Spot-checks that concrete field values parsed from a known XML config (`method_json_roundtrip.xml`) appear correctly in the JSON string. Catches field-mapping mistakes such as a wrong property name or off-by-one in array indexing. |
+| P1-U04 | Verifies that `ms_settings.ms2` is serialized as a JSON array and that its length matches the number of MS2 entries in the source XML. Specifically guards against the MS2 list being collapsed to a single object or dropped entirely. |
+| P1-U05 | Full round-trip test: `MethodParameters` loaded from `method_json_roundtrip.xml` is serialized to JSON and then deserialized; the FAIMS CV values array count and the `scheduling` section keys are checked. Confirms that both array types and the new XML sections survive the full serialize/deserialize cycle. |
+| P1-I01 | Calls `CreateFLASHIda` via P/Invoke with a JSON string and asserts a non-null handle is returned. Verifies that the C++ JSON parsing branch does not crash and correctly initializes the `FLASHIda` object end-to-end. |
+| P1-I02 | Calls `CreateFLASHIda` with the legacy space-delimited token string and asserts a non-null handle. Verifies that the auto-detect fallback (`arg[0] != '{'`) continues to work correctly after the JSON branch is introduced, so existing behavior is not broken. |
+| P1-I03 | Calls `CreateFLASHIda` with a JSON string derived from `method_json_roundtrip.xml` (non-default values, multiple FAIMS CVs, multiple MS2 entries) and asserts a non-null handle. Confirms that a more complex, non-trivial JSON payload does not trigger a parse error or crash in C++. |
+| P1-R01 | Runs `Flash.exe -t` end-to-end with the JSON config path active (default method config) and compares the deconvolution output against `baseline_phase0.tsv`. Verifies that switching from the legacy string to JSON does not change any deconvolution results. |
+| P1-R02 | Runs `Flash.exe -t` with the legacy string format forced via the auto-detect fallback and compares output against `baseline_phase0.tsv`. Verifies that the legacy path still produces bit-identical results after the JSON branch is added alongside it. |
 
 ### Tier 1 — C# Unit Tests
 
@@ -751,10 +777,12 @@ All 10 Phase 1 tests plus full regression of Phase 0 (7 tests) must pass.
 
 ### Tier 3 — Regression Tests
 
+Both P1-R01 and P1-R02 use `ms1_smoke_test.txt` as the spectrum input and `baseline_phase0.tsv` as the golden reference. See [test-file-specification.md](../test-file-specification.md) Section 1.1 for the exact format of `ms1_smoke_test.txt`, Section 2.1 for the 15-column TSV format and comparison tolerances of `baseline_phase0.tsv`, and Section 4.1 for `compare_golden.py` usage and tolerance rules.
+
 | Test ID | Script / Config | Description | Expected Outcome | Runner |
 |---------|----------------|-------------|-----------------|--------|
-| P1-R01 | CI `csharp-tests` job, `method_default.xml` via JSON path | `Flash.exe -t` with JSON config active produces identical output to Phase 0 golden | `compare_golden.py baseline_phase0.tsv output.tsv` exits 0; automated by CI job `csharp-tests` | `windows-latest` |
-| P1-R02 | CI `csharp-tests` job, legacy string override | `Flash.exe -t` with legacy format (auto-detect fallback) produces identical output | `compare_golden.py baseline_phase0.tsv output.tsv` exits 0; automated by CI job `csharp-tests` | `windows-latest` |
+| P1-R01 | CI `windows-tests` job, `method_default.xml` via JSON path | `Flash.exe -t` with JSON config active produces identical output to Phase 0 golden | `compare_golden.py baseline_phase0.tsv output.tsv` exits 0; automated by CI job `windows-tests` | `windows-latest` |
+| P1-R02 | CI `windows-tests` job, legacy string override | `Flash.exe -t` with legacy format (auto-detect fallback) produces identical output | `compare_golden.py baseline_phase0.tsv output.tsv` exits 0; automated by CI job `windows-tests` | `windows-latest` |
 
 **Regression from Phase 0:** All 7 P0-* tests must pass as part of the Phase 1 CI run. No Phase 0 test is removed.
 
@@ -766,7 +794,7 @@ All 10 Phase 1 tests plus full regression of Phase 0 (7 tests) must pass.
 
 ### What changes in `flashida-ci.yml`
 
-Phase 1 does not require a new CI job structure. The existing `csharp-tests` job from Phase 0 is extended:
+Phase 1 does not require a new CI job structure. The existing `windows-tests` job from Phase 0 is extended:
 
 1. **Add `JsonConfigTests.cs` to the test run.** Since the new file is in the same `Flash.Tests.csproj`, it is automatically picked up by `nunit3-console Flash.Tests.dll`. No workflow change needed.
 
@@ -775,18 +803,20 @@ Phase 1 does not require a new CI job structure. The existing `csharp-tests` job
    - `FlashIDA/test-data/json/config_full.json`
    - `FlashIDA/test-data/configs/method_json_roundtrip.xml`
 
-3. **Add P1-R01 and P1-R02 regression steps** to the `csharp-tests` job (or the `regression` sub-step within it). These run `Flash.exe -t` with the default method config (which now uses JSON) and compare against `baseline_phase0.tsv`.
+3. **Add P1-R01 and P1-R02 regression steps** to the `windows-tests` job (or the `regression` sub-step within it). These run `Flash.exe -t` with the default method config (which now uses JSON) and compare against `baseline_phase0.tsv`.
 
-The regression runner script `regression-runner.ps1` must be updated to include the P1 configs:
+The regression runner script `regression-runner.ps1` must be updated to include the P1 configs. See [test-file-specification.md](../test-file-specification.md) Section 4.2 for the full `regression-runner.ps1` parameter schema, config array format, and exit behavior. The Phase 1 addition to the config array is:
 
 ```powershell
 $configs = @(
     # Phase 0
-    @{ name="baseline"; method="method_default.xml"; ms1="ms1_smoke_test.txt"; golden="baseline_phase0.tsv" },
+    @{ name="baseline"; method="method_default.xml"; ms1="ms1_smoke_test.txt"; ms2=$null; golden="baseline_phase0.tsv" },
     # Phase 1 (same golden as Phase 0 — verifying no behavioral change)
-    @{ name="p1_json";  method="method_default.xml"; ms1="ms1_smoke_test.txt"; golden="baseline_phase0.tsv" },
+    @{ name="p1_json";  method="method_default.xml"; ms1="ms1_smoke_test.txt"; ms2=$null; golden="baseline_phase0.tsv" },
 )
 ```
+
+Note: the `ms2` field is required in the runner's config object schema (see spec Section 4.2); set it to `$null` for configs that do not use an MS2 spectrum file.
 
 4. **DLL placement.** OpenMS DLLs (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`) must be in `FlashIDA/dll/`. Thermo DLLs must be in `FlashIDA/dependencies/`. Both are restored via secrets/cache as established in Phase 0. No change to secret strategy.
 
@@ -816,11 +846,11 @@ After all implementation steps are complete, verify the working product by inspe
 
 **Verification 1: `Flash.exe -t` runs with JSON config**
 
-Automated by: CI job `csharp-tests`. Verify by inspecting CI job output for the P1-R01 regression step. Expected: exit code 0, `output.tsv` produced, `compare_golden.py` reports no differences against `baseline_phase0.tsv`.
+Automated by: CI job `windows-tests`. Verify by inspecting CI job output for the P1-R01 regression step. Expected: exit code 0, `output.tsv` produced, `compare_golden.py` reports no differences against `baseline_phase0.tsv`.
 
 **Verification 2: Round-trip field match**
 
-Automated by: CI job `csharp-tests`. Verify by inspecting CI job output and confirming P1-U03 is green. This verifies that a specific non-default field value (e.g., `MinCharge=4`, `HCDEnergy=29`) survives the path:
+Automated by: CI job `windows-tests`. Verify by inspecting CI job output and confirming P1-U03 is green. This verifies that a specific non-default field value (e.g., `MinCharge=4`, `HCDEnergy=29`) survives the path:
 
 ```
 MethodParameters.Load(method_json_roundtrip.xml)
@@ -832,11 +862,11 @@ MethodParameters.Load(method_json_roundtrip.xml)
 
 **Verification 3: Legacy format fallback**
 
-Automated by: CI job `csharp-tests`. Verify by inspecting CI job output and confirming P1-I02 is green: `CreateFLASHIda` with a legacy token string returns a non-null pointer.
+Automated by: CI job `windows-tests`. Verify by inspecting CI job output and confirming P1-I02 is green: `CreateFLASHIda` with a legacy token string returns a non-null pointer.
 
 **Verification 4: No output change**
 
-Automated by: CI job `csharp-tests`. Verify by inspecting the P1-R01 regression step output and confirming `compare_golden.py` exits 0.
+Automated by: CI job `windows-tests`. Verify by inspecting the P1-R01 regression step output and confirming `compare_golden.py` exits 0.
 
 ---
 
@@ -861,8 +891,8 @@ The following checklist must be fully complete before Phase 1 is considered done
 - [ ] `test-data/configs/method_json_roundtrip.xml` committed with multiple MS2 entries and non-default FAIMS CVs.
 - [ ] `test-data/json/config_default.json` committed (golden JSON for default config).
 - [ ] `test-data/json/config_full.json` committed (golden JSON for round-trip config).
-- [ ] CI `csharp-tests` job passes with all 10 Phase 1 tests (P1-U01 through P1-R02) green.
-- [ ] CI `csharp-tests` job passes with all 7 Phase 0 tests (P0-U01 through P0-R01) still green (no regression).
+- [ ] CI `windows-tests` job passes with all 10 Phase 1 tests (P1-U01 through P1-R02) green.
+- [ ] CI `windows-tests` job passes with all 7 Phase 0 tests (P0-U01 through P0-R01) still green (no regression).
 - [ ] CI job output for the P1-R01 regression step shows `compare_golden.py` exiting 0 (JSON config output matches `baseline_phase0.tsv`).
 - [ ] CI job output for the P1-R02 regression step shows `compare_golden.py` exiting 0 (legacy fallback output matches `baseline_phase0.tsv`).
 - [ ] CI job output confirms `Flash.exe -t` runs to completion without unhandled exceptions.

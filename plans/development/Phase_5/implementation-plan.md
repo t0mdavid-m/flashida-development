@@ -7,6 +7,7 @@
 - [../baseline-plan.md](../baseline-plan.md) — Issue 6 (Simplified C# Architecture), Phase 5 specification
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 5 section
 - [../testing-strategy.md](../testing-strategy.md) — Phase 5 test plan
+- [../test-file-specification.md](../test-file-specification.md) — Authoritative format, content, and size requirements for all test files used in this phase
 
 ---
 
@@ -35,11 +36,16 @@ All of the following must be verified before beginning Phase 5 work.
 
 2. **FAIMS regression passing.** `Flash.exe -t` with `method_faims_3cv.xml` produces correct output under `UseUnifiedBridge=True`. (FAIMS still runs through `ScanScheduler` at this point; this must be verified before that dependency is removed.)
 
-3. **Phase 4 golden files committed.** The golden files produced with `UseUnifiedBridge=True` are the regression baseline for Phase 5. They must be committed to `FlashIDA/test-data/golden/` and referenced by `P5-R01` and `P5-R02`.
+3. **Phase 4 golden files committed.** The golden files produced with `UseUnifiedBridge=True` are the regression baseline for Phase 5. They must be committed to `FlashIDA/test-data/golden/` and referenced by `P5-R01` and `P5-R02`. The specific files are: `phase4_standard_dda.tsv`, `phase4_deep_mode.tsv`, `phase4_inclusion.tsv`, `phase4_exclusion.tsv`, `phase4_tag_targeting.tsv`, `phase4_quant.tsv`, `phase4_ms3_mode1.tsv`, `phase4_ms3_mode2.tsv`, `phase4_ms3_mode3.tsv`. See [test-file-specification.md §2.2](../test-file-specification.md) for the full golden file inventory.
 
 4. **Build #2 OpenMS DLL artifact available.** The cached artifact from `build-openms-dll.yml` keyed to the Phase 4 OpenMS submodule commit hash must be downloadable by CI. No new C++ build is triggered in this phase.
 
 5. **All prior phase tests green.** The CI suite for Phases 0–4 (cumulative: 58 tests) must be passing on the branch before Phase 5 work begins.
+
+### User-Provided Inputs
+
+- [ ] `ms1_faims_3cv.txt` — real FAIMS MS1 data with at least 3 CV values; extract from FAIMS .mzML using `prepare-test-data.py --ms-level 1 --include-cv` (see test-file-specification.md §1.4). Required for P5-R02 golden file capture.
+- Note: The CV values in `method_faims_3cv.xml` and `method_faims_skip.xml` must match the actual CV annotations in the provided data.
 
 ---
 
@@ -144,7 +150,7 @@ The `ProcessSpectrum` event handler already calls `dataPipe.Push(msScan)` and th
 **Files to modify:**
 - `FlashIDA/src/Flash/Flash.cs`
 - `FlashIDA/src/Flash/Parameter.cs` (or `MethodConfig.cs`) — remove `UseUnifiedBridge` property
-- `FlashIDA/src/Flash/etc/method.xml` — remove `<UseUnifiedBridge>` element
+- `FlashIDA/src/Flash/etc/method.xml` — remove `<UseUnifiedBridge>` element (the `UseUnifiedBridge` lifecycle — added Phase 4, removed Phase 5 — is documented in [test-file-specification.md §3.2](../test-file-specification.md))
 
 ---
 
@@ -204,8 +210,21 @@ These checks are automated by CI test P5-U03. The CI run is the authoritative ve
 - `ScanScheduler.cs` — retained; deletion deferred to Phase 6
 - `FAIMSScanProcessor.cs` FAIMS logic — retained; `ScanScheduler.AddScan()` calls preserved
 - All C++ files — zero C++ changes in this phase
-- All test data files — reused from Phase 4
-- Golden files — Phase 4 golden files are the regression baseline; no new golden files needed for P5-R01 and P5-R02 beyond those already committed
+- All test data files — reused from Phase 4 (spectrum files `ms1_standard.txt`, `ms2_hcd_fragment.txt`, and `ms1_faims_3cv.txt`; see [test-file-specification.md §1](../test-file-specification.md) for format details)
+- Golden files — Phase 4 golden files (`phase4_standard_dda.tsv` through `phase4_ms3_mode3.tsv`) are the regression baseline for P5-R01; the FAIMS golden files (`faims_3cv.tsv` and `faims_skip.tsv`) are captured during P5-R02 for use as Phase 6 regression targets; golden file changes in this phase are a red flag (see [test-file-specification.md §2.4](../test-file-specification.md))
+
+---
+
+## Test Summary (Quick Reference)
+
+| Test ID | What it verifies and why |
+|---------|--------------------------|
+| P5-U01 | `UnifiedScanProcessor` can be constructed without error. Confirms the new class compiles correctly, its constructor dependencies are satisfied, and the runtime can load it — the most basic smoke check before any pipeline test. |
+| P5-U02 | `IScanProcessor` exposes exactly one method (`ProcessMS`). Guards against accidental re-introduction of `OutputMS` or any other method that would bloat the interface and break the two-stage pipeline contract. |
+| P5-U03 | No production `.cs` file references `QuantScanProcessor`. Verifies that the deleted class has been fully purged from the codebase so no dead import or lingering constructor call can cause a compile or runtime failure. |
+| P5-U04 | `DataPipe` propagates completion end-to-end from `BufferBlock` to `ActionBlock`. Verifies the two-stage pipeline drains all queued items and terminates cleanly — preventing the process hang that the old null-sentinel pattern was meant to avoid. |
+| P5-R01 | All nine acquisition modes (default DDA, deep, inclusion, exclusion, tag-targeting, quant, MS3 modes 1–3) produce output byte-identical to the Phase 4 golden files. Confirms that removing `QuantScanProcessor` and the `UseUnifiedBridge` flag did not change any observable deconvolution results. |
+| P5-R02 | FAIMS mode still works through `ScanScheduler` and the FAIMS golden files (`faims_3cv.tsv`, `faims_skip.tsv`) are captured as the Phase 6 regression baseline. Verifies FAIMS CV cycling is unbroken by the C# simplification and locks in the expected output before Phase 6 moves CV control into C++. |
 
 ---
 
@@ -219,8 +238,8 @@ All 6 tests run on `windows-latest`. No C++ unit tests exist in this phase. The 
 | P5-U02 | 1 (C#) | `IScanProcessor` interface has exactly one method with the correct signature | Reflection: `typeof(IScanProcessor).GetMethods()` returns exactly 1 entry; method name is `ProcessMS`; parameter type is `IMsScan`; return type is `void` | `InterfaceShapeTests.cs` NUnit test using `System.Reflection` |
 | P5-U03 | 1 (C#) | No production code references `QuantScanProcessor` | Static search over `FlashIDA/src/**/*.cs` excluding the test file itself returns zero matches for the string `QuantScanProcessor` | `DeadCodeTests.cs` NUnit test using `System.IO.Directory.GetFiles` + `File.ReadAllText`; fails if any hit found |
 | P5-U04 | 1 (C#) | `DataPipe` propagates completion from `BufferBlock` to `ActionBlock` | Post 5 synthetic `IMsScan` mocks, call `DataPipe.Complete()`, await `DataPipe.WaitForCompletion()` with a 5-second timeout; assert all 5 items were processed and no timeout occurred | `DataPipeTests.cs` NUnit test with `Moq` or a hand-rolled `IMsScan` stub |
-| P5-R01 | 3 | All acquisition modes produce output identical to Phase 4 golden files | `Flash.exe -t` with each of the following configs matches the corresponding Phase 4 golden file: `method_default.xml`, `method_deep.xml`, `method_inclusion.xml`, `method_exclusion.xml`, `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`, `method_ms3_mode2.xml`, `method_ms3_mode3.xml` — comparison via `compare_golden.py` with default tolerances | `regression-runner.ps1` invoked from CI `csharp-tests` job |
-| P5-R02 | 3 | FAIMS mode still works via `ScanScheduler` | `Flash.exe -t` with `method_faims_3cv.xml` matches the Phase 4 FAIMS golden file; CV transition log entries present; no crash or missing output rows | `regression-runner.ps1` FAIMS config entry |
+| P5-R01 | 3 | All acquisition modes produce output identical to Phase 4 golden files | `Flash.exe -t` with each of the following configs matches the corresponding Phase 4 golden file: `method_default.xml`, `method_deep.xml`, `method_inclusion.xml`, `method_exclusion.xml`, `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`, `method_ms3_mode2.xml`, `method_ms3_mode3.xml` — spectrum inputs are `ms1_standard.txt` (all modes) and `ms2_hcd_fragment.txt` (tag-targeting, quant, MS3 modes); comparison via `compare_golden.py` with default tolerances (see [test-file-specification.md §1.2](../test-file-specification.md), [§1.3](../test-file-specification.md), [§2.2](../test-file-specification.md), [§4.1](../test-file-specification.md)) | `regression-runner.ps1` invoked from CI `windows-tests` job |
+| P5-R02 | 3 | FAIMS mode still works via `ScanScheduler`, and FAIMS golden files are captured for Phase 6 | `Flash.exe -t` with `method_faims_3cv.xml` and `ms1_faims_3cv.txt` matches the existing Phase 4 FAIMS golden output; additionally, the CI capture step writes `faims_3cv.tsv` and `faims_skip.tsv` (using `method_faims_skip.xml`) as the Phase 6 regression baselines; CV transition log entries present; no crash or missing output rows (see [test-file-specification.md §1.4](../test-file-specification.md), [§2.2](../test-file-specification.md), [§3.2](../test-file-specification.md) for `ms1_faims_3cv.txt`, `method_faims_3cv.xml`, `method_faims_skip.xml` format requirements and CV value constraints) | `regression-runner.ps1` FAIMS config entries |
 
 **Regression inherited from Phases 0–4:** All P0-* through P4-* tests (58 tests) must continue to pass. P5 adds 6 tests for a cumulative total of 64.
 
@@ -247,9 +266,9 @@ cpp-unit-tests:
 
 Phase 5 touches only `*.cs`, `*.csproj`, and `method.xml` files, so this job will be skipped automatically if the condition above is already in place. If the condition does not yet exist, it must be added to avoid unnecessary C++ build attempts.
 
-### `csharp-tests` job — no structural changes needed
+### `windows-tests` job — no structural changes needed
 
-The `csharp-tests` job already:
+The `windows-tests` job already:
 - Restores Thermo iAPI DLLs from secrets
 - Downloads the OpenMS DLL artifact (cached by submodule hash)
 - Runs `msbuild Flash.sln`
@@ -292,18 +311,18 @@ The CI workflow's `branches` filter already includes `'phase-*'` patterns. If th
 
 ## Working Product Verification
 
-Verify the following in CI. After pushing Phase 5 changes, confirm the `csharp-tests` job passes.
+Verify the following in CI. After pushing Phase 5 changes, confirm the `windows-tests` job passes.
 
 1. **Build succeeds with zero errors and zero warnings.**
    CI step: `msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /warnaserror`
    Expected: MSBuild exit code 0. No `CS0618` (obsolete) or `CS0168` (unused variable) warnings from deleted code paths.
 
 2. **Test mode runs end-to-end.**
-   CI step: `regression-runner.ps1` invokes `Flash.exe -t` with `method_default.xml` and compares output against the Phase 4 golden file via `compare_golden.py`.
+   CI step: `regression-runner.ps1` invokes `Flash.exe -t` with `ms1_standard.txt` and `method_default.xml` and compares output against `phase4_standard_dda.tsv` via `compare_golden.py` (tolerance rules: [test-file-specification.md §4.1](../test-file-specification.md)).
    Expected: Exit code 0, output matches Phase 4 golden file.
 
 3. **FAIMS mode runs end-to-end.**
-   CI step: `regression-runner.ps1` invokes `Flash.exe -t` with `method_faims_3cv.xml` and compares output against the Phase 4 FAIMS golden file.
+   CI step: `regression-runner.ps1` invokes `Flash.exe -t` with `ms1_faims_3cv.txt` and `method_faims_3cv.xml`; compares output against the existing Phase 4 FAIMS golden and also captures `faims_3cv.tsv` and `faims_skip.tsv` for Phase 6 (spectrum and config format: [test-file-specification.md §1.4](../test-file-specification.md), [§3.2](../test-file-specification.md)).
    Expected: Exit code 0, CV transition log entries present in output, output matches FAIMS golden file.
 
 4. **DataPipe completion is clean.**
@@ -315,7 +334,7 @@ Verify the following in CI. After pushing Phase 5 changes, confirm the `csharp-t
    Expected: Zero hits in production code for each pattern.
 
 6. **NUnit suite passes.**
-   CI step: `nunit3-console Flash.Tests.dll` run by the `csharp-tests` job.
+   CI step: `nunit3-console Flash.Tests.dll` run by the `windows-tests` job.
    Expected: 64 tests pass, 0 failures, 0 errors.
 
 ---
@@ -333,7 +352,7 @@ Verify the following in CI. After pushing Phase 5 changes, confirm the `csharp-t
 - [ ] `ScanScheduler.cs` is still present and still used by `FAIMSScanProcessor`
 - [ ] All 6 Phase 5 tests pass in CI: P5-U01, P5-U02, P5-U03, P5-U04, P5-R01, P5-R02
 - [ ] All 58 prior-phase tests (P0-* through P4-*) continue to pass in CI
-- [ ] CI `csharp-tests` job green on `windows-latest` with Build #2 DLL artifact
+- [ ] CI `windows-tests` job green on `windows-latest` with Build #2 DLL artifact
 - [ ] `msbuild /warnaserror` succeeds with zero warnings
 - [ ] No process hang on `DataPipe.WaitForCompletion()` in test mode
 - [ ] Phase 5 branch merged; ready for Phase 6 (FAIMS Absorption, Build #3)

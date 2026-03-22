@@ -7,6 +7,7 @@
 - [../baseline-plan.md](../baseline-plan.md) — Issues 1, 2, 3
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 3 section and CI Environment Requirements
 - [../testing-strategy.md](../testing-strategy.md) — Phase 3 test plan and Section 5 (Cross-Project Bridge Tests)
+- [../test-file-specification.md](../test-file-specification.md) — Authoritative formats and content requirements for all test spectrum files, golden files, config files, and test infrastructure scripts used in this phase
 
 ---
 
@@ -30,6 +31,10 @@ The following must exist and be green before Phase 3 work begins:
 6. `FlashIDA/dll/OpenMS.dll` is the Phase 1+2 build artifact; it will be replaced by the Build #1 artifact that includes Phase 3 changes.
 
 **Build batching note:** Phases 1, 2, and 3 are batched into a single C++ build (Build #1). In practice this means all C++ changes for all three phases are developed together and compiled once. When working in this batch, treat the Build #1 OpenMS artifact as the combined output of all three phases. The phase separation exists for clarity of scope, not for separate compilation runs.
+
+### User-Provided Inputs
+
+No new user-provided spectrum data is required for Phase 3 (P3-R01 uses `ms1_smoke_test.txt` from Phase 0). Optional: `ms1_high_density.txt` for stress test P3-S01 — see test-file-specification.md §1.5 for requirements.
 
 ---
 
@@ -1142,8 +1147,8 @@ namespace Flash.Tests
             // P3-I05: verify DLL exports.
             // This test is implemented as a CI step using dumpbin /exports.
             // In NUnit it is represented as a dummy pass to confirm the test is tracked.
-            // The actual dumpbin check runs in the bridge-tests CI job (see CI configuration).
-            Assert.Pass("DLL export verification is done via dumpbin in CI (bridge-tests job)");
+            // The actual dumpbin check runs as the "Verify DLL exports" step in the windows-tests CI job (see CI configuration).
+            Assert.Pass("DLL export verification is done via dumpbin in CI (windows-tests job, Verify DLL exports step)");
         }
     }
 }
@@ -1174,24 +1179,49 @@ namespace Flash.Tests
 | `FlashIDA/src/Flash/IDA/IDAScanProcessor.cs` | Modify | Add shadow validation calls to `wrapper.ProcessScan(...)` after each `GetIsolationWindows` call; add `IDAlog.Debug("[SHADOW] ...")` log entries |
 | `FlashIDA/src/Flash/IDA/FAIMSScanProcessor.cs` | Modify | Add shadow validation calls after each `GetIsolationWindows` call |
 | `FlashIDA/src/Flash/IDA/QuantScanProcessor.cs` | Modify | Add shadow validation calls after each `GetIsolationWindows` call |
-| `FlashIDA/src/Flash.Tests/ScanCommandLayoutTests.cs` | Create | C# unit tests P3-U01 through P3-U04; validates struct size, field offsets, char field `SizeConst` |
-| `FlashIDA/src/Flash.Tests/BridgePhase3Tests.cs` | Create | Integration tests P3-I01 through P3-I05; calls bridge functions with synthetic data |
+| `FlashIDA/src/Flash.Tests/ScanCommandLayoutTests.cs` | Create | C# unit tests P3-U01 through P3-U04; validates struct size, field offsets, char field `SizeConst`. Listed in `Flash.Tests.csproj` as defined in `test-file-specification.md` §4.4 |
+| `FlashIDA/src/Flash.Tests/BridgePhase3Tests.cs` | Create | Integration tests P3-I01 through P3-I05; calls bridge functions with synthetic data. `BridgeTests.cs` (the combined multi-phase bridge test file described in `test-file-specification.md` §4.4) may absorb these tests in a later consolidation pass |
 
 ### CI Configuration
 
 | File | Action | Description |
 |------|--------|-------------|
-| `.github/workflows/flashida-ci.yml` | Modify | Activate `cpp-unit-tests` job (already added in Phase 2); add Phase 3 test discovery for `FLASHIdaQueueTracking_test`; add `dumpbin` export check for 3 new functions in `bridge-tests` job; add cross-job artifact upload for `ScanCommandLayout_test` output (optional — see CI section) |
+| `.github/workflows/flashida-ci.yml` | Modify | Activate `cpp-unit-tests` job (already added in Phase 2); add Phase 3 test discovery for `FLASHIdaQueueTracking_test`; add "Verify DLL exports" step for 3 new functions inside `windows-tests` job; add cross-job artifact upload for `ScanCommandLayout_test` output (optional — see CI section) |
 
 ### Test Data (no new files required for Phase 3)
 
-Phase 3 regression (P3-R01) reuses `ms1_standard.txt` and `method_default.xml` from Phase 0/1. No new test spectrum or config files are needed. The golden file comparison target is the Phase 2 golden file (`standard_dda.tsv` or `baseline_phase0.tsv`).
+Phase 3 regression (P3-R01) reuses `ms1_smoke_test.txt` and `method_default.xml` from Phase 0. No new test spectrum or config files are needed. The golden file comparison target is `baseline_phase0.tsv` (the Phase 0 regression anchor that covers Phases 1–3).
+
+> **Note on spectrum file:** The authoritative cross-phase usage table in `test-file-specification.md` §1.1 lists `ms1_smoke_test.txt` as the Phase 3 P3-R01 input. This matches the Phase 0 baseline capture, ensuring the regression comparison is against an identical input. The stress test P3-S01 may use `ms1_high_density.txt` if that optional file is available; see `test-file-specification.md` §1.5 for its format and content requirements.
+
+Spectrum file formats (`ms1_smoke_test.txt`, `ms1_high_density.txt`) follow the tab-delimited layout defined in `test-file-specification.md` §1.1 and §1.5 respectively. The golden file format (15-column TSV, float tolerances, `compare_golden.py` comparison rules) is defined in `test-file-specification.md` §2.1–2.3. The config file format for `method_default.xml` is defined in `test-file-specification.md` §3.1–3.2.
 
 ---
 
 ## Test Cases
 
 All 16 tests are listed below with their IDs, tiers, descriptions, expected outcomes, and CI runner assignments. Tests are additive — all prior phase tests (P0-* through P2-*) must continue to pass.
+
+### Test Summary (Quick Reference)
+
+| ID | Summary |
+|----|---------|
+| P3-U01 | Verifies `Marshal.SizeOf<ScanCommand>()` equals 1144, ensuring the C# struct footprint matches the C++ `sizeof(ScanCommand)` and that P/Invoke will copy the correct number of bytes. |
+| P3-U02 | Verifies `Marshal.SizeOf<IsolationStage>()` equals 80, confirming the nested struct padding is handled identically by the .NET runtime and the C++ compiler. |
+| P3-U03 | Checks `Marshal.OffsetOf` for all 14 fields of `ScanCommand` against expected C++ `offsetof` values, catching any field-order or alignment divergence. |
+| P3-U04 | Inspects `MarshalAsAttribute.SizeConst` via reflection for `Analyzer` (32), `ScanDescription` (256), and `ActivationType` (16), confirming the inline char-array lengths are correctly declared. |
+| P3-U05 | Tests the base-36 encoding function for boundary values (0, 1, 35, 36, 1679615), verifying the 4-character string output that will appear in `[TRACK-CREATE]` log entries and `scan_description` tags. |
+| P3-U06 | Generates 10,000 tracking IDs from a single `FLASHIda` instance and asserts all are unique, validating the monotonic counter and confirming no collision before the wrap-around point. |
+| P3-U07 | Calls `getNextScanCommand` on a fresh `FLASHIda` with an empty queue (no prior `processScan`); asserts the MS1 fallback fires, which is the guaranteed behavior whenever no MS2 candidates are pending. |
+| P3-U08 | Pushes commands at all four priority levels and verifies dequeue order is 3→2→1→0, validating the priority scheduling logic that Phase 4 will rely on for real scan routing. |
+| P3-U09 | Configures `needsAGCScan_` to return true and verifies `GetNextScanCommand` returns the AGC command before any queued MS2, confirming AGC always takes the highest slot. |
+| P3-U10 | Calls `getNextScanCommand` with `timeout_enabled_ = false` and asserts no crash and MS1 is returned, exercising the disabled timeout path of `cleanupExpiredCommands_`. |
+| P3-I01 | Calls `GetNextScanCommand` and checks that the returned struct's `Analyzer` field is non-empty, confirming C++ successfully wrote into the struct via P/Invoke (marshaling round-trip). |
+| P3-I02 | Calls `ProcessScan` with synthetic dummy peaks and asserts the return value is 0, verifying the stub bridge function is callable and returns the expected Phase 3 sentinel. |
+| P3-I03 | Calls `GetNextScanCommand` with no prior processing and asserts return == 1 and `MsnLevel == 1`, confirming the empty-queue MS1 fallback works across the P/Invoke boundary. |
+| P3-I04 | Calls `GetNextTrackingId` 100 times and asserts each result is strictly greater than the previous, validating monotonic increment across the bridge. |
+| P3-I05 | Runs `dumpbin /exports OpenMS.dll` in CI and checks that `ProcessScan`, `GetNextScanCommand`, and `GetNextTrackingId` appear, confirming the three new exports are present in the shipped DLL. |
+| P3-R01 | Runs `Flash.exe -t` with `ms1_smoke_test.txt` and compares TSV output to `baseline_phase0.tsv`, verifying Phase 3 shadow validation leaves deconvolution results unchanged; also checks stdout for at least one `[TRACK-CREATE]` entry. |
 
 ### Tier 1: C# Unit Tests (runner: `windows-latest`)
 
@@ -1222,7 +1252,7 @@ These tests load `OpenMS.dll` via P/Invoke and require both OpenMS DLLs in `Flas
 | ID | Test name | Description | Expected outcome |
 |----|-----------|-------------|-----------------|
 | P3-I01 | `ScanCommand_MarshalingRoundTrip` | After `GetNextScanCommand` fills a `ScanCommand`, the `Analyzer` field is non-empty (confirms C++ wrote into the struct correctly) | `cmd.Analyzer` is not empty or null |
-| P3-I02 | `ProcessScan_StubReturnsZero` | Call `ProcessScan` with 5 inline dummy peaks (synthetic values acceptable: this is a bridge plumbing test verifying P/Invoke marshaling, not deconvolution accuracy); return value checked | Return value == 0 |
+| P3-I02 | `ProcessScan_StubReturnsZero` | Call `ProcessScan` with 5 inline dummy peaks (synthetic values acceptable here: this is a bridge plumbing test verifying P/Invoke marshaling, not deconvolution accuracy; real measured data is required only for spectrum files committed to `test-data/spectra/` — see `test-file-specification.md` §1.1); return value checked | Return value == 0 |
 | P3-I03 | `GetNextScanCommand_ReturnsMS1WhenQueueEmpty` | Call `GetNextScanCommand` with no prior `ProcessScan`; check returned struct | Return value == 1; `cmd.MsnLevel == 1` |
 | P3-I04 | `GetNextTrackingId_IsMonotonicallyIncreasing` | Call `GetNextTrackingId` 100 times; verify each is greater than the previous | 99 consecutive "next > prev" assertions pass |
 | P3-I05 | `DllExports_IncludeNewFunctions` | `dumpbin /exports FlashIDA\dll\OpenMS.dll` output contains `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` | All 3 `findstr` calls exit with code 0 |
@@ -1231,9 +1261,11 @@ These tests load `OpenMS.dll` via P/Invoke and require both OpenMS DLLs in `Flas
 
 | ID | Test name | Description | Expected outcome |
 |----|-----------|-------------|-----------------|
-| P3-R01 | `Regression_ShadowValidation` | `Flash.exe -t` with `ms1_standard.txt` + `method_default.xml`; compare TSV output to Phase 2 golden file | TSV output matches Phase 2 golden file within tolerance; TRACK log entries appear in console output (checked by scanning stdout for `[TRACK-CREATE]`) |
+| P3-R01 | `Regression_ShadowValidation` | `Flash.exe -t` with `ms1_smoke_test.txt` + `method_default.xml`; compare TSV output to `baseline_phase0.tsv` | TSV output matches `baseline_phase0.tsv` within tolerance; TRACK log entries appear in console output (checked by scanning stdout for `[TRACK-CREATE]`) |
 
-The golden file comparison uses `compare_golden.py` (from testing-strategy.md Section 6.2). The TRACK log check is an additional assertion: the CI script scans the captured stdout for at least one `[TRACK-CREATE]` entry, confirming the shadow path is active.
+The golden file comparison uses `compare_golden.py` (defined in `test-file-specification.md` §4.1; also referenced from `testing-strategy.md` Section 6.2). The comparison applies the tolerances specified in `test-file-specification.md` §2.1: exact match for `charges` and `hcd`; absolute tolerance 1e-6 for float values ≤ 1.0, relative tolerance 1e-4 for float values > 1.0. The TRACK log check is an additional assertion: the CI script scans the captured stdout for at least one `[TRACK-CREATE]` entry, confirming the shadow path is active.
+
+Golden file changes in Phase 3 are a red flag and must be investigated before merging (Phase 3 claims zero behavioral change; see `test-file-specification.md` §2.4 for the update procedure if an intentional change does occur).
 
 ---
 
@@ -1241,7 +1273,7 @@ The golden file comparison uses `compare_golden.py` (from testing-strategy.md Se
 
 ### Jobs Involved in Phase 3
 
-Phase 3 test execution is split across two runners. The diagram below shows which tests run where:
+Phase 3 test execution is split across two jobs. The diagram below shows which tests run where:
 
 ```
 ubuntu-latest job: cpp-unit-tests
@@ -1251,27 +1283,24 @@ ubuntu-latest job: cpp-unit-tests
   - Run ./ScanCommandLayout_test > layout.txt
   - Upload layout.txt as artifact "cpp-layout-output"
 
-windows-latest job: csharp-tests
+windows-latest job: windows-tests (needs: cpp-unit-tests)
   - Restore Thermo DLLs (secret)
   - Download OpenMS DLL artifact (cache or build artifact)
   - MSBuild Flash.Tests.csproj
-  - (optional) Download "cpp-layout-output" artifact from ubuntu job
+  - Download "cpp-layout-output" artifact from cpp-unit-tests job
   - nunit3-console Flash.Tests.dll
     -> P3-U01, U02, U03, U04 (ScanCommandLayoutTests.cs)
   - Flash.exe -t + compare_golden.py  -> P3-R01
-
-windows-latest job: bridge-tests (needs: csharp-tests)
   - nunit3-console Flash.Tests.dll --where "class == BridgePhase3Tests"
     -> P3-I01, I02, I03, I04
-  - dumpbin /exports FlashIDA\dll\OpenMS.dll checks  -> P3-I05
-
-windows-latest job: stress-tests (needs: csharp-tests)
-  - No Phase 3 stress tests. Runs prior-phase stress tests (if any).
+  - Step: Verify DLL exports (dumpbin /exports)
+    -> P3-I05
+  - (conditional) Stress tests: No Phase 3 stress tests. Runs prior-phase stress tests (if any).
 ```
 
 ### Cross-Job Artifact for `ScanCommandLayoutTest`
 
-The `ScanCommandLayout_test` binary runs on `ubuntu-latest` (GCC/Clang) and the C# layout test runs on `windows-latest` (MSVC). To validate that the C++ struct layout is consistent across compilers, the CI workflow can cross-reference:
+The `ScanCommandLayout_test` binary runs on `ubuntu-latest` (GCC/Clang) and the C# layout test runs on `windows-latest` (MSVC). With the 2-job structure, `cpp-unit-tests` uploads the artifact and `windows-tests` downloads it. This validates that the C++ struct layout is consistent across compilers.
 
 1. **Upload step (ubuntu-latest, cpp-unit-tests job):**
 
@@ -1289,7 +1318,7 @@ The `ScanCommandLayout_test` binary runs on `ubuntu-latest` (GCC/Clang) and the 
     retention-days: 1
 ```
 
-2. **Download step (windows-latest, csharp-tests job):**
+2. **Download step (windows-latest, windows-tests job):**
 
 ```yaml
 - name: Download C++ layout output
@@ -1297,19 +1326,19 @@ The `ScanCommandLayout_test` binary runs on `ubuntu-latest` (GCC/Clang) and the 
   with:
     name: cpp-layout-output
     path: test-data/cpp-layout/
-  continue-on-error: true  # Artifact may not exist if ubuntu job ran separately
+  continue-on-error: true  # Artifact may not exist if cpp-unit-tests job was skipped
 ```
 
-3. **Test usage:** `ScanCommandLayoutTests.cs` can be extended with a method that reads `test-data/cpp-layout/layout.txt` (if it exists) and compares the parsed values against `Marshal.SizeOf`/`Marshal.OffsetOf`. If the file is absent (e.g., the ubuntu job was skipped), the test falls back to the hard-coded expected values.
+3. **Test usage:** `ScanCommandLayoutTests.cs` can be extended with a method that reads `test-data/cpp-layout/layout.txt` (if it exists) and compares the parsed values against `Marshal.SizeOf`/`Marshal.OffsetOf`. If the file is absent, the test falls back to the hard-coded expected values.
 
-**Practical concern:** GitHub Actions cross-job artifact downloads require the source job to have completed. The `csharp-tests` job must `needs: [cpp-unit-tests]` or the download must use `continue-on-error: true`. For Phase 3, the simplest approach is to use hard-coded expected values in the C# test (Approach A, described in Step 12) and treat the cross-job artifact as a bonus verification step, not a required gate.
+**Practical concern:** Because `windows-tests` declares `needs: [cpp-unit-tests]`, the artifact is guaranteed to be available by the time the download step runs. For Phase 3, the simplest approach is to use hard-coded expected values in the C# test (Approach A, described in Step 12) and treat the cross-job artifact as a bonus verification step, not a required gate.
 
 ### `dumpbin` Export Verification (P3-I05)
 
-Add the following step to the `bridge-tests` job in `flashida-ci.yml`:
+Add the following step named "Verify DLL exports" inside the `windows-tests` job in `flashida-ci.yml`:
 
 ```yaml
-- name: Verify new DLL exports present
+- name: Verify DLL exports
   shell: cmd
   run: |
     dumpbin /exports FlashIDA\dll\OpenMS.dll > exports.txt
@@ -1323,21 +1352,22 @@ This step requires `dumpbin.exe` which is installed by `microsoft/setup-msbuild@
 
 ### TRACK Log Verification (P3-R01)
 
-Add the following to the regression test step in the `csharp-tests` job:
+Add the following to the regression test step in the `windows-tests` job. The spectrum input is `ms1_smoke_test.txt` (format: `test-file-specification.md` §1.1) and the golden baseline is `baseline_phase0.tsv` (format: `test-file-specification.md` §2.1; captured in Phase 0). `regression-runner.ps1` (defined in `test-file-specification.md` §4.2) can orchestrate this invocation; the inline step below is the direct equivalent for reference:
 
 ```yaml
 - name: Run regression test with shadow validation
   shell: powershell
   run: |
     & "FlashIDA\src\Flash\bin\Debug\Flash.exe" -t `
-      "test-data\spectra\ms1_standard.txt" `
+      "test-data\spectra\ms1_smoke_test.txt" `
       "output\phase3_shadow.tsv" `
       "test-data\configs\method_default.xml" `
       2>&1 | Tee-Object -FilePath "output\phase3_stdout.txt"
 
-    # Compare TSV output to Phase 2 golden file
+    # Compare TSV output to Phase 0 baseline golden file
+    # (compare_golden.py defined in test-file-specification.md §4.1)
     python compare_golden.py `
-      "test-data\golden\standard_dda.tsv" `
+      "test-data\golden\baseline_phase0.tsv" `
       "output\phase3_shadow.tsv"
 
     # Verify TRACK audit entries appeared
@@ -1352,10 +1382,10 @@ Add the following to the regression test step in the `csharp-tests` job:
 ### Summary of CI Workflow Changes
 
 1. Ensure the `cpp-unit-tests` job (added in Phase 2) builds and runs `FLASHIdaQueueTracking_test`.
-2. Add `ScanCommandLayout_test` to the cmake build and run it in the `cpp-unit-tests` job; upload output as artifact.
-3. Add the `dumpbin` export check for 3 new functions to the `bridge-tests` job.
-4. Extend the regression step in `csharp-tests` to capture stdout and scan for `[TRACK-CREATE]` lines.
-5. (Optional) Download C++ layout artifact in `csharp-tests` and extend `ScanCommandLayoutTests` to read it.
+2. Add `ScanCommandLayout_test` to the cmake build and run it in the `cpp-unit-tests` job; upload output as artifact `cpp-layout-output`.
+3. Add the "Verify DLL exports" step for 3 new functions inside the `windows-tests` job.
+4. Extend the regression step in `windows-tests` to capture stdout and scan for `[TRACK-CREATE]` lines.
+5. (Optional) Download C++ layout artifact in `windows-tests` and extend `ScanCommandLayoutTests` to read it.
 
 ---
 
@@ -1363,21 +1393,21 @@ Add the following to the regression test step in the `csharp-tests` job:
 
 All verifications are automated by CI. No local Windows machine is required.
 
-1. **Build succeeds:** Automated by: CI job `csharp-tests` — the MSBuild step exits with code 0 and no errors.
+1. **Build succeeds:** Automated by: CI job `windows-tests` — the MSBuild step exits with code 0 and no errors.
 
 2. **C++ tests pass:** Automated by: CI job `cpp-unit-tests` — `ctest -R FLASHIdaQueueTracking_test` returns 100% pass on the Build #1 DLL.
 
-3. **C# layout tests pass:** Automated by: CI job `csharp-tests` — NUnit reports 4 tests passed for `ScanCommandLayoutTests`. In particular, `ScanCommand_SizeMatchesCpp` and `IsolationStage_SizeMatchesCpp` pass with the expected sizes 1144 and 80.
+3. **C# layout tests pass:** Automated by: CI job `windows-tests` — NUnit reports 4 tests passed for `ScanCommandLayoutTests`. In particular, `ScanCommand_SizeMatchesCpp` and `IsolationStage_SizeMatchesCpp` pass with the expected sizes 1144 and 80.
 
-4. **Regression unchanged:** Automated by: CI job `csharp-tests` — `Flash.exe -t` with `ms1_standard.txt` and `method_default.xml` produces a TSV file that `compare_golden.py` reports as `PASS` against the Phase 2 golden file. The TSV output must be bit-for-bit identical to Phase 2 output (the shadow path calls `processScan_` but does not change deconvolution state).
+4. **Regression unchanged:** Automated by: CI job `windows-tests` — `Flash.exe -t` with `ms1_smoke_test.txt` (format: `test-file-specification.md` §1.1) and `method_default.xml` produces a TSV file that `compare_golden.py` (`test-file-specification.md` §4.1) reports as `PASS` against `baseline_phase0.tsv` (`test-file-specification.md` §2.2). The TSV output must be bit-for-bit identical to the Phase 0 baseline (the shadow path calls `processScan_` but does not change deconvolution state).
 
-5. **TRACK entries present:** Automated by: CI job `csharp-tests` — the captured stdout of the regression step is scanned for at least one line matching `[TRACK-CREATE]`, confirming the shadow validation code path is active.
+5. **TRACK entries present:** Automated by: CI job `windows-tests` — the captured stdout of the regression step is scanned for at least one line matching `[TRACK-CREATE]`, confirming the shadow validation code path is active.
 
-6. **GetNextScanCommand returns MS1:** Automated by: CI job `csharp-tests` — test P3-I03 passes, confirming `GetNextScanCommand` returns `msn_level == 1` and a non-empty `Analyzer` field.
+6. **GetNextScanCommand returns MS1:** Automated by: CI job `windows-tests` — test P3-I03 passes, confirming `GetNextScanCommand` returns `msn_level == 1` and a non-empty `Analyzer` field.
 
-7. **DLL exports verified:** Automated by: CI job `bridge-tests` — `dumpbin /exports OpenMS.dll` lists `ProcessScan`, `GetNextScanCommand`, and `GetNextTrackingId` among the exports. The existing 18 exports are also still present (Phase 4 removes none).
+7. **DLL exports verified:** Automated by: DLL export verification step in `windows-tests` — `dumpbin /exports OpenMS.dll` lists `ProcessScan`, `GetNextScanCommand`, and `GetNextTrackingId` among the exports. The existing 18 exports are also still present (Phase 4 removes none).
 
-8. **No behavioral change:** Automated by: CI job `csharp-tests` — all prior-phase tests (P0-*, P1-*, P2-*) continue to pass, confirming that no existing code paths (`GetPeakGroupSize`, `GetIsolationWindows`, `DeconvolveMS2`, etc.) were modified.
+8. **No behavioral change:** Automated by: CI job `windows-tests` — all prior-phase tests (P0-*, P1-*, P2-*) continue to pass, confirming that no existing code paths (`GetPeakGroupSize`, `GetIsolationWindows`, `DeconvolveMS2`, etc.) were modified.
 
 ---
 
@@ -1402,7 +1432,7 @@ All of the following must be true before Phase 3 is considered complete and Buil
 - [ ] Shadow validation calls added in `IDAScanProcessor`, `FAIMSScanProcessor`, `QuantScanProcessor`.
 - [ ] All 16 Phase 3 tests (P3-U01 through P3-R01) pass in CI.
 - [ ] All prior-phase tests (P0-*, P1-*, P2-* — 23 tests) continue to pass in CI.
-- [ ] `Flash.exe -t` output is identical to Phase 2 golden file (P3-R01 passes in CI).
+- [ ] `Flash.exe -t` output with `ms1_smoke_test.txt` is identical to `baseline_phase0.tsv` (P3-R01 passes in CI; see `test-file-specification.md` §2.2 for the golden file inventory).
 - [ ] `[TRACK-CREATE]` log entries appear in `Flash.exe -t` stdout.
 - [ ] No existing C# code references to old bridge functions are broken (existing 18 P/Invoke declarations unchanged).
 - [ ] Code formatted to project standards: C++ clang-format (LLVM, 150 col, 2-space indent, Allman braces); C# standard conventions.
