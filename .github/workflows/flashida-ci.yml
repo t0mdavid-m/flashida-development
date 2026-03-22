@@ -1,0 +1,174 @@
+name: flashida-ci
+
+on:
+  push:
+    branches: [main, develop, flashida-v9-migration, 'phase-*']
+  pull_request:
+    branches: [main, develop, flashida-v9-migration]
+
+jobs:
+  # ----------------------------------------------------------------
+  # C++ unit tests — ubuntu-latest, no Thermo or .NET dependency.
+  # Skipped in Phase 0 (no C++ tests exist yet).
+  # Activated in Phase 2 when OptimizationMetadata tests are added.
+  # ----------------------------------------------------------------
+  cpp-unit-tests:
+    runs-on: ubuntu-latest
+    if: false  # Phase 0: no C++ tests yet. Remove this line in Phase 2.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Get OpenMS submodule commit hash
+        id: openms-hash
+        shell: bash
+        run: echo "hash=$(git -C OpenMS rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-ubuntu-${{ steps.openms-hash.outputs.hash }}-${{ hashFiles('OpenMS/CMakeLists.txt') }}
+          restore-keys: |
+            ccache-ubuntu-${{ steps.openms-hash.outputs.hash }}-
+            ccache-ubuntu-
+
+      - name: Build C++ test binaries only
+        env:
+          CCACHE_DIR: ~/.ccache
+        run: |
+          cmake -S OpenMS -B OpenMS/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build OpenMS/build --target FLASHIda_test --config Release
+
+      - name: Run FLASH C++ unit tests
+        run: ctest --test-dir OpenMS/build -R FLASH --output-on-failure
+
+  # ----------------------------------------------------------------
+  # C# unit tests + regression + bridge verification — windows-latest.
+  # Requires Thermo DLLs (build only) + OpenMS DLLs (runtime).
+  # ----------------------------------------------------------------
+  windows-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # --- Restore Thermo iAPI DLLs (proprietary, encrypted in repo) ---
+      # Strategy B: GPG-encrypted zip committed to repo, passphrase in secret.
+      # See testing-strategy.md Section 3.3 for setup instructions.
+      - name: Restore Thermo iAPI DLLs
+        shell: bash
+        env:
+          THERMO_DLL_PASSPHRASE: ${{ secrets.THERMO_DLL_PASSPHRASE }}
+        run: |
+          gpg --quiet --batch --yes --decrypt \
+            --passphrase="$THERMO_DLL_PASSPHRASE" \
+            --output thermo-dlls.zip \
+            FlashIDA/dependencies/thermo-dlls.zip.gpg
+          unzip -o thermo-dlls.zip -d FlashIDA/dependencies/
+          rm thermo-dlls.zip
+          echo "Restored Thermo DLLs:"
+          ls FlashIDA/dependencies/*.dll
+
+      # --- Restore or download OpenMS DLLs ---
+      - name: Get OpenMS submodule commit hash
+        id: openms-hash
+        shell: bash
+        run: echo "hash=$(git -C OpenMS rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Restore cached OpenMS DLLs
+        id: dll-cache
+        uses: actions/cache@v4
+        with:
+          path: FlashIDA/dll/
+          key: openms-dlls-${{ steps.openms-hash.outputs.hash }}
+
+      - name: Download OpenMS DLLs from build workflow
+        if: steps.dll-cache.outputs.cache-hit != 'true'
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: build_dlls.yml
+          name: openms-dlls
+          path: FlashIDA/dll/
+          branch: flashida-v9-bridge
+
+      # --- Build ---
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore NuGet packages
+        run: nuget restore FlashIDA/src/Flash.sln
+
+      - name: Build solution (Debug)
+        run: |
+          msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /m
+
+      # Copy Thermo DLLs to build output for Flash.exe runtime
+      - name: Copy Thermo DLLs to build output
+        shell: powershell
+        run: |
+          Copy-Item FlashIDA\dependencies\*.dll FlashIDA\bin\ -Force
+
+      # --- Unit tests (NUnit) ---
+      - name: Run NUnit tests
+        run: |
+          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml
+
+      - name: Upload NUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nunit-results
+          path: TestResults.xml
+
+      # --- Golden capture ---
+      - name: Capture golden output
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path FlashIDA\test-output | Out-Null
+          & FlashIDA\bin\Flash.exe -t FlashIDA\test-data\spectra\ms1_smoke_test.txt FlashIDA\test-output\baseline_phase0.tsv FlashIDA\test-data\configs\method_default.xml
+
+      - name: Upload golden capture
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-capture
+          path: FlashIDA/test-output/baseline_phase0.tsv
+
+      # --- Regression tests ---
+      - name: Run regression tests
+        shell: powershell
+        run: |
+          powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output
+
+      - name: Upload regression output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-output
+          path: FlashIDA/test-output/
+
+      # --- Bridge smoke test verification ---
+      - name: Verify bridge smoke tests
+        if: always()
+        shell: powershell
+        run: |
+          if (-not (Test-Path TestResults.xml)) {
+              Write-Host "TestResults.xml not found, skipping bridge verification."
+              exit 0
+          }
+          [xml]$results = Get-Content TestResults.xml
+          $tier2Tests = $results.SelectNodes("//test-case[contains(@classname,'BridgeSmokeTests')]")
+          $failed = $tier2Tests | Where-Object { $_.result -eq 'Failed' }
+          if ($failed.Count -gt 0) {
+              Write-Host "Bridge smoke tests failed:"
+              $failed | ForEach-Object { Write-Host "  $($_.name): $($_.result)" }
+              exit 1
+          }
+          Write-Host "Bridge smoke tests passed."
+
+      # --- Stress tests (Phase 0: skipped) ---
+      - name: Run stress tests
+        if: false  # Phase 0: no stress tests yet. Remove this line in Phase 3.
+        run: echo "Stress tests not yet active in Phase 0."
