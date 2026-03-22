@@ -55,10 +55,16 @@ Note: FLASH test entries are currently commented out in `OpenMS/src/tests/class_
 
 ## Development Plan
 
-The current development plan is the **parameter optimization baseline (v9)**:
+Implementation is organized into 9 phases (Phase 0-8), each with its own detailed plan:
 
-    plans/development/baseline-plan.md
+    plans/development/Phase_0/ through Phase_8/implementation-plan.md
 
-This is the ONLY authoritative plan. It defines the unified ProcessScan/GetNextScanCommand architecture, ScanCommand struct, C++ scan queue ownership, MSn exploration engine, JSON configuration, and phased migration (6 phases, 3 builds).
+These per-phase implementation plans are the **working documents**. All edits during implementation go here.
 
-**WARNING — Archived plans:** The `plans/` directory contains older iterations (`v2-parameter-optimization.md` through `v9-parameter-optimization.md`). These are SUPERSEDED and must NOT be used for implementation guidance. If you need the development plan, read `plans/development/baseline-plan.md` only.
+The following files in `plans/development/` are **read-only reference documents** — do NOT edit them:
+- `baseline-plan.md` — Architecture design and issue specifications (v9)
+- `testing-strategy.md` — Test tiers, CI infrastructure, per-phase test matrices
+- `implementation-roadmap.md` — High-level phase overview, build batching, CI requirements
+- `verification-report.md` — Cross-document consistency verification
+
+**WARNING — Archived plans:** The `plans/` directory contains older iterations (`v2-parameter-optimization.md` through `v9-parameter-optimization.md`). These are SUPERSEDED and kept only for historical reference.
