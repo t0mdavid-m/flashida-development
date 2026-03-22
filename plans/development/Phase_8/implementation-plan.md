@@ -98,10 +98,14 @@ exactly 5 exports remain.
 
 ### Step 1 — Verify no live callers exist before touching C++ (pre-condition check)
 
-Before modifying any file, confirm that all 13 functions listed above have zero call sites
-in C# and are not referenced by any live C++ code outside of their own definition files.
+These checks are automated by **P8-U01** and **P8-U02** in the `csharp-tests` CI job.
+Do not proceed to Steps 2+ unless P8-U01 and P8-U02 pass in CI on the current state of
+the branch.
 
-**C# call-site verification (run from repo root):**
+The scripts below are reference implementations of what those tests check. They run in CI,
+not locally.
+
+**C# call-site verification (reference — runs in CI as part of P8-U01/P8-U02):**
 
 ```powershell
 $funcs = @(
@@ -118,7 +122,7 @@ foreach ($f in $funcs) {
 }
 ```
 
-**C++ caller verification (Linux or Windows with grep):**
+**C++ caller verification (reference — runs in CI on `ubuntu-latest`):**
 
 ```bash
 for func in GetPeakGroupSize GetIsolationWindows DeconvolveMS2 \
@@ -137,9 +141,7 @@ for func in GetPeakGroupSize GetIsolationWindows DeconvolveMS2 \
 done
 ```
 
-Do not proceed if any BLOCKER lines appear. Resolve remaining call sites first.
-
-Also verify `ToFLASHDeconvInput` has no callers:
+**`ToFLASHDeconvInput` absence check (reference — runs in CI as part of P8-U02):**
 
 ```powershell
 Select-String -Path "FlashIDA\src\**\*.cs" -Pattern "ToFLASHDeconvInput" -Recurse |
@@ -346,7 +348,7 @@ cmake --build <build-dir> --config Release
 The build must succeed with zero errors. No warnings about undefined symbols or missing
 exports are acceptable.
 
-**C# (on Windows):**
+**C# (CI `windows-latest` — `csharp-tests` job):**
 
 ```powershell
 msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /warnaserror
@@ -399,9 +401,14 @@ findstr /C:"GetDeconvolutionQuality"        exports.txt && exit /b 1
 
 ### Step 11 — Run the full regression suite
 
-Execute all method configs against Phase 7 golden files:
+The full regression suite is automated by **P8-R01** in the `csharp-tests` CI job. Do not
+proceed to committing until P8-R01 passes in CI for the current branch state.
+
+The script below is the reference implementation that runs in CI. All 12 configurations
+must produce `PASS`. Any failure indicates a regression introduced during cleanup.
 
 ```powershell
+# Reference — runs in CI as part of P8-R01 (csharp-tests job, windows-latest)
 # From FlashIDA/src/Flash/bin/Debug/
 $testData = "..\..\..\..\test-data"
 $configs = @(
@@ -424,9 +431,6 @@ foreach ($cfg in $configs) {
     python compare_golden.py "$testData\golden\$name.tsv" "output\$name.tsv"
 }
 ```
-
-All 12+ configurations must produce `PASS` output. Any failure here indicates a regression
-introduced during the cleanup; do not proceed to committing until resolved.
 
 ---
 
@@ -691,16 +695,16 @@ which is already in the trigger list.
 The following checks verify the working product after Phase 8 is complete. All are automated
 by the test suite; this section maps each check to its test.
 
-| Verification | Test | How to check manually |
-|-------------|------|-----------------------|
-| `Flash.exe -t` runs in final form | P8-R01 | Run with `method_default.xml`, confirm clean exit and non-empty TSV output |
-| Exactly 5 DLL exports | P8-I01 | `dumpbin /exports FlashIDA\dll\OpenMS.dll \| findstr FLASHIda` — expect exactly 5 lines matching bridge names |
-| Zero C# compile warnings | P8-I02 | `msbuild Flash.sln /warnaserror` — must exit 0 |
-| MethodDocGenerator produces output | P8-U03 | Add a temporary `Console.Write(MethodDocGenerator.Generate(typeof(Parameter)))` call and run `Flash.exe`; inspect output |
-| No legacy P/Invoke declarations | P8-U01 | `Select-String -Path FLASHIdaWrapper.cs -Pattern "\[DllImport"` — expect exactly 5 matches |
-| ToFLASHDeconvInput absent | P8-U02 | `Select-String -Path FlashIDA\src\**\*.cs -Pattern "ToFLASHDeconvInput" -Recurse` — expect zero hits |
-| Legacy config rejected by C++ | P8-U04 | C++ unit test via CTest |
-| Full regression passes | P8-R01 | Run `regression-runner.ps1` locally across all 12 configs; all `PASS` |
+| Verification | Test | CI verification method |
+|-------------|------|------------------------|
+| `Flash.exe -t` runs in final form | P8-R01 | `csharp-tests` job on `windows-latest`; check run logs and artifacts for `regression-runner` step |
+| Exactly 5 DLL exports | P8-I01 | `bridge-tests` job on `windows-latest`; inspect the "Verify DLL exports" step output in CI run artifacts |
+| Zero C# compile warnings | P8-I02 | `csharp-tests` job on `windows-latest`; "Build with warnings-as-errors" step must exit 0 |
+| MethodDocGenerator produces output | P8-U03 | Automated by P8-U03 NUnit test that asserts the generator returns a non-empty string; see `csharp-tests` job NUnit results |
+| No legacy P/Invoke declarations | P8-U01 | `csharp-tests` job NUnit results for `CleanupTests.P8_U01` |
+| ToFLASHDeconvInput absent | P8-U02 | `csharp-tests` job NUnit results for `CleanupTests.P8_U02` |
+| Legacy config rejected by C++ | P8-U04 | `cpp-unit-tests` job on `ubuntu-latest`; `ctest -R FLASH` output |
+| Full regression passes | P8-R01 | Automated by P8-R01 in the `csharp-tests` CI job. All 12 regression configs pass in CI. |
 
 ---
 

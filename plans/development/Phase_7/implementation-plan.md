@@ -603,16 +603,23 @@ Ensure `ToJSON()` serializes the full `<ParameterOptimization>` block into the `
 
 ### Step 11: Capture the Phase 7 golden file
 
-After the C++ build completes and `Flash.exe -t` runs cleanly with `method_exploration.xml`, capture the golden file:
+Because there is no Windows machine available for local development, `exploration_enabled.tsv` is captured via a CI-artifact workflow rather than a local `Flash.exe -t` invocation:
 
-```powershell
-Flash.exe -t `
-  test-data\spectra\ms1_standard.txt `
-  test-data\golden\exploration_enabled.tsv `
-  test-data\configs\method_exploration.xml
+1. Commit the Phase 7 code changes (C++, C#, `method_exploration.xml`) **without** `test-data/golden/exploration_enabled.tsv`.
+2. Push the branch. The `csharp-tests` CI job runs `Flash.exe -t` with `method_exploration.xml` and uploads the produced TSV as a build artifact named `exploration-golden-candidate`.
+3. Download the artifact from the GitHub Actions run page, inspect it: confirm that extra rows corresponding to exploration variant scans are present and that `OptimizationMetadata` fields appear as additional TSV columns (or mzML metavalues, depending on how test mode serializes them).
+4. Once the output looks correct, commit `exploration_enabled.tsv` to `test-data/golden/` as the Phase 7 golden baseline.
+
+The `csharp-tests` job must be updated to upload the candidate artifact when the golden file is absent (or always, keyed by run ID). Add a step in `.github/workflows/flashida-ci.yml` such as:
+
+```yaml
+- name: Upload exploration golden candidate
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: exploration-golden-candidate
+    path: FlashIDA/test-data/golden/exploration_enabled.tsv
 ```
-
-Inspect the output. The golden file for `exploration_enabled.tsv` will differ structurally from other golden files: it will contain extra rows corresponding to exploration variant scans, and the `OptimizationMetadata` fields will appear as additional TSV columns (or in the mzML output, depending on how `Flash.exe -t` serializes them). Commit this file as the Phase 7 golden baseline.
 
 The regression golden file for `P7-R01` (exploration disabled) is simply the existing `standard_dda.tsv` from Phase 6 — no new capture needed.
 
@@ -766,13 +773,13 @@ The comparison step already loops over all entries and calls `compare_golden.py`
 
 #### 3. Golden file for P7-R02 must exist before CI runs
 
-`test-data/golden/exploration_enabled.tsv` must be committed before the `P7-R02` regression test can pass in CI. The workflow to create it:
+`test-data/golden/exploration_enabled.tsv` must be committed before the `P7-R02` regression test can pass in CI. Because no Windows machine is available locally, the file is captured via the CI-artifact workflow described in Step 11:
 
-1. Build locally with Build #4.
-2. Run `Flash.exe -t test-data\spectra\ms1_standard.txt output\exploration_enabled.tsv test-data\configs\method_exploration.xml`.
-3. Inspect the output, confirm variant rows and metadata fields are present and reasonable.
-4. Copy `output\exploration_enabled.tsv` to `test-data\golden\exploration_enabled.tsv`.
-5. Commit alongside the Phase 7 code changes.
+1. Push the Phase 7 code changes (without the golden file). The `csharp-tests` CI job uploads the produced TSV as the `exploration-golden-candidate` artifact.
+2. Download the artifact from the GitHub Actions run page and inspect it: confirm variant rows and metadata fields are present and reasonable.
+3. Commit the downloaded file as `test-data/golden/exploration_enabled.tsv` alongside the Phase 7 code changes.
+
+Also note that `method_exploration_overflow.xml` and `method_exploration_ms3.xml` (used in WPV-4 and WPV-7 respectively) must be committed to `test-data/configs/` before the corresponding CI steps can run — they cannot be created ad-hoc on a local machine.
 
 #### 4. No new CI jobs are required
 
@@ -782,41 +789,34 @@ Phase 7 adds only C++ unit tests (existing `cpp-unit-tests` job, `ubuntu-latest`
 
 ## Working Product Verification
 
-After Build #4 is produced and `Flash.exe` is rebuilt, verify the following in order. Each item corresponds to a Working Product Verification (WPV) checkpoint from the roadmap.
+Because there is no Windows machine available, all WPV items are verified via CI jobs rather than local `Flash.exe -t` invocations. Each item maps to a CI job that produces observable evidence (log output, artifact output, or test pass/fail status).
 
 **WPV-1: Exploration disabled — identical to Phase 6**
-```powershell
-Flash.exe -t test-data\spectra\ms1_standard.txt out\wv1.tsv test-data\configs\method_default.xml
-python compare_golden.py test-data\golden\standard_dda.tsv out\wv1.tsv
-# Must print: PASS
-```
+Verified by the `P7-R01` regression test in the `csharp-tests` CI job (`windows-latest`). The job runs `Flash.exe -t` with `method_default.xml` and compares output against `test-data/golden/standard_dda.tsv` using `compare_golden.py`. The CI step must report `PASS`.
 
 **WPV-2: CE optimization produces 5 variant scans per precursor**
-```powershell
-Flash.exe -t test-data\spectra\ms1_standard.txt out\wv2.tsv test-data\configs\method_exploration.xml
-# Inspect out\wv2.tsv: for each precursor selected by standard DDA scoring,
-# there must be 5 additional rows with EXPL: scan descriptions.
-# Also inspect console log for EXPL-WINNER entries.
-```
+Verified by the `P7-R02` regression test in the `csharp-tests` CI job (`windows-latest`). The job runs `Flash.exe -t` with `method_exploration.xml` and compares output against `test-data/golden/exploration_enabled.tsv`. Inspect the golden file (captured via the CI-artifact workflow in Step 11) to confirm that for each precursor selected by standard DDA scoring there are 5 additional rows with `EXPL:` scan descriptions, and that `EXPL-WINNER` log entries appear in the CI job log.
 
 **WPV-3: Winner is selected by FragmentationQuality score**
-In the `EXPL-WINNER` log lines from WPV-2, verify that the logged CE value corresponds to the variant with the most fragment ions / highest TIC coverage in the output rows. Cross-check by comparing `fragmentation_quality_score` values across the 5 variant rows.
+Verified by inspecting the `EXPL-WINNER` log lines in the `csharp-tests` CI job log for the `P7-R02` run. Confirm that the logged CE value corresponds to the variant with the highest `fragmentation_quality_score` across the 5 variant rows visible in the `exploration_enabled.tsv` artifact.
 
 **WPV-4: Queue overflow protection at MaxQueueForExploration=50**
-Create a modified config `method_exploration_overflow.xml` with `MaxQueueForExploration=5` and a spectrum containing many precursors. Run `Flash.exe -t`. Verify in the log that exploration is not initiated when the queue exceeds 5 entries.
+Verified by the `csharp-tests` CI job using `method_exploration_overflow.xml` (committed to `test-data/configs/`). This config sets `MaxQueueForExploration=5` and uses a spectrum containing many precursors. The CI job log must show that exploration is not initiated once the queue exceeds 5 entries (no `EXPL:` group creation log lines after the queue fills).
 
 **WPV-5: MS1 cycle time suppressed during exploration, resumes after**
-Create a modified config with `<CycleTime><Active>True</Active><Seconds>1</Seconds></CycleTime>` and exploration enabled. Run `Flash.exe -t` with a spectrum that takes multiple scan events. Verify in the log that no MS1 cycle-time injection occurs between the first exploration variant submission and the EXPL-WINNER log entry for that group. After the EXPL-WINNER, verify that MS1 cycle-time injection resumes.
+Verified by the `csharp-tests` CI job using a config committed to `test-data/configs/` with `<CycleTime><Active>True</Active><Seconds>1</Seconds></CycleTime>` and exploration enabled, run with a spectrum that takes multiple scan events. The CI job log must show no MS1 cycle-time injection between the first exploration variant submission and the `EXPL-WINNER` log entry for that group, and then resumed MS1 injection afterwards.
 
 **WPV-6: OptimizationMetadata populated and serialized**
-After running WPV-2, inspect the output TSV for metadata columns (or convert to mzML and inspect with pyOpenMS). Verify that `optimization_group_id`, `optimization_collision_energy`, `optimization_is_best_variant`, `optimization_quality_score`, and `optimization_precursor_mass` are present and non-empty for exploration variant rows.
+Verified from the `exploration_enabled.tsv` artifact produced by `P7-R02` in the `csharp-tests` CI job. Inspect the artifact for `optimization_group_id`, `optimization_collision_energy`, `optimization_is_best_variant`, `optimization_quality_score`, and `optimization_precursor_mass` columns — they must be present and non-empty for exploration variant rows.
 
 **WPV-7: MS3 recursive exploration respects depth limit**
-Create `method_exploration_ms3.xml` with `MS3Exploration.Enabled=true`, `MaxExplorationDepth=2`, `MaxFragmentsToExplore=3`. Run with an MS1+MS2 test spectrum. Verify in the log that:
-- MS2 exploration groups are created (depth=1).
-- After MS2 winner selection, MS3 child groups are created (depth=2).
-- No depth-3 groups are created.
+Verified by the `csharp-tests` CI job using `method_exploration_ms3.xml` (committed to `test-data/configs/`) with `MS3Exploration.Enabled=true`, `MaxExplorationDepth=2`, `MaxFragmentsToExplore=3`, run with an MS1+MS2 test spectrum. The CI job log must show:
+- MS2 exploration groups created (depth=1).
+- After MS2 winner selection, MS3 child groups created (depth=2).
+- No depth-3 groups created.
 - Total exploration scans per MS2 precursor: (5 MS2 CE variants) + (3 fragments * 5 MS3 CE variants) = 20 scans, not more.
+
+This is also verified structurally by P7-U07 and P7-U08 in the `cpp-unit-tests` CI job (`ubuntu-latest`).
 
 ---
 
@@ -834,9 +834,9 @@ Create `method_exploration_ms3.xml` with `MS3Exploration.Enabled=true`, `MaxExpl
 - [ ] `test-data/golden/exploration_enabled.tsv` exists and is committed.
 - [ ] `FLASHIda_exploration_test` C++ test binary is listed in `executables.cmake` and discovered by CTest.
 - [ ] `.github/workflows/flashida-ci.yml` regression runner includes `method_exploration.xml`.
-- [ ] `Flash.exe -t` with exploration disabled produces output identical to Phase 6 (WPV-1 passes locally).
-- [ ] `Flash.exe -t` with `method_exploration.xml` produces EXPL-WINNER log entries and variant rows in output (WPV-2 passes locally).
-- [ ] MS3 recursive exploration creates child groups and respects `MaxExplorationDepth` (WPV-7 passes locally or via P7-U07, P7-U08).
+- [ ] `Flash.exe -t` with exploration disabled produces output identical to Phase 6 (P7-R01 passes in CI (`csharp-tests` job)).
+- [ ] `Flash.exe -t` with `method_exploration.xml` produces EXPL-WINNER log entries and variant rows in output (P7-R02 passes in CI).
+- [ ] MS3 recursive exploration creates child groups and respects `MaxExplorationDepth` (P7-U07, P7-U08 pass in CI (`cpp-unit-tests` job)).
 - [ ] No new C++ compiler warnings introduced (existing `/Wall` or `-Wall` build flags must remain clean).
 - [ ] Code review complete: `ExplorationGroup` / `ExplorationVariant` structs, `feedExplorationResult_()` winner logic, depth-limit check, and MS1 suppression logic reviewed by at least one other developer.
 - [ ] Phase 8 prerequisites are satisfied: Phase 7 golden files committed, all WPV items checked off. Build #4 development can proceed to Phase 8 (cleanup) on the same branch.

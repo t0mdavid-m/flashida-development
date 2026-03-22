@@ -50,6 +50,18 @@ The following must be in place before beginning Phase 4 implementation:
    - `test-data/spectra/ms1_standard.txt`
    - `test-data/spectra/ms2_hcd_fragment.txt`
 
+   **`ms1_standard.txt` specification (DATA-5):** Must be real top-down MS1 data meeting all of the following criteria:
+   - At least 5 independently deconvolvable charge envelopes.
+   - Masses spanning the 5–100 kDa range.
+   - Precursor intensity dynamic range covering at least 2 orders of magnitude.
+   - Do not fabricate values — extract from existing lab .mzML data using `prepare-test-data.py`.
+
+   **`ms2_hcd_fragment.txt` specification (DATA-6):** Must be a real MS2 HCD spectrum meeting all of the following criteria:
+   - Acquired from a known protein (protein identity documented alongside the file).
+   - Precursor mass known and matching an entry in the inclusion list used for the corresponding regression tests.
+   - Real measured fragment ions — not simulated.
+   - If isobaric labeling was used during acquisition, reporter ions must be present in the spectrum to support quant mode tests (P4-R07, P4-U07).
+
 5. **OpenMS submodule is on the `flashida-v9-bridge` branch** and the Build #1 commit is the working base.
 
 ---
@@ -140,7 +152,7 @@ Concretely, the 6 testable branches are:
 5. Deep mode with IDScore representative
 6. Deep mode with IDScore all charges
 
-Test P4-U02 must exercise each branch with a known synthetic spectrum and verify the sort order is deterministic.
+Test P4-U02 must exercise each branch with a hard-coded real peak array from characterized experimental data and verify the sort order is deterministic.
 
 #### Step 2b: Implement `buildMS2Command_()`
 
@@ -411,7 +423,7 @@ In the C++ implementation, `processScan` must acquire `queue_mutex_` only when p
 
 ---
 
-### Step 8: Capture Phase 4 Golden Files
+### Step 8: Capture Phase 4 Golden Files via CI Artifact
 
 Before merging, capture golden output for every mode with `UseUnifiedBridge=True`. These are new golden files (not updates to Phase 3 files):
 
@@ -427,9 +439,17 @@ test-data/golden/phase4_ms3_mode2.tsv
 test-data/golden/phase4_ms3_mode3.tsv
 ```
 
-These are created by running `Flash.exe -t` with `UseUnifiedBridge=True` on a verified build, inspecting the output to confirm correctness, and committing the files. The standard DDA golden file must match the Phase 3 standard DDA golden (same deconvolution results), which is the primary correctness validation.
+Golden files are captured entirely through CI — there is no local `Flash.exe -t` invocation. The capture workflow is:
 
-The regression runner script (`regression-runner.ps1`) must be updated to include Phase 4 configs and golden files.
+1. Push the Phase 4 implementation branch to GitHub.
+2. The CI `capture-golden` job (or a manually triggered workflow dispatch) runs the regression suite in golden-capture mode: instead of comparing against an existing golden file, it writes the output to a named artifact.
+3. Download the artifact from the GitHub Actions run summary page.
+4. Inspect the downloaded `.tsv` files to confirm correctness (the standard DDA output must match the Phase 3 standard DDA golden; mode-specific files must show expected mode behavior).
+5. Commit the reviewed `.tsv` files to `FlashIDA/test-data/golden/` and push.
+
+Subsequent CI runs use the committed files as the comparison baseline for P4-R01 through P4-R10.
+
+The regression runner script (`regression-runner.ps1`) must be updated to include Phase 4 configs and golden files, and must support a `-captureMode` switch that writes output files rather than comparing them.
 
 ---
 
@@ -442,7 +462,7 @@ The regression runner script (`regression-runner.ps1`) must be updated to includ
 | `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp` | Modify | Full `processScan()` implementation: MS1 path (all 6 scoring branches, filtering, command building), MS2 path (tracking resolution, all routing modes, MS3 targeting). Add `buildMS2Command_()`, `buildMS3Command_()`, `pushCommand_()`, `selectMS3Targets_()`, `processMS2ForTagBasedTargeting()` (absorb from old bridge or refactor in place), `isDifferentiallyAbundant()` (absorb), `pushFollowUpMS2_()`, `pushConditionalFollowUp_()`, `feedExplorationResult_()` (stub), `cleanupExpiredCommands_()` (refine), audit log calls. |
 | `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | Declare new private methods added to `FLASHIda.cpp`. No public API change. |
 | `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp` | Modify | `ProcessScan` bridge function returns actual command count from `obj->processScan(...)` instead of 0. |
-| `OpenMS/src/tests/class_tests/openms/source/FLASHIda_ProcessScan_test.cpp` | Create | C++ unit tests P4-U01 through P4-U09. Exercises MS1 path, all 6 scoring branches, mass exclusion, MS2 tracking resolution, MS3 target generation, conditional follow-ups, quant routing, tag targeting, and audit trail completeness. Uses synthetic spectra constructed in-test without file I/O. |
+| `OpenMS/src/tests/class_tests/openms/source/FLASHIda_ProcessScan_test.cpp` | Create | C++ unit tests P4-U01 through P4-U09. Exercises MS1 path, all 6 scoring branches, mass exclusion, MS2 tracking resolution, MS3 target generation, conditional follow-ups, quant routing, tag targeting, and audit trail completeness. Peak arrays are hard-coded real measured values from characterized experimental data (no file I/O). A provenance comment block at the top of the file documents the source of every embedded array. |
 | `OpenMS/src/tests/class_tests/openms/executables.cmake` | Modify | Uncomment or add entry for `FLASHIda_ProcessScan_test`. (Phase 2 notes that FLASH test entries are currently commented out — they must be active by this phase.) |
 
 ### C# Files (FlashIDA)
@@ -488,19 +508,21 @@ All 19 tests added in this phase, with full descriptions, expected outcomes, and
 
 ### Unit Tests — C++ (Tier 1, `ubuntu-latest`)
 
-These tests run entirely within C++ using the OpenMS ClassTest framework. They require no Thermo DLLs, no Windows, and no Flash.exe build. They exercise `FLASHIda::processScan()` directly with synthetic spectra constructed in the test code.
+These tests run entirely within C++ using the OpenMS ClassTest framework. They require no Thermo DLLs, no Windows, and no Flash.exe build. They exercise `FLASHIda::processScan()` directly with peak arrays hard-coded in the test file.
+
+**Real peak value requirement:** All peak arrays in `FLASHIda_ProcessScan_test.cpp` must use real measured values extracted from characterized experimental data — not arbitrary or simulated values. A provenance comment block must appear at the top of `FLASHIda_ProcessScan_test.cpp` documenting the source of every embedded peak array (e.g., "MS1 array — extracted from `ms1_standard.txt` scan 42 using `prepare-test-data.py`"). This ensures that score ranking differences observed across branches and mode comparisons reflect genuine instrument behavior, not artificial distributions.
 
 | Test ID | Description | Expected Outcome |
 |---------|-------------|------------------|
-| P4-U01 | ProcessScan MS1 path: deconvolve + score + push commands | Feed a synthetic MS1 spectrum containing 3 charge envelopes with known m/z and charge. Call `processScan` with `ms_level=1`. Verify return value > 0 (commands pushed). Verify `getNextScanCommand` returns MS2 commands with `msn_level=2` and `precursor_mz` matching the known envelope masses. This test also directly validates that `ProcessScan` returns an atomic count — the race condition with the old `GetPeakGroupSize` / `GetIsolationWindows` pattern is structurally eliminated. |
-| P4-U02 | All 6 scoring branches produce deterministic output | Create a `FLASHIda` instance for each of the 6 scoring configurations. Feed the same synthetic MS1 spectrum to each. Verify that: (a) each branch runs without crash, (b) each branch returns > 0 commands, (c) the sort order for a multi-peak spectrum is deterministic (run twice, same order both times), (d) QScore branch and IDScore branch produce different orderings for a spectrum with known score distribution, confirming distinct code paths are active. |
-| P4-U03 | Mass exclusion filtering works | Push a precursor at a known mass into the exclusion state (by processing one MS1 + one MS2 with the same mass). Then process a second MS1 spectrum containing that mass within the RT exclusion window. Verify that no MS2 command is pushed for the excluded mass. Verify that masses outside the window are still targeted. |
-| P4-U04 | MS2 path resolves tracking ID from scan_description | Call `processScan` with MS1 to push an MS2 command. Read the tracking ID from the returned command's `scan_description`. Call `processScan` with `ms_level=2` and `scan_description` set to that tracking ID. Verify `[TRACK-RESOLVE]` is logged (check log output or a counter on the `FLASHIda` object). Verify the command is removed from `pending_scan_map_` (no double-resolve). |
-| P4-U05 | MS3 targets are generated from MS2 deconvolution | Configure `FLASHIda` with MS3 enabled (any mode). Call `processScan` with MS1 to push MS2 commands. Call `processScan` with `ms_level=2` (matching tracking ID). Verify that `getNextScanCommand` returns MS3 commands with `msn_level=3` and `priority=3`. Verify the MS3 precursor m/z matches a fragment from the synthetic MS2 spectrum. |
-| P4-U06 | Conditional MS2 follow-ups pushed at priority 2 | Configure with conditional MS2 enabled. Construct an MS2 spectrum that meets the conditional criteria (e.g., fragment intensity above threshold). Call `processScan` with `ms_level=2`. Verify a follow-up command is pushed with `priority=2`. Dequeue all commands and verify the priority-2 command arrives before any priority-1 commands. |
-| P4-U07 | `isDifferentiallyAbundant` routing in ProcessScan | Configure with quant enabled, `fold_change_threshold=1.4`. Feed two synthetic MS2 spectra: one with reporter ions at a 2.0-fold ratio (above threshold), one at 1.2-fold (below threshold). Verify `pushFollowUpMS2_` is called only for the above-threshold spectrum (one command pushed vs. zero commands pushed). |
-| P4-U08 | Tag-based targeting in ProcessScan | Configure with tag-based targeting enabled. Feed a synthetic MS2 spectrum with known fragment masses matching a tag pattern. Call `processScan` with `ms_level=2`. Verify that the tag-based targeting function runs (log output or mock call count). Verify that the inclusion list is expanded with the matched precursor mass. A subsequent MS1 call with a spectrum containing that mass must produce an MS2 command for it even if it would otherwise be ranked below the top-N threshold. |
-| P4-U09 | TRACK audit trail completeness | Feed 10 MS1 spectra (each generating 1 MS2 command) followed by 10 MS2 spectra (one for each pending command, using the correct tracking IDs). Capture log output to a string stream. Verify: exactly 10 `[TRACK-CREATE]` entries from MS2 command creation, exactly 10 `[TRACK-RESOLVE]` entries from MS2 processing, zero `[TRACK-EXPIRE]` entries (no timeouts in this test), and zero unresolved entries remaining in `pending_scan_map_`. Also verify that when a stale entry is created (by not consuming a command within the timeout), `cleanupExpiredCommands_` emits `[TRACK-EXPIRE]`. |
+| P4-U01 | ProcessScan MS1 path: deconvolve + score + push commands | Feed a real MS1 peak array (hard-coded from characterized experimental data) containing 3 charge envelopes with known m/z and charge. Call `processScan` with `ms_level=1`. Verify return value > 0 (commands pushed). Verify `getNextScanCommand` returns MS2 commands with `msn_level=2` and `precursor_mz` matching the known envelope masses. This test also directly validates that `ProcessScan` returns an atomic count — the race condition with the old `GetPeakGroupSize` / `GetIsolationWindows` pattern is structurally eliminated. |
+| P4-U02 | All 6 scoring branches produce deterministic output | Create a `FLASHIda` instance for each of the 6 scoring configurations. Feed the same real MS1 peak array (characterized experimental data, hard-coded) to each. Verify that: (a) each branch runs without crash, (b) each branch returns > 0 commands, (c) the sort order for a multi-peak spectrum is deterministic (run twice, same order both times), (d) QScore branch and IDScore branch produce different orderings for the peak array, confirming distinct code paths are active. Because the peak values are from real instrument measurements, the score distribution is meaningful and the ordering differences are genuine. |
+| P4-U03 | Mass exclusion filtering works | Push a precursor at a known mass into the exclusion state (by processing one MS1 + one MS2 with the same mass, using real measured peak arrays). Then process a second MS1 peak array containing that mass within the RT exclusion window. Verify that no MS2 command is pushed for the excluded mass. Verify that masses outside the window are still targeted. |
+| P4-U04 | MS2 path resolves tracking ID from scan_description | Call `processScan` with a real MS1 peak array to push an MS2 command. Read the tracking ID from the returned command's `scan_description`. Call `processScan` with `ms_level=2` and `scan_description` set to that tracking ID, using a real MS2 peak array. Verify `[TRACK-RESOLVE]` is logged (check log output or a counter on the `FLASHIda` object). Verify the command is removed from `pending_scan_map_` (no double-resolve). |
+| P4-U05 | MS3 targets are generated from MS2 deconvolution | Configure `FLASHIda` with MS3 enabled (any mode). Call `processScan` with a real MS1 peak array to push MS2 commands. Call `processScan` with `ms_level=2` (matching tracking ID) using a real MS2 HCD peak array. Verify that `getNextScanCommand` returns MS3 commands with `msn_level=3` and `priority=3`. Verify the MS3 precursor m/z matches a fragment from the real MS2 peak array. |
+| P4-U06 | Conditional MS2 follow-ups pushed at priority 2 | Configure with conditional MS2 enabled. Use a real MS2 peak array that meets the conditional criteria (e.g., fragment intensity above threshold, verified from characterized data). Call `processScan` with `ms_level=2`. Verify a follow-up command is pushed with `priority=2`. Dequeue all commands and verify the priority-2 command arrives before any priority-1 commands. |
+| P4-U07 | `isDifferentiallyAbundant` routing in ProcessScan | Configure with quant enabled, `fold_change_threshold=1.4`. Use two real MS2 peak arrays: one with reporter ions at a ratio above threshold, one below threshold (both from characterized experimental data with known reporter ion intensities, hard-coded). Verify `pushFollowUpMS2_` is called only for the above-threshold spectrum (one command pushed vs. zero commands pushed). |
+| P4-U08 | Tag-based targeting in ProcessScan | Configure with tag-based targeting enabled. Use a real MS2 peak array with fragment masses matching a tag pattern (extracted from characterized data, hard-coded). Call `processScan` with `ms_level=2`. Verify that the tag-based targeting function runs (log output or mock call count). Verify that the inclusion list is expanded with the matched precursor mass. A subsequent MS1 call with a peak array containing that mass must produce an MS2 command for it even if it would otherwise be ranked below the top-N threshold. |
+| P4-U09 | TRACK audit trail completeness | Feed 10 MS1 peak arrays (each generating 1 MS2 command) followed by 10 MS2 peak arrays (one for each pending command, using the correct tracking IDs). All arrays are real measured values, hard-coded from characterized experimental data. Capture log output to a string stream. Verify: exactly 10 `[TRACK-CREATE]` entries from MS2 command creation, exactly 10 `[TRACK-RESOLVE]` entries from MS2 processing, zero `[TRACK-EXPIRE]` entries (no timeouts in this test), and zero unresolved entries remaining in `pending_scan_map_`. Also verify that when a stale entry is created (by not consuming a command within the timeout), `cleanupExpiredCommands_` emits `[TRACK-EXPIRE]`. |
 
 ### Integration Tests — C# + OpenMS DLL (Tier 2, `windows-latest`)
 
@@ -508,8 +530,8 @@ These tests load `OpenMS.dll` via P/Invoke and exercise the bridge from the C# s
 
 | Test ID | Description | Expected Outcome |
 |---------|-------------|------------------|
-| P4-I01 | Feature flag `UseUnifiedBridge=False` produces old behavior | Load a `FLASHIda` instance with `method_default.xml` where `UseUnifiedBridge=False`. Run the old bridge call sequence (`GetPeakGroupSize`, `GetIsolationWindows`) against a synthetic MS1 spectrum. Verify output matches Phase 3 behavior (same scan commands as Phase 3 integration tests). This confirms the flag gate is functional and the old path is not broken. |
-| P4-I02 | Feature flag `UseUnifiedBridge=True` produces matching behavior | Load a `FLASHIda` instance with `method_default.xml` where `UseUnifiedBridge=True`. Call `ProcessScan` with the same synthetic MS1 spectrum. Call `GetNextScanCommand` to retrieve commands. Verify: `ProcessScan` returns > 0 (non-stub), returned commands have `msn_level=2`, `precursor_mz` values match what the old path would generate. This is the primary integration-level correctness check for the switch-over. |
+| P4-I01 | Feature flag `UseUnifiedBridge=False` produces old behavior | Load a `FLASHIda` instance with `method_default.xml` where `UseUnifiedBridge=False`. Run the old bridge call sequence (`GetPeakGroupSize`, `GetIsolationWindows`) against `ms1_standard.txt`. Verify output matches Phase 3 behavior (same scan commands as Phase 3 integration tests). This confirms the flag gate is functional and the old path is not broken. |
+| P4-I02 | Feature flag `UseUnifiedBridge=True` produces matching behavior | Load a `FLASHIda` instance with `method_default.xml` where `UseUnifiedBridge=True`. Call `ProcessScan` with the same `ms1_standard.txt` data. Call `GetNextScanCommand` to retrieve commands. Verify: `ProcessScan` returns > 0 (non-stub), returned commands have `msn_level=2`, `precursor_mz` values match what the old path would generate. This is the primary integration-level correctness check for the switch-over. |
 
 ### Regression Tests — `Flash.exe -t` Golden File Comparison (Tier 3, `windows-latest`)
 
@@ -610,52 +632,31 @@ The OpenMS DLL cache key is the submodule commit hash. Since Phase 4 advances th
 
 ## Working Product Verification
 
-After completing all implementation steps and before merging, verify the following manually or via CI:
+All verification is performed by inspecting CI job results — there is no local `Flash.exe -t` or `dumpbin` invocation required from a developer workstation.
 
 ### Verification 1: Flag-Off Regression (No Behavioral Change)
 
-```powershell
-Flash.exe -t test-data\spectra\ms1_standard.txt output\verify_flagoff.tsv test-data\configs\method_default.xml
-python compare_golden.py test-data\golden\baseline_phase3.tsv output\verify_flagoff.tsv
-# Expected: PASS
-```
-
-`UseUnifiedBridge=False` must produce output byte-for-byte identical (within `compare_golden.py` tolerances) to the Phase 3 golden file.
+Covered by the `regression-core` CI job (test P4-R01). The job runs the regression runner on `windows-latest` with `method_default.xml` (`UseUnifiedBridge=False`) and compares against the Phase 3 golden file using `compare_golden.py`. A green check on P4-R01 confirms the flag gate is functional and the old path is completely undisturbed.
 
 ### Verification 2: Standard DDA Equivalence (Flag-On)
 
-```powershell
-Flash.exe -t test-data\spectra\ms1_standard.txt output\verify_flagoff.tsv test-data\configs\method_default_unified.xml
-python compare_golden.py test-data\golden\phase4_standard_dda.tsv output\verify_standard_dda.tsv
-# Expected: PASS
-```
-
-The standard DDA output with `UseUnifiedBridge=True` should match the Phase 3 standard DDA output. Any discrepancy indicates a scoring or filtering difference in the new `processScan` path that must be investigated.
+Covered by the `regression-core` CI job (test P4-R02). A green check confirms that the standard DDA output with `UseUnifiedBridge=True` matches `phase4_standard_dda.tsv`. Any discrepancy indicates a scoring or filtering difference in the new `processScan` path — investigate the CI log diff output before re-running.
 
 ### Verification 3: Each Mode Works Individually
 
-Run `Flash.exe -t` with each of the 9 mode configs (`method_deep.xml`, `method_inclusion.xml`, etc.) with `UseUnifiedBridge=True`. Inspect output: confirm that mode-specific behavior is present (inclusion list restricts targets, exclusion list removes known masses, tag targeting expands targets, MS3 commands appear in the log, etc.).
+Covered by the `regression-core` and `regression-extended` CI jobs (tests P4-R03 through P4-R10). A green check on each test confirms that mode-specific behavior is present. CI log output from each run shows the command count and any golden file diff lines, which can be inspected in the Actions run summary.
 
 ### Verification 4: TRACK Audit Trail
 
-Run `Flash.exe -t` and inspect console/log output for `[TRACK-CREATE]`, `[TRACK-RESOLVE]`, `[TRACK-EXPIRE]` entries. Verify:
-- Every MS2 command pushed has a corresponding `[TRACK-CREATE]` entry.
-- Every MS2 spectrum processed (with a valid tracking ID in its description) has a corresponding `[TRACK-RESOLVE]` entry.
-- No orphaned `[TRACK-CREATE]` entries (all resolved or expired).
+Covered by the C++ unit test P4-U09 running in the `cpp-unit-tests` CI job on `ubuntu-latest`. A green check confirms all `[TRACK-CREATE]` and `[TRACK-RESOLVE]` counts are correct. The CI job captures CTest output as a log artifact if needed for manual inspection.
 
 ### Verification 5: Race Condition Elimination
 
-Confirm via code inspection that `ProcessScan` returns an atomic count (the return value of `processScan()` which is a simple local counter incremented for each `pushCommand_()` call). There is no longer a two-step `GetPeakGroupSize()` / `GetIsolationWindows()` call pair — the size and the window data are returned in a single atomic operation (`GetNextScanCommand` returns the complete `ScanCommand` struct). Document this in the commit message.
+Confirmed structurally by the passing of P4-I02 in the `bridge-tests` CI job: `ProcessScan` returning a non-zero count from a single call (no `GetPeakGroupSize` / `GetIsolationWindows` pair needed) is the observable proof. Document the elimination explicitly in the switch-over commit message.
 
-### Verification 6: `dumpbin /exports` Still Shows All Old Functions
+### Verification 6: DLL Exports Still Include All Old Functions
 
-Old bridge functions must still be exported from `OpenMS.dll` in Phase 4 — they are removed in Phase 8. Run:
-
-```cmd
-dumpbin /exports FlashIDA\dll\OpenMS.dll
-```
-
-Confirm all 5 new bridge functions are present (`ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId`, `CreateFLASHIda`, `DisposeFLASHIda`) and all old bridge functions are also still present (`GetPeakGroupSize`, `GetIsolationWindows`, `DeconvolveMS2`, etc.).
+Automated by the `bridge-tests` CI job on `windows-latest`. The job runs `dumpbin /exports FlashIDA\dll\OpenMS.dll` as a step and asserts that all 5 new bridge functions (`ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId`, `CreateFLASHIda`, `DisposeFLASHIda`) and all legacy bridge functions (`GetPeakGroupSize`, `GetIsolationWindows`, `DeconvolveMS2`, etc.) are present in the export table. A green check on this step confirms the DLL export surface is correct without any local tooling.
 
 ---
 

@@ -27,6 +27,11 @@ The following must be complete and passing before starting Phase 2 implementatio
 3. **C++ unit test infrastructure active:** The `cpp-unit-tests` CI job in `flashida-ci.yml` must be active and capable of building and running OpenMS class tests on `ubuntu-latest`. This is the first phase that introduces C++ unit tests; see the CI configuration section below.
 4. **`executables.cmake` FLASH entries uncommented:** The FLASH test entries in `OpenMS/src/tests/class_tests/openms/executables.cmake` are currently commented out. They must be uncommented (or new entries added for the Phase 2 test binary) before `ctest -R FLASH` can discover and run the tests.
 5. **Golden file baseline available:** `FlashIDA/test-data/golden/baseline_phase0.tsv` (from Phase 0) and the Phase 1 golden files (`config_default.json`, `config_full.json`, the `Flash.exe -t` regressions) are committed, so P2-R01 has a baseline to compare against.
+6. **`ms1_standard.txt` exists with real data:** `FlashIDA/test-data/spectra/ms1_standard.txt` must be real top-down MS1 data meeting all of the following criteria:
+   - At least 5 independently deconvolvable charge envelopes.
+   - Masses spanning the 5–100 kDa range.
+   - Precursor intensity dynamic range covering at least 2 orders of magnitude.
+   - Do not fabricate values — extract from existing lab .mzML data using `prepare-test-data.py`.
 
 ---
 
@@ -342,13 +347,7 @@ set(executables
 
 If there is a separate `FLASH_executables.cmake` or a conditional block for FLASH tests, uncomment the appropriate block or add the new entry within it.
 
-Verify the test binary is discoverable by running:
-
-```bash
-ctest -R DeconvolvedSpectrum_OptimizationMetadata_test --dry-run
-```
-
-It must appear in the list without error. If it does not, check that the `executables.cmake` change is included by the parent `CMakeLists.txt` for the class tests directory.
+Verify the test binary is discoverable by confirming the `cpp-unit-tests` CI job on `ubuntu-latest` picks up and runs `DeconvolvedSpectrum_OptimizationMetadata_test` without error. If it does not appear, check that the `executables.cmake` change is included by the parent `CMakeLists.txt` for the class tests directory.
 
 ---
 
@@ -524,24 +523,13 @@ No changes to the `csharp-tests` job configuration. The regression step already 
 
 After implementing all steps and before marking the phase complete:
 
-### 1. C++ unit tests pass locally on Linux
+### 1. C++ unit tests pass
 
-```bash
-cd OpenMS/build
-cmake --build . --target DeconvolvedSpectrum_OptimizationMetadata_test
-ctest -R DeconvolvedSpectrum_OptimizationMetadata_test -V
-```
-
-Expected: all 5 test sections report `OK`. No compile errors.
+Verified by the `cpp-unit-tests` CI job on `ubuntu-latest`. The job builds and runs `ctest -R DeconvolvedSpectrum_OptimizationMetadata_test`. All 5 test sections must report `OK` with no compile errors.
 
 ### 2. `Flash.exe -t` runs with no behavioral change
 
-```powershell
-cd FlashIDA/src/Flash/bin/Debug
-Flash.exe -t ..\..\..\..\..\test-data\spectra\ms1_standard.txt output.tsv ..\..\..\..\..\test-data\configs\method_default.xml
-```
-
-Expected: process exits 0, `output.tsv` is produced, content is identical to `baseline_phase0.tsv`.
+Verified by the `csharp-tests` CI job on `windows-latest`. The job runs `Flash.exe -t` and compares `output.tsv` against `baseline_phase0.tsv`. Expected: process exits 0, `output.tsv` is produced, content is identical to `baseline_phase0.tsv`.
 
 ### 3. `hasOptimizationMetadata()` returns false in normal operation
 
@@ -549,23 +537,11 @@ This is confirmed by P2-U01 and by P2-R01: if any code in the normal deconvoluti
 
 ### 4. No changes to the P/Invoke bridge
 
-Run the Phase 0 bridge smoke tests (P0-I01, P0-I02) to confirm that `CreateFLASHIda` and `DisposeFLASHIda` are unaffected:
-
-```powershell
-nunit3-console FlashIDA/src/Flash.Tests/bin/Debug/Flash.Tests.dll --where "cat==BridgeSmoke"
-```
-
-Expected: both P0-I01 and P0-I02 pass.
+Verified by the `csharp-tests` CI job on `windows-latest`. The Phase 0 bridge smoke tests (P0-I01, P0-I02) confirm that `CreateFLASHIda` and `DisposeFLASHIda` are unaffected. Expected: both P0-I01 and P0-I02 pass.
 
 ### 5. All prior tests still pass
 
-Run the full test suite:
-
-```powershell
-nunit3-console FlashIDA/src/Flash.Tests/bin/Debug/Flash.Tests.dll
-```
-
-Expected: all Phase 0 and Phase 1 tests pass. No regressions introduced.
+Verified by the `csharp-tests` CI job on `windows-latest`. Expected: all Phase 0 and Phase 1 tests pass. No regressions introduced.
 
 ---
 
@@ -587,5 +563,5 @@ The following checklist must be satisfied before Phase 2 is considered complete 
 - [ ] All Phase 0 tests (P0-U01 through P0-R01) continue to pass.
 - [ ] All Phase 1 tests (P1-U01 through P1-R02) continue to pass.
 - [ ] `cpp-unit-tests` CI job is active and passes on `ubuntu-latest` with no Thermo or Windows dependency.
-- [ ] No new compiler warnings introduced in the modified `.cpp` files (OpenMS builds with `-Wall`; verify with a local build or CI).
+- [ ] CI `cpp-unit-tests` job passes with zero warnings.
 - [ ] Code review: a second developer has confirmed the `toSpectrum()` insertion point is correct and does not break any existing `MSSpectrum` field assignments above it.

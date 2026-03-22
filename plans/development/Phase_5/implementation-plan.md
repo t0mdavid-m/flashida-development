@@ -175,7 +175,7 @@ Verify that the overall shutdown sequence in `Flash.cs` calls `dataPipe.Complete
 
 ### Step 8: Verify No Remaining References to Deleted Items
 
-Before committing, run the following checks locally to confirm clean deletion:
+Ensure the following are true before pushing:
 
 1. Search all `*.cs` files under `FlashIDA/src/` for the string `QuantScanProcessor`. Expect zero hits outside of test files that assert its absence.
 2. Search for `OutputMS` in `*.cs` files. Expect zero hits outside of comments and the test file for P5-U02.
@@ -183,7 +183,7 @@ Before committing, run the following checks locally to confirm clean deletion:
 4. Search for `TransformManyBlock` in `*.cs` files. Expect zero hits.
 5. Confirm `ScanScheduler` is still referenced (it must be — it is not removed until Phase 6).
 
-These checks are also automated by CI test P5-U03 (grep for `QuantScanProcessor`) but running them locally before push avoids a wasted CI round-trip.
+These checks are automated by CI test P5-U03. The CI run is the authoritative verification.
 
 ---
 
@@ -292,31 +292,30 @@ The CI workflow's `branches` filter already includes `'phase-*'` patterns. If th
 
 ## Working Product Verification
 
-After all implementation steps are complete and CI is green, verify the following manually on a Windows development machine before declaring Phase 5 done:
+Verify the following in CI. After pushing Phase 5 changes, confirm the `csharp-tests` job passes.
 
 1. **Build succeeds with zero errors and zero warnings.**
-   Run: `msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /warnaserror`
+   CI step: `msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /warnaserror`
    Expected: MSBuild exit code 0. No `CS0618` (obsolete) or `CS0168` (unused variable) warnings from deleted code paths.
 
 2. **Test mode runs end-to-end.**
-   Run: `Flash.exe -t test-data/spectra/ms1_standard.txt output.tsv test-data/configs/method_default.xml`
-   Expected: Exit code 0, `output.tsv` is non-empty, row count matches Phase 4 golden file.
+   CI step: `regression-runner.ps1` invokes `Flash.exe -t` with `method_default.xml` and compares output against the Phase 4 golden file via `compare_golden.py`.
+   Expected: Exit code 0, output matches Phase 4 golden file.
 
 3. **FAIMS mode runs end-to-end.**
-   Run: `Flash.exe -t test-data/spectra/ms1_standard.txt output_faims.tsv test-data/configs/method_faims_3cv.xml`
-   Expected: Exit code 0, CV transition log entries appear in stdout, output matches FAIMS golden file.
+   CI step: `regression-runner.ps1` invokes `Flash.exe -t` with `method_faims_3cv.xml` and compares output against the Phase 4 FAIMS golden file.
+   Expected: Exit code 0, CV transition log entries present in output, output matches FAIMS golden file.
 
 4. **DataPipe completion is clean.**
-   Confirm no process hangs after all spectra are processed. The `WaitForCompletion()` call must return promptly (within 2 seconds) after the input file is exhausted. A hang here would indicate that the `ActionBlock` completion is not being propagated correctly from the `BufferBlock`.
+   CI step: NUnit test P5-U04 in `DataPipeTests.cs` posts 5 synthetic `IMsScan` mocks, calls `DataPipe.Complete()`, and awaits `DataPipe.WaitForCompletion()` with a 5-second timeout.
+   Expected: All 5 items processed, no timeout. A timeout here would indicate the `ActionBlock` completion is not being propagated correctly from the `BufferBlock`.
 
 5. **Dead code confirmed absent.**
-   Run the following searches in `FlashIDA/src/`:
-   - `grep -r "QuantScanProcessor" --include="*.cs"` — expect 0 hits in production code, exactly 1 hit in the P5-U03 test
-   - `grep -r "OutputMS" --include="*.cs"` — expect 0 hits in production code
-   - `grep -r "UseUnifiedBridge" --include="*.cs" --include="*.xml"` — expect 0 hits everywhere
+   CI step: NUnit test P5-U03 in `DeadCodeTests.cs` performs a static search over `FlashIDA/src/**/*.cs` for `QuantScanProcessor`, `OutputMS`, and `UseUnifiedBridge`. This is automated by P5-U03 in CI. No local grep required.
+   Expected: Zero hits in production code for each pattern.
 
 6. **NUnit suite passes.**
-   Run: `nunit3-console FlashIDA/src/Flash.Tests/bin/Debug/Flash.Tests.dll`
+   CI step: `nunit3-console Flash.Tests.dll` run by the `csharp-tests` job.
    Expected: 64 tests pass, 0 failures, 0 errors.
 
 ---
@@ -332,8 +331,8 @@ After all implementation steps are complete and CI is green, verify the followin
 - [ ] `Parameter.cs` (or `MethodConfig.cs`) no longer has `UseUnifiedBridge` property
 - [ ] `method.xml` no longer contains `<UseUnifiedBridge>` element
 - [ ] `ScanScheduler.cs` is still present and still used by `FAIMSScanProcessor`
-- [ ] All 6 Phase 5 tests pass: P5-U01, P5-U02, P5-U03, P5-U04, P5-R01, P5-R02
-- [ ] All 58 prior-phase tests (P0-* through P4-*) continue to pass
+- [ ] All 6 Phase 5 tests pass in CI: P5-U01, P5-U02, P5-U03, P5-U04, P5-R01, P5-R02
+- [ ] All 58 prior-phase tests (P0-* through P4-*) continue to pass in CI
 - [ ] CI `csharp-tests` job green on `windows-latest` with Build #2 DLL artifact
 - [ ] `msbuild /warnaserror` succeeds with zero warnings
 - [ ] No process hang on `DataPipe.WaitForCompletion()` in test mode

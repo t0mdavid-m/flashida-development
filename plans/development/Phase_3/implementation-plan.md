@@ -97,7 +97,7 @@ static_assert(sizeof(ScanCommand) == 1144,
     "ScanCommand size changed — update C# struct layout and tests");
 ```
 
-The exact values (80 and 1144) should be verified by a temporary local compilation before committing. If the compiler places the structs differently (e.g., different padding rules on the target ABI), adjust the struct layout and expected values in the C# test to match. The compile-time assertion is the authoritative size; the C# test reads this value.
+The exact values (80 and 1144) are verified by the `static_assert` statements at C++ compile time in CI. If the compiler places the structs differently (e.g., different padding rules on the target ABI), the `static_assert` will fail the CI build and the developer must adjust the struct layout and expected values in the C# test to match. The compile-time assertion is the authoritative size; the C# test reads this value.
 
 ### Step 2: Add Queue, Mutex, Tracking State, and `pending_scan_map_` to `FLASHIda.h`
 
@@ -1083,6 +1083,9 @@ namespace Flash.Tests
         public void ProcessScan_StubReturnsZero()
         {
             // P3-I02
+            // Note: the inline peak values below (500–900 m/z, Gaussian-shaped intensities) are
+            // synthetic dummy data acceptable here because this is a bridge plumbing test that
+            // verifies P/Invoke marshaling only — it does NOT test deconvolution accuracy.
             double[] mzs  = { 500.0, 600.0, 700.0, 800.0, 900.0 };
             double[] ints = { 1e6,   2e6,   3e6,   2e6,   1e6   };
             int result = _wrapper.ProcessScan(mzs, ints, rt: 1.0, msLevel: 1, scanDesc: "TestScan");
@@ -1219,7 +1222,7 @@ These tests load `OpenMS.dll` via P/Invoke and require both OpenMS DLLs in `Flas
 | ID | Test name | Description | Expected outcome |
 |----|-----------|-------------|-----------------|
 | P3-I01 | `ScanCommand_MarshalingRoundTrip` | After `GetNextScanCommand` fills a `ScanCommand`, the `Analyzer` field is non-empty (confirms C++ wrote into the struct correctly) | `cmd.Analyzer` is not empty or null |
-| P3-I02 | `ProcessScan_StubReturnsZero` | Call `ProcessScan` with 5 synthetic MS1 peaks; return value checked | Return value == 0 |
+| P3-I02 | `ProcessScan_StubReturnsZero` | Call `ProcessScan` with 5 inline dummy peaks (synthetic values acceptable: this is a bridge plumbing test verifying P/Invoke marshaling, not deconvolution accuracy); return value checked | Return value == 0 |
 | P3-I03 | `GetNextScanCommand_ReturnsMS1WhenQueueEmpty` | Call `GetNextScanCommand` with no prior `ProcessScan`; check returned struct | Return value == 1; `cmd.MsnLevel == 1` |
 | P3-I04 | `GetNextTrackingId_IsMonotonicallyIncreasing` | Call `GetNextTrackingId` 100 times; verify each is greater than the previous | 99 consecutive "next > prev" assertions pass |
 | P3-I05 | `DllExports_IncludeNewFunctions` | `dumpbin /exports FlashIDA\dll\OpenMS.dll` output contains `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` | All 3 `findstr` calls exit with code 0 |
@@ -1358,23 +1361,23 @@ Add the following to the regression test step in the `csharp-tests` job:
 
 ## Working Product Verification
 
-After all steps are complete, perform the following verifications before declaring Phase 3 done:
+All verifications are automated by CI. No local Windows machine is required.
 
-1. **Build succeeds:** `msbuild FlashIDA/src/Flash/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU"` exits with code 0 and no errors.
+1. **Build succeeds:** Automated by: CI job `csharp-tests` — the MSBuild step exits with code 0 and no errors.
 
-2. **C++ tests pass:** `ctest -R FLASHIdaQueueTracking_test` on the Build #1 DLL returns 100% pass.
+2. **C++ tests pass:** Automated by: CI job `cpp-unit-tests` — `ctest -R FLASHIdaQueueTracking_test` returns 100% pass on the Build #1 DLL.
 
-3. **C# layout tests pass:** `nunit3-console Flash.Tests.dll --where "class == ScanCommandLayoutTests"` reports 4 tests passed. In particular, `ScanCommand_SizeMatchesCpp` and `IsolationStage_SizeMatchesCpp` pass with the expected sizes 1144 and 80.
+3. **C# layout tests pass:** Automated by: CI job `csharp-tests` — NUnit reports 4 tests passed for `ScanCommandLayoutTests`. In particular, `ScanCommand_SizeMatchesCpp` and `IsolationStage_SizeMatchesCpp` pass with the expected sizes 1144 and 80.
 
-4. **Regression unchanged:** `Flash.exe -t ms1_standard.txt output.tsv method_default.xml` produces a TSV file that `compare_golden.py` reports as `PASS` against the Phase 2 golden file. The TSV output must be bit-for-bit identical to Phase 2 output (the shadow path calls `processScan_` but does not change deconvolution state).
+4. **Regression unchanged:** Automated by: CI job `csharp-tests` — `Flash.exe -t` with `ms1_standard.txt` and `method_default.xml` produces a TSV file that `compare_golden.py` reports as `PASS` against the Phase 2 golden file. The TSV output must be bit-for-bit identical to Phase 2 output (the shadow path calls `processScan_` but does not change deconvolution state).
 
-5. **TRACK entries present:** The stdout of step 4 contains at least one line matching `[TRACK-CREATE]`, confirming the shadow validation code path is active.
+5. **TRACK entries present:** Automated by: CI job `csharp-tests` — the captured stdout of the regression step is scanned for at least one line matching `[TRACK-CREATE]`, confirming the shadow validation code path is active.
 
-6. **GetNextScanCommand returns MS1:** In a direct test (P3-I03), calling `GetNextScanCommand` returns `msn_level == 1` and the `Analyzer` field is non-empty.
+6. **GetNextScanCommand returns MS1:** Automated by: CI job `csharp-tests` — test P3-I03 passes, confirming `GetNextScanCommand` returns `msn_level == 1` and a non-empty `Analyzer` field.
 
-7. **DLL exports verified:** `dumpbin /exports FlashIDA/dll/OpenMS.dll` lists `ProcessScan`, `GetNextScanCommand`, and `GetNextTrackingId` among the exports. The existing 18 exports are also still present (Phase 4 removes none).
+7. **DLL exports verified:** Automated by: CI job `bridge-tests` — `dumpbin /exports OpenMS.dll` lists `ProcessScan`, `GetNextScanCommand`, and `GetNextTrackingId` among the exports. The existing 18 exports are also still present (Phase 4 removes none).
 
-8. **No behavioral change:** No modification was made to the existing code paths (`GetPeakGroupSize`, `GetIsolationWindows`, `DeconvolveMS2`, etc.). All existing bridge calls still compile and execute as before.
+8. **No behavioral change:** Automated by: CI job `csharp-tests` — all prior-phase tests (P0-*, P1-*, P2-*) continue to pass, confirming that no existing code paths (`GetPeakGroupSize`, `GetIsolationWindows`, `DeconvolveMS2`, etc.) were modified.
 
 ---
 
@@ -1398,11 +1401,11 @@ All of the following must be true before Phase 3 is considered complete and Buil
 - [ ] `ScanFactory.BuildFromCommand(ScanCommand)` method implemented and compiles.
 - [ ] Shadow validation calls added in `IDAScanProcessor`, `FAIMSScanProcessor`, `QuantScanProcessor`.
 - [ ] All 16 Phase 3 tests (P3-U01 through P3-R01) pass in CI.
-- [ ] All prior-phase tests (P0-*, P1-*, P2-* — 23 tests) continue to pass.
-- [ ] `Flash.exe -t` output is identical to Phase 2 golden file (P3-R01 passes).
+- [ ] All prior-phase tests (P0-*, P1-*, P2-* — 23 tests) continue to pass in CI.
+- [ ] `Flash.exe -t` output is identical to Phase 2 golden file (P3-R01 passes in CI).
 - [ ] `[TRACK-CREATE]` log entries appear in `Flash.exe -t` stdout.
 - [ ] No existing C# code references to old bridge functions are broken (existing 18 P/Invoke declarations unchanged).
 - [ ] Code formatted to project standards: C++ clang-format (LLVM, 150 col, 2-space indent, Allman braces); C# standard conventions.
-- [ ] `ScanCommandLayout_test` binary builds and its output matches hard-coded C# expected values.
+- [ ] `ScanCommandLayout_test` binary builds and its output matches hard-coded C# expected values (verified in CI job `cpp-unit-tests`).
 - [ ] Phase 3 changes committed to `flashida-v9-migration` (C#) and `flashida-v9-bridge` (C++) branches.
 - [ ] Build #1 CI run (Phases 1 + 2 + 3 combined) is green on both `ubuntu-latest` and `windows-latest`.

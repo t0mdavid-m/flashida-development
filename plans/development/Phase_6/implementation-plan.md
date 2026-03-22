@@ -42,9 +42,9 @@ The following must be in place before starting Phase 6 work.
 - Both FAIMS method configs committed: `method_faims_3cv.xml` and `method_faims_skip.xml`.
 
 **Test data must be committed:**
-- `FlashIDA/test-data/spectra/ms1_faims_3cv.txt` — MS1 spectra with annotations indicating CV values.
-- `FlashIDA/test-data/configs/method_faims_3cv.xml` — FAIMS config with 3 CVs (-40, -50, -60), max_cv_skip=0.
-- `FlashIDA/test-data/configs/method_faims_skip.xml` — FAIMS config with threshold and max_cv_skip > 0 (e.g., max_cv_skip=2, low precursor threshold).
+- `FlashIDA/test-data/spectra/ms1_faims_3cv.txt` — Real MS1 scans from a FAIMS acquisition. Must contain scans at multiple CV values (e.g., -40, -50, -60 V or whatever the actual experiment used), with CV annotation present in scan headers exactly as the instrument sets it, and different precursor populations at different CV values. For the adaptive skip test, some CV values should produce few precursors (to trigger the skip threshold) and some many. Do NOT construct this file synthetically — use real FAIMS experiment data.
+- `FlashIDA/test-data/configs/method_faims_3cv.xml` — FAIMS config with CV values matching those present in `ms1_faims_3cv.txt`, max_cv_skip=0. If the real data uses different CV values than the plan's defaults (-40, -50, -60), adjust the CV values in this file accordingly.
+- `FlashIDA/test-data/configs/method_faims_skip.xml` — FAIMS config with threshold and max_cv_skip > 0 (e.g., max_cv_skip=2, low precursor threshold). CV values must exactly match the CV annotations present in `ms1_faims_3cv.txt`. If the real data uses different CV values than the plan's defaults, adjust accordingly.
 
 ---
 
@@ -451,16 +451,22 @@ Adjust the `sourceDir` path to correctly resolve relative to the test DLL output
 
 Before triggering the C++ build, capture the Phase 5 FAIMS golden files that Phase 6 will regress against. The P6-R02 and P6-R03 tests compare Phase 6 output to these files.
 
-**P6-R02 golden file: `faims_3cv.tsv`**
-- If not yet captured during Phase 5 (P5-R02), run `Flash.exe -t` with `method_faims_3cv.xml` on the Phase 5 build and commit the output as `FlashIDA/test-data/golden/faims_3cv.tsv`.
-- This file records the expected CV transition log entries alongside the deconvolution output.
+Because there is no local Windows machine available, golden file capture is done via CI artifact:
 
-**P6-R03 golden file: `faims_skip.tsv`**
-- Run `Flash.exe -t` with `method_faims_skip.xml` on the Phase 5 build.
-- Commit as `FlashIDA/test-data/golden/faims_skip.tsv`.
-- Verify the file contains log entries showing CV skip events (the skip count in the log must be non-zero).
+1. Push the Phase 5 branch with `ms1_faims_3cv.txt`, `method_faims_3cv.xml`, and `method_faims_skip.xml` committed.
+2. The CI regression step runs `Flash.exe -t` for each config and uploads the output TSV files as artifacts.
+3. Download the artifacts from the CI run, review them to confirm the CV transition log entries and skip events are present and correct.
+4. Commit the downloaded files as `FlashIDA/test-data/golden/faims_3cv.tsv` and `FlashIDA/test-data/golden/faims_skip.tsv`.
 
 Both golden files must be committed before the Phase 6 C++ build is triggered in CI.
+
+**P6-R02 golden file: `faims_3cv.tsv`**
+- Captured from the Phase 5 CI run with `method_faims_3cv.xml`.
+- Must record the expected CV transition log entries alongside the deconvolution output.
+
+**P6-R03 golden file: `faims_skip.tsv`**
+- Captured from the Phase 5 CI run with `method_faims_skip.xml`.
+- Must contain log entries showing CV skip events (the skip count in the log must be non-zero).
 
 ---
 
@@ -477,7 +483,7 @@ After all code changes are committed:
    - `bridge-tests` job (windows-latest): P6-I01 passes.
    - `csharp-tests` regression step: P6-R01, P6-R02, P6-R03 all pass.
    - `stress-tests` job (windows-latest): P6-S01 passes.
-5. If any test fails, see the debugging guide in the Working Product Verification section.
+5. If any test fails, all debugging is done via CI. Add diagnostic logging to the relevant code paths, push a new commit, and inspect the CI job logs and uploaded artifacts to identify the failure. See the debugging guide in the Working Product Verification section.
 
 ---
 
@@ -539,9 +545,9 @@ The existing `FAIMSScanProcessor.ProcessMS` calls `scanScheduler.AddScan()` insi
 
 | File | Change type | Description |
 |------|-------------|-------------|
-| `FlashIDA/test-data/configs/method_faims_3cv.xml` | Create (if not from Phase 5) | FAIMS config: cv_values=[-40,-50,-60], max_cv_skip=0, precursor threshold at default |
-| `FlashIDA/test-data/configs/method_faims_skip.xml` | Create (if not from Phase 5) | FAIMS config: cv_values=[-40,-50,-60], max_cv_skip=2, cv_precursor_threshold=15 |
-| `FlashIDA/test-data/spectra/ms1_faims_3cv.txt` | Create (if not from Phase 5) | MS1 spectra for FAIMS regression tests |
+| `FlashIDA/test-data/configs/method_faims_3cv.xml` | Create (if not from Phase 5) | FAIMS config: cv_values matching those in `ms1_faims_3cv.txt`, max_cv_skip=0, precursor threshold at default |
+| `FlashIDA/test-data/configs/method_faims_skip.xml` | Create (if not from Phase 5) | FAIMS config: cv_values matching those in `ms1_faims_3cv.txt`, max_cv_skip=2, cv_precursor_threshold=15 |
+| `FlashIDA/test-data/spectra/ms1_faims_3cv.txt` | Provide (real data) | Real MS1 scans from a FAIMS acquisition with CV annotations in scan headers, multiple CV values, and varying precursor populations. Do NOT construct synthetically. |
 | `FlashIDA/test-data/golden/faims_3cv.tsv` | Create | Phase 5 FAIMS 3-CV output, used as Phase 6 regression baseline |
 | `FlashIDA/test-data/golden/faims_skip.tsv` | Create | Phase 5 FAIMS adaptive skip output, used as Phase 6 regression baseline |
 
@@ -667,6 +673,8 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 1. The first command returned after the `ProcessScan` call is an MS1 with `faims_cv` matching the second CV (CV transition).
 2. All subsequent MS2 commands have `faims_cv` matching the new CV.
 3. Call `ProcessScan` again with the same spectrum two more times (completing a full 3-CV cycle). Verify the `faims_cv` sequence across the three injected transition-MS1 commands is [-50, -60, -40] (advancing from the initial -40).
+
+**Note:** Synthetic data is acceptable for this test. P6-I01 is a bridge plumbing test verifying P/Invoke marshaling correctness, not a scientific accuracy test. The spectrum used here does not need to be real FAIMS experiment data.
 
 **Expected outcome:** CV values cycle correctly through the bridge boundary. The P/Invoke marshaling of the `double faims_cv` field in `ScanCommand` is verified to be correct (no endian or alignment issues).
 
@@ -797,19 +805,19 @@ The CI workflow triggers on `phase-*` branches. The Phase 6 development branch s
 
 ## Working Product Verification
 
-After Build #3 is complete and CI passes, verify the following manually (or confirm via the automated tests listed in parentheses):
+After Build #3 is complete and all CI jobs pass, verify the following via the automated tests listed in parentheses. There is no local Windows machine — all verification is done through CI job results, logs, and downloaded artifacts.
 
 ### 1. Non-FAIMS modes are unchanged
 
-Run `Flash.exe -t test-data/spectra/ms1_standard.txt output.tsv test-data/configs/method_default.xml` and compare to the Phase 5 standard DDA golden file. (Automated: P6-R01.)
+Confirmed by the `csharp-tests` CI job regression step running `Flash.exe -t` with `method_default.xml` and comparing to the Phase 5 standard DDA golden file. (Automated: P6-R01.)
 
-If there is any diff, it indicates that code changes in `getNextScanCommand()` accidentally altered behavior in the non-FAIMS code paths. The `isFAIMS_()` guard in `injectCVIntoCommand_()` must return false and inject 0.0 without any side effects.
+If P6-R01 fails, it indicates that code changes in `getNextScanCommand()` accidentally altered behavior in the non-FAIMS code paths. The `isFAIMS_()` guard in `injectCVIntoCommand_()` must return false and inject 0.0 without any side effects.
 
 ### 2. 3-CV cycling matches old behavior exactly
 
-Run `Flash.exe -t` with `method_faims_3cv.xml` and inspect the log output for CV transition messages. Verify:
-- First CV transition: from -40 to -50 (appears after the first MS1 cycle).
-- Second: -50 to -60. Third: -60 to -40 (wrap-around).
+Confirmed by the `csharp-tests` CI job regression step running `Flash.exe -t` with `method_faims_3cv.xml`. Inspect the CI log output and downloaded artifact for CV transition messages. Verify:
+- First CV transition: from the first CV to the second (appears after the first MS1 cycle).
+- Subsequent transitions follow the configured CV order with correct wrap-around.
 - Each transition is preceded by exactly one MS1 injection with the new CV.
 - The total number of CV transition events across the run matches the Phase 5 golden log.
 
@@ -817,42 +825,37 @@ Run `Flash.exe -t` with `method_faims_3cv.xml` and inspect the log output for CV
 
 ### 3. Adaptive CV skipping works correctly
 
-Run `Flash.exe -t` with `method_faims_skip.xml` using a sparse input spectrum. Verify in the log that CV skip events are logged with the correct skip count and that the forced advance occurs after `max_cv_skip` consecutive skips. (Automated: P6-R03, P6-U02, P6-U03.)
+Confirmed by the `csharp-tests` CI job regression step running `Flash.exe -t` with `method_faims_skip.xml`. Inspect the CI log output for CV skip events with the correct skip count and forced advance after `max_cv_skip` consecutive skips. (Automated: P6-R03, P6-U02, P6-U03.)
 
 ### 4. Skip limit is enforced
 
-Run the same test as above and count the consecutive CV skip events in the log. Verify that no sequence of consecutive skips exceeds `max_cv_skip` before a forced advance occurs. (Automated: P6-U03.)
+Confirmed by inspecting the same CI log as item 3 above. Verify that no sequence of consecutive skips exceeds `max_cv_skip` before a forced advance occurs. (Automated: P6-U03.)
 
 ### 5. ScanScheduler and FAIMSScanProcessor are fully deleted
 
-Run `grep -r "ScanScheduler\|FAIMSScanProcessor" FlashIDA/src --include="*.cs"`. Confirm zero hits outside of test files. (Automated: P6-U07, P6-U08.)
-
-Also verify the files are absent from the filesystem and from `Flash.csproj`:
-
-```powershell
-Test-Path FlashIDA\src\Flash\IDA\ScanScheduler.cs   # must return False
-Test-Path FlashIDA\src\Flash\IDA\FAIMSScanProcessor.cs  # must return False
-```
+Confirmed by the `csharp-tests` CI job running P6-U07 and P6-U08. (Automated: P6-U07, P6-U08.)
 
 ### 6. No race conditions under load
 
-Run the stress test locally if possible (the CI run may be the first time it runs under real load). If P6-S01 reports a deadlock, inspect the `queue_mutex_` acquisition points in `processScan()` and `getNextScanCommand()`. Both must acquire the lock for the entire duration of their queue operations. If `updateCV_()` is called while holding the lock, ensure no code path inside `updateCV_()` attempts to re-acquire it (it must not; it is a private method that assumes the lock is already held).
+P6-S01 runs as the `stress-tests` CI job. If P6-S01 reports a deadlock, diagnose by inspecting the CI log output for the `stress-tests` job. Check that `queue_mutex_` acquisition points in `processScan()` and `getNextScanCommand()` hold the lock for the entire duration of their queue operations, and that no code path inside `updateCV_()` attempts to re-acquire it (it must not; it is a private method that assumes the lock is already held).
 
 ### 7. Full prior-phase regression
 
-Run the full regression suite with all method configs from Phases 0-5. All 64 prior-phase tests must still pass (cumulative count before Phase 6: 64). (Automated: all P0-P5 test IDs in the full CI run.)
+Confirmed by the full CI run. All 64 prior-phase tests must still pass (cumulative count before Phase 6: 64). (Automated: all P0-P5 test IDs in the full CI run.)
 
 ### Debugging guide
 
 **If P6-R02 or P6-R03 fail (CV cycling mismatch):**
 1. Add verbose logging to `updateCV_()`: log `current_cv_index_`, `cv_skip_count_`, `precursor_count_for_cv_`, `shouldSkipCV_()` result, and the new `current_cv_index_` after advance.
-2. Compare the log trace from Phase 6 (C++) with an equivalent trace from Phase 5 (add similar logging to `ScanScheduler.cs` temporarily on the Phase 5 build).
-3. The first divergence point in the traces identifies the behavioral difference.
+2. Push a diagnostic commit and inspect the CI job logs to obtain the full trace.
+3. Compare the log trace from Phase 6 (C++) with the expected behavior documented in the Step 1 audit.
+4. The first divergence point in the traces identifies the behavioral difference. Iterate: fix the code, push a new commit, inspect CI logs again.
 
 **If P6-S01 fails with a deadlock:**
-1. Verify that `updateCV_()` is called only from within a context where `queue_mutex_` is already held (i.e., from inside `processScan()` which holds the lock, or from inside `getNextScanCommand()` which holds the lock).
-2. Verify there is no call to `getNextScanCommand()` or `processScan()` from within `updateCV_()` or any method it calls.
-3. Check whether the synthetic spectrum used in the stress test contains more than `MAX_ISOLATION_STAGES` peaks — oversized input could cause issues.
+1. Diagnose by inspecting CI log output from the `stress-tests` job.
+2. Verify that `updateCV_()` is called only from within a context where `queue_mutex_` is already held (i.e., from inside `processScan()` which holds the lock, or from inside `getNextScanCommand()` which holds the lock).
+3. Verify there is no call to `getNextScanCommand()` or `processScan()` from within `updateCV_()` or any method it calls.
+4. Check whether the synthetic spectrum used in the stress test contains more than `MAX_ISOLATION_STAGES` peaks — oversized input could cause issues.
 
 **If P6-U05 fails (CV transition MS1 ordering):**
 1. Verify `cv_transition_pending_` is set to true inside `updateCV_()`.
@@ -874,11 +877,11 @@ All of the following must be true before Phase 6 is considered complete:
 - [ ] `FAIMSScanProcessor.cs` is deleted (`git rm`), removed from `Flash.csproj`, with zero remaining references in C# source files.
 - [ ] `ScanScheduler.cs` is deleted (`git rm`), removed from `Flash.csproj`, with zero remaining references in C# source files.
 - [ ] All 13 Phase 6 tests pass in CI: P6-U01 through P6-U08, P6-I01, P6-R01 through P6-R03, P6-S01.
-- [ ] All 64 prior-phase tests (P0 through P5) still pass without modification.
-- [ ] `Flash.exe -t` with `method_faims_3cv.xml` produces CV transition log entries matching the Phase 5 golden file exactly.
-- [ ] `Flash.exe -t` with `method_faims_skip.xml` produces skip event log entries matching the Phase 5 golden file exactly.
-- [ ] `Flash.exe -t` with `method_default.xml` (non-FAIMS) produces output matching the Phase 5 standard DDA golden file exactly.
-- [ ] The stress test (P6-S01) completes within the 10-minute budget with no deadlock, no data corruption, and no access violations.
+- [ ] All 64 prior-phase tests (P0 through P5) still pass in CI without modification.
+- [ ] P6-R02 CI run: `Flash.exe -t` with `method_faims_3cv.xml` produces CV transition log entries matching the Phase 5 golden file exactly.
+- [ ] P6-R03 CI run: `Flash.exe -t` with `method_faims_skip.xml` produces skip event log entries matching the Phase 5 golden file exactly.
+- [ ] P6-R01 CI run: `Flash.exe -t` with `method_default.xml` (non-FAIMS) produces output matching the Phase 5 standard DDA golden file exactly.
+- [ ] P6-S01 passes in the `stress-tests` CI job within the 10-minute budget with no deadlock, no data corruption, and no access violations.
 - [ ] Build #3 `OpenMS.dll` artifact is stored in CI with cache key matching the Phase 6 OpenMS submodule commit hash.
 - [ ] Phase 6 golden files (`faims_3cv.tsv`, `faims_skip.tsv`) are committed to `FlashIDA/test-data/golden/` and the `golden/README.md` is updated to document their provenance.
 - [ ] The written behavioral audit from Step 1 is preserved (as a comment block in `FLASHIda.cpp` or as a committed document in `plans/development/Phase_6/`) for future reference.

@@ -36,11 +36,7 @@ Phase 0 is the starting point. There are no phase-level code prerequisites. Howe
 
 3. **OpenMS DLLs available locally.** Pre-built `OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll` must be in `FlashIDA/dll/`. Download from the latest `build-openms-dll.yml` CI artifact, or build locally (30-60 min). See [../testing-strategy.md Section 0.5](../testing-strategy.md#05-openms-dll-procurement).
 
-4. **Windows development machine** with:
-   - .NET Framework 4.8 Developer Pack
-   - Visual Studio Build Tools 2022 (provides MSBuild, `dumpbin.exe`, and the C# compiler)
-   - NuGet CLI (`nuget.exe` on PATH)
-   - Python 3.8+ (for `compare_golden.py` and `prepare-test-data.py`)
+4. **CI environment.** The CI environment (`windows-latest` GitHub Actions runner) provides MSBuild, NuGet, .NET 4.8, and Python. No local Windows machine is required.
 
 5. **Existing solution builds cleanly.** Before creating any new files, verify the baseline:
    ```powershell
@@ -433,21 +429,15 @@ FlashIDA/test-data/
 
 4.2. Create `FlashIDA/test-data/spectra/ms1_smoke_test.txt`.
 
-This file must contain a minimal MS1 spectrum with at least one identifiable charge envelope so that `Flash.exe -t` produces at least one row of output. Format: one header line followed by tab-delimited (m/z, intensity) pairs, one per line.
+This file must contain a real MS1 scan extracted from an existing top-down `.mzML` file using `prepare-test-data.py` (see [../testing-strategy.md Section 8.6](../testing-strategy.md#86-data-preparation-script)). Do NOT construct peaks synthetically.
 
-The spectrum should be synthetic — construct peaks that form a textbook charge envelope for a protein of known mass (e.g., ubiquitin at ~8565 Da). A charge state series for ubiquitin might look like:
+**Requirements for the extracted scan:**
+- Format: one header line (`Spec scan=N rt=R.RRRR`) followed by tab-delimited (m/z, intensity) pairs, one per line.
+- Must contain at least one charge envelope resolvable by FLASHDeconv (i.e., real measured isotope patterns from a top-down experiment).
+- 10–200 peaks (small enough for a fast smoke test).
+- Must produce at least 1 row of output when run through `Flash.exe -t`.
 
-```
-Spec scan=1 rt=1.0000
-856.600	50000.00
-952.900	80000.00
-1071.600	100000.00
-1224.400	90000.00
-1428.800	70000.00
-1713.400	40000.00
-```
-
-The exact peaks and intensities must form a charge envelope that the FLASHDeconv deconvolution engine can resolve. Use existing test data from the lab or extract a single scan from an existing mzML file using `prepare-test-data.py` (see [../testing-strategy.md Section 8.6](../testing-strategy.md#86-data-preparation-script)).
+**Note:** `ms1_smoke_test.txt` must be committed with real data **before** the CI golden capture step (Step 6) can produce a valid baseline. See Step 6 for the ordering of commits.
 
 Acceptance criterion: `Flash.exe -t ms1_smoke_test.txt output.tsv method_default.xml` must produce at least one row in `output.tsv`.
 
@@ -469,21 +459,24 @@ Each file captures the output of `Flash.exe -t` for a specific
 
 ## Provenance
 
-Each golden file is created by running `Flash.exe -t` on a
-known-good build and committing the output. The file name indicates
-the phase that created it and the configuration used.
+Each golden file is generated from real experimental data (top-down
+proteomics `.mzML` files). The source `.mzML` file and the scan number
+used to produce the input spectrum should be documented alongside each
+golden file entry. Golden files are created by capturing CI output
+(see "How to Update" below) and must not be constructed synthetically.
 
 ## How to Update
 
 When an intentional behavioral change is made (e.g., a scoring change
 in Phase 4), update golden files as follows:
 
-1. Run the regression suite locally:
-   `powershell FlashIDA/test-scripts/regression-runner.ps1`
-2. Inspect the diff between old and new outputs.
-3. If the diff is expected, commit the updated golden files in the
-   same PR as the code change.
-4. In the PR description, list each changed golden file and explain
+1. Trigger CI on the branch containing the code change.
+2. When the `csharp-tests` job completes, download the `regression-output`
+   artifact from the Actions UI.
+3. Inspect the diffs between the artifact output and the current golden files.
+4. If the diffs are expected, copy the updated files to `test-data/golden/`
+   and commit them.
+5. In the PR description, list each changed golden file and explain
    why the output changed.
 
 ## Review Expectations
@@ -516,30 +509,28 @@ Before finalizing the bridge smoke tests, read the existing source files to unde
 
 ---
 
-### Step 6 — Capture the Golden Baseline
+### Step 6 — Capture the Golden Baseline via CI
 
-Run `Flash.exe -t` locally with the smoke spectrum and capture its output as the Phase 0 golden file.
+The golden baseline is captured through CI, not by running `Flash.exe` locally. Follow this ordering carefully — `ms1_smoke_test.txt` must contain real data before this step can produce a valid baseline.
 
-6.1. Build the solution:
-```powershell
-msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU"
-Copy-Item FlashIDA\dll\*.dll FlashIDA\src\Flash\bin\Debug\
-```
+6.1. Commit and push the following to the branch, **without** `baseline_phase0.tsv`:
+- `FlashIDA/test-data/spectra/ms1_smoke_test.txt` (real MS1 scan from Step 4.2)
+- `FlashIDA/test-data/configs/method_default.xml`
+- `FlashIDA/src/Flash.Tests/` (test project files from Steps 2–3)
+- `FlashIDA/test-scripts/compare_golden.py` and `regression-runner.ps1`
+- `.github/workflows/flashida-ci.yml`
 
-6.2. Run `Flash.exe -t` with the smoke spectrum:
-```powershell
-FlashIDA\src\Flash\bin\Debug\Flash.exe -t `
-    FlashIDA\test-data\spectra\ms1_smoke_test.txt `
-    FlashIDA\test-data\golden\baseline_phase0.tsv `
-    FlashIDA\test-data\configs\method_default.xml
-```
+6.2. The pushed commit triggers CI. The `csharp-tests` job builds the solution, runs `Flash.exe -t`, and uploads the output as a `golden-capture` artifact.
 
-6.3. Verify the output:
-- The TSV file must exist.
-- It must contain a header row and at least one data row.
+6.3. In the GitHub Actions UI, navigate to the completed `csharp-tests` run and download the `golden-capture` artifact. Inspect the TSV output:
+- The file must contain a header row and at least one data row.
 - All expected columns must be present (`rt`, `mz1`, `mz2`, `qScore`, `charges`, `monoMasses`, `ccos`, `csnr`, `cos`, `snr`, `cScore`, `ppm`, `precursorIntensity`, `massIntensity`, `hcd`).
 
-6.4. Commit `baseline_phase0.tsv` to the repository. This file is the regression anchor for all future phases.
+If the output is empty or missing expected columns, the input spectrum (Step 4.2) does not satisfy the requirements. Replace it with a scan that yields at least one deconvolution result and repeat from 6.1.
+
+6.4. Copy the downloaded TSV to `FlashIDA/test-data/golden/baseline_phase0.tsv` and commit it. This file is the regression anchor for all future phases.
+
+6.5. Push again. On this second push, the CI regression comparison step finds `baseline_phase0.tsv` in the repository and `compare_golden.py` passes.
 
 ---
 
@@ -746,7 +737,28 @@ jobs:
           name: nunit-results
           path: TestResults.xml
 
+      # --- Golden capture (first push, before baseline_phase0.tsv exists) ---
+      # Run Flash.exe -t directly and upload the raw output as an artifact.
+      # The developer downloads this artifact, inspects it, and commits it
+      # as baseline_phase0.tsv (see Step 6).
+      - name: Capture golden output
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path FlashIDA\test-output | Out-Null
+          FlashIDA\src\Flash\bin\Debug\Flash.exe -t `
+            FlashIDA\test-data\spectra\ms1_smoke_test.txt `
+            FlashIDA\test-output\baseline_phase0.tsv `
+            FlashIDA\test-data\configs\method_default.xml
+
+      - name: Upload golden capture
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-capture
+          path: FlashIDA/test-output/baseline_phase0.tsv
+
       # --- Regression tests (Tier 3: Flash.exe -t) ---
+      # Skipped on the first push (no baseline_phase0.tsv committed yet).
+      # Passes on the second push (after baseline_phase0.tsv is committed).
       - name: Run regression tests
         shell: powershell
         run: |
@@ -848,38 +860,9 @@ packages/
 
 ---
 
-### Step 10 — Local Verification Run
+### Step 10 — Verification via CI
 
-Before pushing, verify everything works end-to-end locally.
-
-10.1. Build:
-```powershell
-nuget restore FlashIDA/src/Flash.sln
-msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU"
-Copy-Item FlashIDA\dll\*.dll FlashIDA\src\Flash\bin\Debug\
-Copy-Item FlashIDA\dll\*.dll FlashIDA\src\Flash.Tests\bin\Debug\
-Copy-Item FlashIDA\dependencies\*.dll FlashIDA\src\Flash\bin\Debug\
-```
-
-10.2. Run unit tests:
-```powershell
-nunit3-console FlashIDA\src\Flash.Tests\bin\Debug\Flash.Tests.dll
-```
-Expected: 6 tests (P0-U01 through P0-U04, P0-I01, P0-I02), all passing.
-
-10.3. Run regression:
-```powershell
-powershell FlashIDA\test-scripts\regression-runner.ps1
-```
-Expected: `PASS: baseline_phase0`.
-
-10.4. Verify golden file:
-```powershell
-python FlashIDA\test-scripts\compare_golden.py `
-    FlashIDA\test-data\golden\baseline_phase0.tsv `
-    FlashIDA\test-data\golden\baseline_phase0.tsv
-```
-Expected output: `PASS` (comparing a file to itself).
+Verification is performed by CI. After pushing to the branch (including `baseline_phase0.tsv` as captured in Step 6), verify that the `csharp-tests` and `bridge-tests` jobs both pass (green) in GitHub Actions. No local Windows build is required to confirm Phase 0 completion.
 
 ---
 
@@ -893,10 +876,10 @@ Expected output: `PASS` (comparing a file to itself).
 | `FlashIDA/src/Flash.Tests/packages.config` | NuGet package declarations for NUnit 3, NUnit3TestAdapter, NUnitConsoleRunner. |
 | `FlashIDA/src/Flash.Tests/SmokeTests.cs` | P0-U01 through P0-U04: build verification and test-mode execution tests. |
 | `FlashIDA/src/Flash.Tests/BridgeSmokeTests.cs` | P0-I01, P0-I02: CreateFLASHIda/DisposeFLASHIda bridge smoke tests. |
-| `FlashIDA/test-data/spectra/ms1_smoke_test.txt` | Minimal MS1 spectrum (5-10 peaks, at least one charge envelope). |
+| `FlashIDA/test-data/spectra/ms1_smoke_test.txt` | Real MS1 scan (10–200 peaks) extracted from an existing top-down `.mzML` file. Must yield at least 1 deconvolution result. |
 | `FlashIDA/test-data/configs/method_default.xml` | Standard DDA method configuration (copy of existing `method.xml` defaults). |
 | `FlashIDA/test-data/golden/README.md` | Documents golden file provenance, update procedure, and review expectations. |
-| `FlashIDA/test-data/golden/baseline_phase0.tsv` | Captured output of `Flash.exe -t` on the current codebase. First golden file. |
+| `FlashIDA/test-data/golden/baseline_phase0.tsv` | Captured output of `Flash.exe -t` on the current codebase, downloaded from the CI `golden-capture` artifact (Step 6). First golden file. |
 | `FlashIDA/test-scripts/compare_golden.py` | Python script for TSV golden file comparison with numeric tolerance. |
 | `FlashIDA/test-scripts/regression-runner.ps1` | PowerShell script that runs `Flash.exe -t` for each config and calls compare_golden.py. |
 | `.github/workflows/flashida-ci.yml` | Main CI workflow. Phase 0 skeleton: `csharp-tests` and `bridge-tests` active, `cpp-unit-tests` and `stress-tests` skipped. |
@@ -992,24 +975,20 @@ The migration work is done on `flashida-v9-migration`. Each phase can optionally
 At the end of Phase 0, the following must all be true before the phase is considered complete.
 
 **WPV-1: Solution builds without error.**
-- Run: `msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU"`
-- Verify: MSBuild exits with code 0. No build errors. `Flash.exe` exists in output directory.
-- Automated by: P0-U01, P0-U02.
+- Automated by: CI job `csharp-tests` (step: "Build solution (Debug)"). MSBuild must exit with code 0 and `Flash.exe` must be present in the build output.
+- Confirmed by: P0-U01, P0-U02 passing in CI.
 
 **WPV-2: `Flash.exe -t` runs and produces valid TSV output.**
-- Run: `Flash.exe -t ms1_smoke_test.txt output.tsv method_default.xml`
-- Verify: Exit code 0. Output TSV has header row + at least 1 data row. All 15 columns present.
-- Automated by: P0-U03, P0-U04.
+- Automated by: CI job `csharp-tests` (steps: "Run NUnit unit tests" for P0-U03/P0-U04, and "Run regression tests" for P0-R01).
+- Confirmed by: P0-U03 and P0-U04 passing in CI (exit code 0, header row + at least 1 data row, all 15 columns present).
 
 **WPV-3: Bridge calls (Create/Dispose) complete without crash.**
-- Run: NUnit test suite including `BridgeSmokeTests`.
-- Verify: P0-I01 passes (non-null pointer returned). P0-I02 passes (no crash on dispose).
-- Automated by: P0-I01, P0-I02.
+- Automated by: CI job `csharp-tests` (step: "Run NUnit unit tests") and CI job `bridge-tests` (step: "Verify bridge smoke tests passed").
+- Confirmed by: P0-I01 and P0-I02 passing in CI (non-null pointer returned; no crash on dispose).
 
 **WPV-4: Golden baseline captured and committed.**
-- Verify: `FlashIDA/test-data/golden/baseline_phase0.tsv` exists in the repository.
-- Verify: `compare_golden.py baseline_phase0.tsv baseline_phase0.tsv` outputs `PASS`.
-- Automated by: P0-R01.
+- Verify: `FlashIDA/test-data/golden/baseline_phase0.tsv` exists in the repository (committed following the CI artifact workflow in Step 6).
+- Automated by: CI job `csharp-tests` (step: "Run regression tests") running `compare_golden.py`. Confirmed by: P0-R01 passing in CI.
 
 **WPV-5: CI workflow runs and all active jobs pass.**
 - Push to `flashida-v9-migration` branch.
@@ -1023,14 +1002,14 @@ At the end of Phase 0, the following must all be true before the phase is consid
 - [ ] `Flash.Tests.csproj` created and added to `Flash.sln`. Solution builds with the test project included.
 - [ ] `SmokeTests.cs` created with P0-U01, P0-U02, P0-U03, P0-U04.
 - [ ] `BridgeSmokeTests.cs` created with P0-I01, P0-I02. `BuildLegacyConfigString()` replicates actual `Parameter.ToFLASHDeconvInput()` output (verified by Step 5 inspection).
-- [ ] `ms1_smoke_test.txt` created and committed. Contains at least one identifiable charge envelope.
+- [ ] `ms1_smoke_test.txt` created and committed. Contains a real MS1 scan (10–200 peaks) extracted from an existing top-down `.mzML` file using `prepare-test-data.py`. Not synthetically constructed. Produces at least 1 row of deconvolution output.
 - [ ] `method_default.xml` created and committed under `test-data/configs/`.
-- [ ] `baseline_phase0.tsv` captured by running `Flash.exe -t` on the current codebase. Committed to `test-data/golden/`.
+- [ ] `baseline_phase0.tsv` captured via the CI artifact workflow (Step 6): downloaded from the `golden-capture` artifact of the first CI run and committed to `test-data/golden/`.
 - [ ] `golden/README.md` created and committed.
 - [ ] `compare_golden.py` created and committed. `compare_golden.py X X` (same file) outputs `PASS`.
 - [ ] `regression-runner.ps1` created and committed.
 - [ ] `.github/workflows/flashida-ci.yml` created with the Phase 0 skeleton. `cpp-unit-tests` and `stress-tests` jobs are explicitly skipped with `if: false`.
 - [ ] `.gitignore` updated: `FlashIDA/dependencies/*.dll` is excluded.
-- [ ] All 7 Phase 0 tests pass locally: P0-U01 through P0-U04 (4 unit/smoke) + P0-I01, P0-I02 (2 bridge) + P0-R01 (1 regression).
+- [ ] All 7 Phase 0 tests pass in CI: P0-U01 through P0-U04 (4 unit/smoke) + P0-I01, P0-I02 (2 bridge) + P0-R01 (1 regression).
 - [ ] CI workflow passes on `flashida-v9-migration` branch: `csharp-tests` and `bridge-tests` jobs are green. No jobs are red.
 - [ ] No code in `FlashIDA/src/Flash/` has been modified. Phase 0 is test infrastructure only — zero changes to production code.
