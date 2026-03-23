@@ -72,27 +72,9 @@ jobs:
           echo "Restored Thermo DLLs:"
           ls FlashIDA/dependencies/*.dll
 
-      # --- Restore or download OpenMS DLLs ---
-      - name: Get OpenMS submodule commit hash
-        id: openms-hash
-        shell: bash
-        run: echo "hash=$(git -C OpenMS rev-parse HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Restore cached OpenMS DLLs
-        id: dll-cache
-        uses: actions/cache@v4
-        with:
-          path: FlashIDA/dll/
-          key: openms-dlls-${{ steps.openms-hash.outputs.hash }}
-
-      - name: Download OpenMS DLLs from build workflow
-        if: steps.dll-cache.outputs.cache-hit != 'true'
-        uses: dawidd6/action-download-artifact@v3
-        with:
-          workflow: build_dlls.yml
-          name: openms-dlls
-          path: FlashIDA/dll/
-          branch: flashida-v9-bridge
+      # OpenMS DLLs are committed in FlashIDA/dll/ and copied to
+      # build output by MSBuild (CopyToOutputDirectory in Flash.csproj).
+      # No download or cache step needed.
 
       # --- Build ---
       - name: Setup MSBuild
