@@ -94,13 +94,14 @@ jobs:
           Copy-Item FlashIDA\dependencies\*.dll FlashIDA\bin\ -Force
 
       # --- Unit tests (NUnit) ---
-      # Run from FlashIDA\bin so the Windows DLL loader can find OpenMS.dll's
-      # native dependencies (Qt6Core.dll, OpenSwathAlgo.dll, zlib.dll) which
-      # must be on the DLL search path (process dir or CWD).
+      # Prepend FlashIDA\bin to PATH so the Windows DLL loader can resolve
+      # OpenMS.dll's native dependencies (Qt6Core.dll, OpenSwathAlgo.dll,
+      # zlib.dll) from the NUnit agent process.
       - name: Run NUnit tests
-        working-directory: FlashIDA/bin
+        shell: cmd
         run: |
-          ..\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll --result=..\..\TestResults.xml
+          set PATH=%CD%\FlashIDA\bin;%PATH%
+          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml
 
       - name: Upload NUnit results
         if: always()
