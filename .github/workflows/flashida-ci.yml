@@ -83,6 +83,21 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore FlashIDA/src/Flash.sln
 
+      # Temporary: discover IInformationSourceAccess namespace from Thermo DLLs
+      - name: Discover Thermo type namespaces
+        shell: powershell
+        run: |
+          foreach ($dll in Get-ChildItem FlashIDA\dependencies\*.dll) {
+            try {
+              $asm = [Reflection.Assembly]::LoadFrom($dll.FullName)
+              $types = $asm.GetTypes() | Where-Object { $_.Name -like "*InformationSource*" }
+              if ($types) {
+                Write-Host "=== $($dll.Name) ==="
+                $types | ForEach-Object { Write-Host "  $($_.FullName)" }
+              }
+            } catch { }
+          }
+
       - name: Build solution (Debug)
         run: |
           msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /m
