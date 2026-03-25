@@ -1035,3 +1035,24 @@ At the end of Phase 0, the following must all be true before the phase is consid
 - [ ] All 7 Phase 0 tests pass in CI: P0-U01 through P0-U04 (4 unit/smoke) + P0-I01, P0-I02 (2 bridge) + P0-R01 (1 regression).
 - [ ] CI workflow passes: `cpp-unit-tests` and `windows-tests` jobs are green.
 - [ ] No code in `FlashIDA/src/Flash/` has been modified. Phase 0 is test infrastructure only — zero changes to production code.
+
+---
+
+## DoD Override — Acquisition Loop Testing (2026-03-24)
+
+Per `acquisition-loop-testing-strategy.md` Section 4.5, 8, the following non-behavioral production code changes are authorized in Phase 0 to enable continuity tests across all 9 phases:
+
+1. **`ScanFactory.cs`**: `CreateFusionCustomScan` made `virtual` (enables `MockScanFactory` override)
+2. **`IDAScanProcessor.cs`**, **`FAIMSScanProcessor.cs`**, **`QuantScanProcessor.cs`**: Added optional `FLASHIdaWrapper wrapper = null` parameter with `wrapper ??` fallback (enables wrapper injection for tests)
+
+These changes are:
+- **Non-behavioral**: All existing call sites pass no wrapper (defaults to null), producing identical runtime behavior
+- **Backward compatible**: Optional parameters with default values; no call site changes required
+- **Required for**: 28 continuity tests (AL-CT01 through AL-CT28) that mock instrument interfaces and push mock `IMsScan` objects through the processor pipeline
+
+### Acquisition Loop Testing Artifacts Added
+- 6 mock infrastructure files in `Flash.Tests/Mocks/`
+- 1 test file in `Flash.Tests/AcquisitionLoop/ContinuityTests.cs` (28 active tests + 2 Tier4 stubs)
+- 9 mode-specific XML configs in `test-data/configs/`
+- 2 supporting test data files (inclusion list, FASTA)
+- 9 golden reference JSON files (captured via CI, committed after first green run)
