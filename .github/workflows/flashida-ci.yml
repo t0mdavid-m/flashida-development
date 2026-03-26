@@ -94,21 +94,22 @@ jobs:
           Copy-Item FlashIDA\dependencies\*.dll FlashIDA\bin\ -Force
 
       # --- Unit tests (NUnit) ---
-      # Prepend FlashIDA\bin to PATH so the Windows DLL loader can resolve
-      # OpenMS.dll's native dependencies (Qt6Core.dll, OpenSwathAlgo.dll,
-      # zlib.dll) from the NUnit agent process.
+      # OMP_NUM_THREADS=1: prevent OpenMP/CLR thread pool conflicts.
+      # Redirect stdout+stderr to capture native C++ diagnostic output.
       - name: Run NUnit tests
-        shell: cmd
+        env:
+          OMP_NUM_THREADS: "1"
         run: |
-          set PATH=%CD%\FlashIDA\bin;%PATH%
-          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml
+          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml 2>&1 | Tee-Object -FilePath nunit-native-output.txt
 
       - name: Upload NUnit results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nunit-results
-          path: TestResults.xml
+          path: |
+            TestResults.xml
+            nunit-native-output.txt
 
       # --- Golden capture (baseline) ---
       - name: Capture golden output
