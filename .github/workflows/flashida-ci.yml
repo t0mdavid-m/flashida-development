@@ -94,22 +94,16 @@ jobs:
           Copy-Item FlashIDA\dependencies\*.dll FlashIDA\bin\ -Force
 
       # --- Unit tests (NUnit) ---
-      # OMP_NUM_THREADS=1: prevent OpenMP/CLR thread pool conflicts.
-      # Redirect stdout+stderr to capture native C++ diagnostic output.
       - name: Run NUnit tests
-        env:
-          OMP_NUM_THREADS: "1"
         run: |
-          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml 2>&1 | Tee-Object -FilePath nunit-native-output.txt
+          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml
 
       - name: Upload NUnit results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nunit-results
-          path: |
-            TestResults.xml
-            nunit-native-output.txt
+          path: TestResults.xml
 
       # --- Golden capture (baseline) ---
       - name: Capture golden output
