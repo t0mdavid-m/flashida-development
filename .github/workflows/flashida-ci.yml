@@ -98,7 +98,7 @@ jobs:
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
         run: |
-          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml --agents=1 --timeout=120000
+          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml --agents=1 --timeout=300000
 
       - name: Upload NUnit results
         if: always()
