@@ -880,28 +880,44 @@ Automated by: CI job `windows-tests`. Verify by inspecting the P1-R01 regression
 
 The following checklist must be fully complete before Phase 1 is considered done and Phase 2 begins:
 
-- [ ] `MethodConfig.cs` contains `JsonMethodConfig` and all 11 nested JSON config classes.
-- [ ] `MethodConfig.cs` contains `ScanSchedulingConfig` and `ParameterOptimizationConfig` XML classes.
-- [ ] `MSSettingsConfig` has `ScanScheduling` and `ParameterOptimization` fields (optional, null-safe).
-- [ ] `Parameter.cs` (`IDAParameters`) has `ToJSON(MethodParameters mp)` method that produces valid JSON.
-- [ ] `ToFLASHDeconvInput()` remains in `Parameter.cs` and is not modified.
-- [ ] `FLASHIdaWrapper.cs` calls `ToJSON()` at the `CreateFLASHIda` call site instead of `ToFLASHDeconvInput()`.
-- [ ] `FLASHIda.h` declares `parseJSONConfig_(const std::string&)` as a private method.
-- [ ] `FLASHIda.h` declares new member variables for ms_settings, scheduling, and exploration fields.
-- [ ] `FLASHIda.cpp` has JSON auto-detect at the top of the constructor: `if (!arg_str.empty() && arg_str[0] == '{')`.
-- [ ] `FLASHIda.cpp` has `parseJSONConfig_()` implementing all 8 JSON sections from the Issue 8 schema.
-- [ ] `FLASHIda.cpp` JSON branch has `try/catch(nlohmann::json::exception)` error handling.
-- [ ] `FLASHIda.cpp` legacy constructor path is completely unchanged.
-- [ ] `Flash.Tests/JsonConfigTests.cs` exists and contains P1-U01 through P1-U05.
-- [ ] `Flash.Tests/BridgeSmokeTests.cs` contains P1-I01 through P1-I03 and `TestBridgeHelper`.
-- [ ] `test-data/configs/method_json_roundtrip.xml` committed with multiple MS2 entries and non-default FAIMS CVs.
-- [ ] `test-data/json/config_default.json` committed (golden JSON for default config).
-- [ ] `test-data/json/config_full.json` committed (golden JSON for round-trip config).
-- [ ] CI `windows-tests` job passes with all 10 Phase 1 tests (P1-U01 through P1-R02) green.
-- [ ] CI `windows-tests` job passes with all 7 Phase 0 tests (P0-U01 through P0-R01) still green (no regression).
-- [ ] CI job output for the P1-R01 regression step shows `compare_golden.py` exiting 0 (JSON config output matches `baseline_phase0.tsv`).
-- [ ] CI job output for the P1-R02 regression step shows `compare_golden.py` exiting 0 (legacy fallback output matches `baseline_phase0.tsv`).
-- [ ] CI job output confirms `Flash.exe <input_file> <output_file> <method.xml>` runs to completion without unhandled exceptions. (No `-t` flag -- Phase 0 lesson #1.)
-- [ ] `OpenMS.dll` artifact updated to Build #1 DLL (includes JSON parsing branch).
-- [ ] OpenMS submodule pointer in FlashIDA repo updated to the Phase 1 OpenMS commit.
-- [ ] No new compiler warnings introduced in either C# or C++ code.
+- [x] `MethodConfig.cs` contains `JsonMethodConfig` and all nested JSON config classes (13 classes).
+- [ ] `MethodConfig.cs` contains `ScanSchedulingConfig` and `ParameterOptimizationConfig` XML classes. — DEFERRED: scheduling/optimization stored as JSON-only fields, not XML-deserialized. No behavioral change in Phase 1.
+- [ ] `MSSettingsConfig` has `ScanScheduling` and `ParameterOptimization` fields (optional, null-safe). — DEFERRED: same reason as above.
+- [x] `Parameter.cs` (`IDAParameters`) has `ToJSON(MethodParameters mp)` method that produces valid JSON.
+- [x] `ToFLASHDeconvInput()` remains in `Parameter.cs` and is not modified.
+- [x] `FLASHIdaWrapper.cs` has new `FLASHIdaWrapper(MethodParameters)` constructor calling `ToJSON()`. Old `FLASHIdaWrapper(IDAParameters)` constructor kept as legacy fallback. All 5 call sites updated.
+- [x] `FLASHIda.h` declares `parseJSONConfig_(const std::string&)` as a private method.
+- [x] `FLASHIda.h` declares new member variables for ms_settings, scheduling, exploration, quantification, and FAIMS fields.
+- [x] `FLASHIda.cpp` has JSON auto-detect at the top of the constructor: `if (!arg_str.empty() && arg_str[0] == '{')`.
+- [x] `FLASHIda.cpp` has `parseJSONConfig_()` implementing all 9 JSON sections (deconvolution, precursor_selection, tagging, files, quantification, faims, ms_settings, scheduling, exploration) plus file loading (log files, FASTA, TSV inclusion, PTM).
+- [x] `FLASHIda.cpp` JSON branch has `try/catch(nlohmann::json::exception)` error handling.
+- [x] `FLASHIda.cpp` legacy constructor path is completely unchanged.
+- [x] `Flash.Tests/JsonConfigTests.cs` exists and contains P1-U01 through P1-U05 (+ P1-U05b).
+- [x] `Flash.Tests/BridgeSmokeTests.cs` contains P1-I01 through P1-I03. Helper method `BuildJsonConfigString()` used instead of separate `TestBridgeHelper` class.
+- [x] `test-data/configs/method_json_roundtrip.xml` committed with 2 MS2 entries (HCD+ETD), 3 FAIMS CVs, non-default charge range (5-40).
+- [ ] `test-data/json/config_default.json` committed (golden JSON for default config). — Requires CI golden capture run.
+- [ ] `test-data/json/config_full.json` committed (golden JSON for round-trip config). — Requires CI golden capture run.
+- [ ] CI `windows-tests` job passes with all Phase 1 tests green. — Requires DLL rebuild and CI run.
+- [ ] CI `windows-tests` job passes with all Phase 0 tests still green (no regression). — Requires CI run.
+- [ ] CI job output for the P1-R01 regression step shows `compare_golden.py` exiting 0. — Requires CI run.
+- [ ] CI job output for the P1-R02 regression step shows `compare_golden.py` exiting 0. — Requires CI run.
+- [ ] CI job output confirms `Flash.exe` runs to completion without unhandled exceptions. — Requires CI run.
+- [ ] `OpenMS.dll` artifact updated to Build #1 DLL (includes JSON parsing branch). — Requires `build_dlls.yml` run.
+- [ ] OpenMS submodule pointer in FlashIDA repo updated to the Phase 1 OpenMS commit. — After DLL build.
+- [ ] No new compiler warnings introduced in either C# or C++ code. — Requires CI run.
+
+### Implementation Notes (2026-03-27)
+
+**Deviations from original plan:**
+
+1. **Constructor overloading instead of replacement:** Added `FLASHIdaWrapper(MethodParameters mp)` as a new overload instead of modifying the existing `FLASHIdaWrapper(IDAParameters param)` constructor. This preserves backward compatibility. All 5 call sites (IDAScanProcessor, FAIMSScanProcessor, QuantScanProcessor, ContinuityTestHarness, FLASHIdaWrapper.Main) updated to use the new constructor.
+
+2. **ScanSchedulingConfig/ParameterOptimizationConfig XML classes deferred:** The plan called for new XML-deserializable classes. Since Phase 1 sends scheduling/exploration as JSON-only defaults (no XML source yet), these were stored directly as JSON config classes. The XML classes will be needed in Phase 3 when scan scheduling is actually implemented.
+
+3. **Missing parameters from Finding 1 fully addressed:** All 11 parameters identified as missing from the Issue 8 schema are included: `tqscore_threshold`, `min_mass`, `max_mass` in deconvolution; `AllCharges`, `MS3AllCharges`, `strict_inclusion`, `tie_threshold` in precursor_selection; `min_tag_length`, `max_tag_length`, `max_ptm_count`, `max_flanking_mass_diff` in tagging section.
+
+4. **File loading in C++ parseJSONConfig_:** The JSON parser replicates the full file loading logic from the legacy path (log files, FASTA, TSV inclusion lists, PTM files) to ensure behavioral parity.
+
+5. **`build_dlls.yml` updated:** Added `flashida-v9-bridge` to push triggers and `workflow_dispatch` for manual triggering.
+
+6. **`System.Web.Extensions` reference added** to both `Flash.csproj` and `Flash.Tests.csproj`.
