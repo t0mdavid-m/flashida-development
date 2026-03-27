@@ -96,7 +96,7 @@ jobs:
       # --- Unit tests (NUnit) ---
       - name: Run NUnit tests
         run: |
-          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml
+          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --result=TestResults.xml --agents=1 --timeout=120000
 
       - name: Upload NUnit results
         if: always()
