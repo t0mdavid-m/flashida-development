@@ -18,29 +18,36 @@ All spectrum files share the following format. Individual file subsections below
 **Per-scan structure:**
 
 ```
-Spec <native_id> rt=<rt_minutes>
+Spec <native_id>\t<rt_seconds>
 <mz_1>\t<intensity_1>
 <mz_2>\t<intensity_2>
 ...
 ```
 
-- **Header line:** The literal string `Spec` followed by a single space, then the native scan ID (e.g., `scan=42`), then a single space, then `rt=` followed by the retention time in decimal minutes (4 decimal places, e.g., `rt=12.3456`).
-- **Delimiter:** Tab (`\t`) between m/z and intensity on each peak line.
+- **Header line:** The literal string `Spec` followed by a single space, then the native scan ID (e.g., `scan=42`), then a **tab character** (`\t`), then the retention time as a bare decimal number in **seconds** (4 decimal places, e.g., `70.5800`). There is no `rt=` prefix.
+- **Delimiter:** Tab (`\t`) between fields on all lines (header and peak lines).
 - **M/z column:** 64-bit floating-point, 6 decimal places, no units.
 - **Intensity column:** 32-bit floating-point, 2 decimal places, no units.
-- **Encoding:** UTF-8, Unix line endings (`\n`) preferred; Windows line endings (`\r\n`) are also accepted by `Flash.exe -t`.
+- **Encoding:** UTF-8, Unix line endings (`\n`) preferred; Windows line endings (`\r\n`) are also accepted by `Flash.exe`.
 - **No blank lines** between the header and peaks, and no blank lines within a scan block.
+
+**RT unit chain:** The retention time undergoes two conversions between the text file and the C++ engine:
+1. **Text file** stores RT in **seconds** (e.g., `70.5800`)
+2. **C# parser** (`FLASHIdaWrapper.cs`) divides by 60 → **minutes** (e.g., `1.1763`)
+3. **C++ bridge** (`FLASHIdaBridgeFunctions.cpp`) multiplies by 60 → back to **seconds**
+
+The C++ engine's `@param rt` documents "Retention time in seconds." This double-conversion exists because the C# side historically worked in minutes while the C++ engine works in seconds.
 
 **Single-scan files** contain exactly one header line followed by all peaks for that scan.
 
 **Multi-scan files** contain multiple scan blocks in sequence. Each scan block begins with a header line followed by zero or more peak lines. Scan blocks are separated by the next header line (no blank-line separator is required, but a blank line between scan blocks is permitted).
 
 ```
-Spec <native_id> rt=<rt_minutes>
+Spec <native_id>\t<rt_seconds>
 <mz_1>\t<intensity_1>
 <mz_2>\t<intensity_2>
 ...
-Spec <native_id> rt=<rt_minutes>
+Spec <native_id>\t<rt_seconds>
 <mz_1>\t<intensity_1>
 ...
 ```
@@ -49,14 +56,14 @@ Spec <native_id> rt=<rt_minutes>
 
 ### 1.1 `ms1_smoke_test.txt`
 
-**Purpose:** Minimal single-scan MS1 spectrum for Phase 0 smoke testing. Must be small enough that `Flash.exe -t` processes it in under 60 seconds and produces at least one row of output.
+**Purpose:** Minimal single-scan MS1 spectrum for Phase 0 smoke testing. Must be small enough that `Flash.exe` processes it in under 60 seconds and produces at least one row of output.
 
 **Format:** Single-scan. See [Spectrum File Format](#spectrum-file-format) above.
 
 **Content requirements:**
 
 - 10–200 peaks total. Fewer than 10 peaks is unlikely to yield a deconvolution result. More than 200 peaks slows the smoke test beyond its intended role.
-- Must contain at least one identifiable charge envelope (consecutive isotope peaks with a recognizable m/z spacing pattern), so that FLASHDeconv produces at least 1 deconvolved proteoform and `Flash.exe -t` writes at least one data row to the output TSV.
+- Must contain at least one identifiable charge envelope (consecutive isotope peaks with a recognizable m/z spacing pattern), so that FLASHDeconv produces at least 1 deconvolved proteoform and `Flash.exe` writes at least one data row to the output TSV.
 - Data must be real measured peaks extracted from a top-down proteomics `.mzML` file using `prepare-test-data.py`. Synthetically constructed peak arrays are not acceptable.
 
 **Size constraints:**
@@ -72,7 +79,7 @@ python FlashIDA/test-scripts/prepare-test-data.py source.mzML \
     --scan-index 0 --max-scans 1
 ```
 
-Verify that `Flash.exe -t ms1_smoke_test.txt output.tsv method_default.xml` exits with code 0 and `output.tsv` has at least two lines (header + one data row).
+Verify that `Flash.exe ms1_smoke_test.txt output.tsv method_default.xml` exits with code 0 and `output.tsv` has at least two lines (header + one data row).
 
 **Used by:**
 
@@ -104,7 +111,7 @@ Verify that `Flash.exe -t ms1_smoke_test.txt output.tsv method_default.xml` exit
 
 - Target: < 5 MB on disk.
 - If the file exceeds 5 MB, store it using Git LFS.
-- Number of scans: no hard limit, but each regression run invokes `Flash.exe -t` once on the full file. Keep total processing time for a single `Flash.exe -t` invocation under 5 minutes on a `windows-latest` GitHub Actions runner.
+- Number of scans: no hard limit, but each regression run invokes `Flash.exe` once on the full file. Keep total processing time for a single `Flash.exe` invocation under 5 minutes on a `windows-latest` GitHub Actions runner.
 
 **Source:**
 
@@ -177,7 +184,7 @@ Select the scan index `<N>` for a scan where the precursor protein is known and 
 
 **Format:** Multi-scan. See [Spectrum File Format](#spectrum-file-format) above, with one FAIMS-specific extension:
 
-- **`cv=<cv_value>`**: Each header line carries an additional CV annotation appended after the `rt=` field, separated by a single space. The compensation voltage is a signed decimal number in volts (e.g., `cv=-40`, `cv=-50.0`). Example: `Spec scan=1 rt=12.3456 cv=-40`.
+- **`cv=<cv_value>`**: Each header line carries an additional field appended after the RT value, separated by a tab character. The compensation voltage is a signed decimal number in volts (e.g., `cv=-40`, `cv=-50.0`). Example: `Spec scan=1\t70.5800\tcv=-40`.
 - If the source instrument writes the CV in the native scan header, `prepare-test-data.py` must extract it and include it verbatim.
 - The CV values present in this file must exactly match the `cv_values` array in `method_faims_3cv.xml` and `method_faims_skip.xml`. The method config files must be updated if the real data uses CV values different from the plan's defaults of `-40, -50, -60`.
 
@@ -255,7 +262,7 @@ Select `<N>` to be a scan from a dense fraction with high spectral complexity.
 
 All golden files live in `FlashIDA/test-data/golden/`. They are committed to the repository. `FlashIDA/test-data/golden/README.md` documents provenance and update procedures for each file (see Phase 0 implementation plan, Step 4.4, for the `README.md` content).
 
-Golden files are never constructed manually. They are always captured by running `Flash.exe -t` on a known-good CI build and downloading the resulting artifact. The developer inspects the artifact before committing it.
+Golden files are never constructed manually. They are always captured by running `Flash.exe` on a known-good CI build and downloading the resulting artifact. The developer inspects the artifact before committing it.
 
 ### 2.1 Golden File Format
 
@@ -316,7 +323,7 @@ All golden files are **tab-separated values (TSV)** with the following propertie
 
 ### 2.3 How golden files are generated
 
-1. Push the implementation branch to GitHub. The CI `csharp-tests` job runs `Flash.exe -t` for each configuration in capture mode.
+1. Push the implementation branch to GitHub. The CI `csharp-tests` job runs `Flash.exe` for each configuration in capture mode.
 2. In the GitHub Actions run summary, download the `golden-capture` artifact (uploaded by the `capture-golden` step in the CI workflow).
 3. Inspect each `.tsv` file: verify the header row matches the 15-column format, verify row count is non-zero, verify float values are in plausible ranges for the given experiment.
 4. Copy the reviewed files into `FlashIDA/test-data/golden/` and commit them alongside the code change that necessitated the new golden file.
@@ -434,7 +441,7 @@ python compare_golden.py <golden_file.tsv> <actual_file.tsv>
 
 **Location:** `FlashIDA/test-scripts/regression-runner.ps1`
 
-**Purpose:** Orchestrates all `Flash.exe -t` invocations and calls `compare_golden.py` for each output. Used both in CI (via the `csharp-tests` job) and locally by developers.
+**Purpose:** Orchestrates all `Flash.exe` invocations and calls `compare_golden.py` for each output. Used both in CI (via the `csharp-tests` job) and locally by developers.
 
 **Usage:**
 
@@ -458,7 +465,7 @@ powershell FlashIDA/test-scripts/regression-runner.ps1 `
 **Invocation format per config:**
 
 ```powershell
-& $FlashExe -t $ms1File $outputFile $methodFile [<$ms2File>]
+& $FlashExe $ms1File $outputFile $methodFile [<$ms2File>]
 ```
 
 The optional fourth argument (`$ms2File`) is included only when the config's `ms2` field is non-null.
@@ -483,7 +490,7 @@ $configs = @(
 )
 ```
 
-**Exit behavior:** Exits with code 1 if any `Flash.exe -t` invocation fails or any `compare_golden.py` comparison fails. Exits with code 0 only if all configured tests pass. Prints a failure count summary.
+**Exit behavior:** Exits with code 1 if any `Flash.exe` invocation fails or any `compare_golden.py` comparison fails. Exits with code 0 only if all configured tests pass. Prints a failure count summary.
 
 **Introduced in:** Phase 0, Step 7. Extended at each phase that adds new regression configurations.
 
@@ -493,7 +500,7 @@ $configs = @(
 
 **Location:** `FlashIDA/test-scripts/prepare-test-data.py`
 
-**Purpose:** One-time conversion script. Reads source `.mzML` files and writes spectrum files in the tab-delimited format expected by `Flash.exe -t`. Run locally by the developer; outputs are committed to the repository.
+**Purpose:** One-time conversion script. Reads source `.mzML` files and writes spectrum files in the tab-delimited format expected by `Flash.exe`. Run locally by the developer; outputs are committed to the repository.
 
 **Usage:**
 
@@ -510,7 +517,7 @@ python FlashIDA/test-scripts/prepare-test-data.py <source.mzML> <output.txt> [op
 | `--max-scans <N>` | (all) | Stop after N scans have been written |
 | `--include-cv` | (absent) | Append `cv=<value>` to each scan header from the spectrum's FAIMS CV metadata |
 
-**Output format:** Writes one header line per scan followed by tab-delimited peak lines (m/z and intensity), as specified in Section 1.1. Retention time is converted from seconds (mzML) to minutes (output) by dividing by 60.
+**Output format:** Writes one header line per scan followed by tab-delimited peak lines (m/z and intensity), as specified in Section 1. Retention time is written in seconds (directly from pyopenms `getRT()`, no conversion).
 
 **Dependencies:** `pyopenms` (installable via `pip install pyopenms`). Python 3.8+.
 
@@ -525,8 +532,8 @@ with open(sys.argv[2], 'w') as f:
     for spec in exp:
         if spec.getMSLevel() != 1:
             continue
-        rt = spec.getRT() / 60.0
-        f.write(f"Spec {spec.getNativeID()} rt={rt:.4f}\n")
+        rt = spec.getRT()  # seconds (no conversion)
+        f.write(f"Spec {spec.getNativeID()}\t{rt:.4f}\n")
         for peak in spec:
             f.write(f"{peak.getMZ():.6f}\t{peak.getIntensity():.2f}\n")
 ```
@@ -637,7 +644,7 @@ FlashIDA/test-data/
 ```
 FlashIDA/test-scripts/
 ├── compare_golden.py               # Phase 0: golden file comparison with numeric tolerance
-├── regression-runner.ps1           # Phase 0: orchestrates Flash.exe -t for all configs
+├── regression-runner.ps1           # Phase 0: orchestrates Flash.exe for all configs
 └── prepare-test-data.py            # Phase 0: mzML -> tab-delimited spectrum converter
 ```
 

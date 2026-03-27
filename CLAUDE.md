@@ -35,7 +35,7 @@ cmake --build <build-dir> --config Release
 ### FlashIDA
 No automated test suite. Use test mode for offline deconvolution without an instrument:
 ```
-Flash.exe -t
+Flash.exe <input_file> <output_file> <method.xml> [ms2_file]
 ```
 
 ### OpenMS
