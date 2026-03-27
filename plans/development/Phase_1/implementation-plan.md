@@ -25,13 +25,13 @@ The following must exist and pass before Phase 1 work begins:
 
 - `FlashIDA/src/Flash/Flash.Tests/Flash.Tests.csproj` — NUnit test project compiles and runs.
 - `FlashIDA/test-data/spectra/ms1_smoke_test.txt` — Minimal test spectrum committed. See [test-file-specification.md](../test-file-specification.md) Section 1.1 for exact format requirements.
-- `FlashIDA/test-data/golden/baseline_phase0.tsv` — Golden file captured from current `Flash.exe -t` run and committed. See [test-file-specification.md](../test-file-specification.md) Sections 2.1 and 2.3 for column layout, comparison tolerances, and capture procedure.
+- `FlashIDA/test-data/golden/baseline_phase0.tsv` — Golden file captured from current `Flash.exe <input_file> <output_file> <method.xml>` run and committed. See [test-file-specification.md](../test-file-specification.md) Sections 2.1 and 2.3 for column layout, comparison tolerances, and capture procedure. Note: the entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()`. There is no `-t` flag. (Phase 0 lesson #1)
 - `FlashIDA/test-data/golden/README.md` — Documents golden file provenance.
 - All P0-U01 through P0-I02 and P0-R01 pass in CI.
 
 ### Infrastructure
 
-- `FlashIDA/dll/` contains a valid `OpenMS.dll` artifact (from `build-openms-dll.yml`).
+- `FlashIDA/dll/` contains a valid `OpenMS.dll` artifact. (Phase 0 lesson #5: DLLs are committed in `FlashIDA/dll/` and copied to `FlashIDA/bin/` by MSBuild. No download step is needed unless the OpenMS submodule is advanced and DLLs need rebuilding, at which point `build-openms-dll.yml` is triggered.)
 - `FlashIDA/dependencies/` contains Thermo iAPI DLLs (from secret).
 - CI workflow `flashida-ci.yml` is operational (skeleton from Phase 0).
 - `nlohmann_json` is already bundled in the OpenMS source tree (it is; see `OpenMS/src/openms/thirdparty/`). No new dependency needed.
@@ -39,6 +39,8 @@ The following must exist and pass before Phase 1 work begins:
 ### Branch state
 
 Working on branch `flashida-v9-migration` (FlashIDA) with OpenMS submodule on branch `flashida-v9-bridge`.
+
+> **Phase 0 lesson #15 (submodule churn):** ~48% of Phase 0 commits were submodule pointer updates. Batch same-side changes: complete all C++ changes (`FLASHIda.cpp`, `FLASHIda.h`) and push to `flashida-v9-bridge` before starting C# changes, to minimize submodule pointer update commits. Phase 1 touches both sides, so plan the C++ work first, rebuild DLLs, commit updated DLLs in `FlashIDA/dll/`, then proceed with C# changes.
 
 ### User-Provided Inputs
 
@@ -231,6 +233,8 @@ Generated via CI artifact capture:
 3. Developer downloads the artifact from the GitHub Actions run, reviews it, and commits it as the golden file.
 
 This is the same CI-artifact-based golden file capture workflow used in Phase 0. No local Windows execution is required.
+
+> **Phase 0 lesson #15:** Golden-file capture requires a minimum of 2 commits: the first commit runs CI and produces the golden artifact, the second commit includes the captured golden file. Phase 1 has two JSON golden files (`config_default.json` and `config_full.json`) -- batch both captures into a single CI run to minimize round-trips.
 
 **`FlashIDA/test-data/json/config_full.json`**
 
@@ -639,7 +643,9 @@ Note: The test working directory must be set so that relative paths to `test-dat
 
 **File:** `FlashIDA/src/Flash/Flash.Tests/BridgeSmokeTests.cs` (extends existing file from Phase 0)
 
-Add three new test methods to the existing `BridgeSmokeTests` class. These tests exercise the C++ constructor with JSON and legacy inputs via the bridge:
+Add three new test methods to the existing `BridgeSmokeTests` class. These tests exercise the C++ constructor with JSON and legacy inputs via the bridge.
+
+> **Phase 0 lesson #14 (silent P/Invoke failures):** The C++ engine returns 0 for malformed input with no error code or exception. A non-null pointer from `CreateFLASHIda` confirms the constructor did not crash, but does not prove the JSON was parsed correctly. The P1-R01 regression test (golden file comparison) is the authoritative check that config values reached C++ correctly. When deconvolution returns 0 results unexpectedly in later phases, log input data characteristics (RT, peak count, first/last m/z) before investigating engine internals.
 
 ```csharp
 [Test]
@@ -669,7 +675,7 @@ public void P1_I02_CreateFLASHIda_WithLegacyConfig_StillWorks()
 public void P1_I03_CreateFLASHIda_JsonConfigValuesReachCpp()
 {
     // This test requires a diagnostic bridge function to echo back parsed values.
-    // If no such function exists yet, this test verifies via Flash.exe -t
+    // If no such function exists yet, this test verifies via Flash.exe
     // that the application does not crash and produces valid output.
     // A future phase may add a dedicated echo function; for now, non-crash
     // plus regression output matching serves as functional verification.
@@ -754,8 +760,8 @@ All 10 Phase 1 tests plus full regression of Phase 0 (7 tests) must pass.
 | P1-I01 | Calls `CreateFLASHIda` via P/Invoke with a JSON string and asserts a non-null handle is returned. Verifies that the C++ JSON parsing branch does not crash and correctly initializes the `FLASHIda` object end-to-end. |
 | P1-I02 | Calls `CreateFLASHIda` with the legacy space-delimited token string and asserts a non-null handle. Verifies that the auto-detect fallback (`arg[0] != '{'`) continues to work correctly after the JSON branch is introduced, so existing behavior is not broken. |
 | P1-I03 | Calls `CreateFLASHIda` with a JSON string derived from `method_json_roundtrip.xml` (non-default values, multiple FAIMS CVs, multiple MS2 entries) and asserts a non-null handle. Confirms that a more complex, non-trivial JSON payload does not trigger a parse error or crash in C++. |
-| P1-R01 | Runs `Flash.exe -t` end-to-end with the JSON config path active (default method config) and compares the deconvolution output against `baseline_phase0.tsv`. Verifies that switching from the legacy string to JSON does not change any deconvolution results. |
-| P1-R02 | Runs `Flash.exe -t` with the legacy string format forced via the auto-detect fallback and compares output against `baseline_phase0.tsv`. Verifies that the legacy path still produces bit-identical results after the JSON branch is added alongside it. |
+| P1-R01 | Runs `Flash.exe <input_file> <output_file> <method.xml>` end-to-end with the JSON config path active (default method config) and compares the deconvolution output against `baseline_phase0.tsv`. Verifies that switching from the legacy string to JSON does not change any deconvolution results. (Phase 0 lesson #1: entry point is `FLASHIdaWrapper.Main()`, no `-t` flag.) |
+| P1-R02 | Runs `Flash.exe <input_file> <output_file> <method.xml>` with the legacy string format forced via the auto-detect fallback and compares output against `baseline_phase0.tsv`. Verifies that the legacy path still produces bit-identical results after the JSON branch is added alongside it. |
 
 ### Tier 1 — C# Unit Tests
 
@@ -781,12 +787,12 @@ Both P1-R01 and P1-R02 use `ms1_smoke_test.txt` as the spectrum input and `basel
 
 | Test ID | Script / Config | Description | Expected Outcome | Runner |
 |---------|----------------|-------------|-----------------|--------|
-| P1-R01 | CI `windows-tests` job, `method_default.xml` via JSON path | `Flash.exe -t` with JSON config active produces identical output to Phase 0 golden | `compare_golden.py baseline_phase0.tsv output.tsv` exits 0; automated by CI job `windows-tests` | `windows-latest` |
-| P1-R02 | CI `windows-tests` job, legacy string override | `Flash.exe -t` with legacy format (auto-detect fallback) produces identical output | `compare_golden.py baseline_phase0.tsv output.tsv` exits 0; automated by CI job `windows-tests` | `windows-latest` |
+| P1-R01 | CI `windows-tests` job, `method_default.xml` via JSON path | `Flash.exe <input_file> <output_file> <method.xml>` with JSON config active produces identical output to Phase 0 golden | `compare_golden.py baseline_phase0.tsv output.tsv` exits 0; automated by CI job `windows-tests` | `windows-latest` |
+| P1-R02 | CI `windows-tests` job, legacy string override | `Flash.exe <input_file> <output_file> <method.xml>` with legacy format (auto-detect fallback) produces identical output | `compare_golden.py baseline_phase0.tsv output.tsv` exits 0; automated by CI job `windows-tests` | `windows-latest` |
 
 **Regression from Phase 0:** All 7 P0-* tests must pass as part of the Phase 1 CI run. No Phase 0 test is removed.
 
-**Note on P1-R02:** To exercise the legacy fallback path in regression, a test variant that calls `CreateFLASHIda` with a legacy string is needed. This can be done either via a separate test harness invocation or by temporarily passing `ToFLASHDeconvInput()` output in a test mode. The simplest approach is a small dedicated test in `BridgeSmokeTests` that calls `CreateFLASHIda` with the legacy string and then runs a minimal deconvolution — but for the regression test, `Flash.exe -t` itself is the harness. A future phase may provide a flag for this; for Phase 1, P1-I02 covering the bridge call and the fact that `ToFLASHDeconvInput()` is still present (even if not called by default) satisfies this requirement. P1-R02 can be implemented as a CI step that explicitly passes the legacy string by temporarily reverting the call in a dedicated test-mode wrapper.
+**Note on P1-R02:** To exercise the legacy fallback path in regression, a test variant that calls `CreateFLASHIda` with a legacy string is needed. This can be done either via a separate test harness invocation or by temporarily passing `ToFLASHDeconvInput()` output in a test mode. The simplest approach is a small dedicated test in `BridgeSmokeTests` that calls `CreateFLASHIda` with the legacy string and then runs a minimal deconvolution — but for the regression test, `Flash.exe <input_file> <output_file> <method.xml>` is the harness (there is no `-t` flag; see Phase 0 lesson #1). A future phase may provide a flag for this; for Phase 1, P1-I02 covering the bridge call and the fact that `ToFLASHDeconvInput()` is still present (even if not called by default) satisfies this requirement. P1-R02 can be implemented as a CI step that explicitly passes the legacy string by temporarily reverting the call in a dedicated test-mode wrapper.
 
 ---
 
@@ -796,14 +802,14 @@ Both P1-R01 and P1-R02 use `ms1_smoke_test.txt` as the spectrum input and `basel
 
 Phase 1 does not require a new CI job structure. The existing `windows-tests` job from Phase 0 is extended:
 
-1. **Add `JsonConfigTests.cs` to the test run.** Since the new file is in the same `Flash.Tests.csproj`, it is automatically picked up by `nunit3-console Flash.Tests.dll`. No workflow change needed.
+1. **Add `JsonConfigTests.cs` to the test run.** Since the new file is in the same `Flash.Tests.csproj`, it is automatically picked up by the NUnit console runner when it runs `Flash.Tests.dll`. No workflow change needed. (Phase 0 lesson #12: the NUnit runner must be invoked by full path from the NuGet packages directory, e.g., `packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe`, with working directory set to `FlashIDA/bin/` so native DLLs are found.)
 
 2. **Add JSON golden files to the test data check.** The CI step that verifies test data presence should be extended to check for:
    - `FlashIDA/test-data/json/config_default.json`
    - `FlashIDA/test-data/json/config_full.json`
    - `FlashIDA/test-data/configs/method_json_roundtrip.xml`
 
-3. **Add P1-R01 and P1-R02 regression steps** to the `windows-tests` job (or the `regression` sub-step within it). These run `Flash.exe -t` with the default method config (which now uses JSON) and compare against `baseline_phase0.tsv`.
+3. **Add P1-R01 and P1-R02 regression steps** to the `windows-tests` job (or the `regression` sub-step within it). These run `Flash.exe <input_file> <output_file> <method.xml>` with the default method config (which now uses JSON) and compare against `baseline_phase0.tsv`. (Phase 0 lesson #1: no `-t` flag.)
 
 The regression runner script `regression-runner.ps1` must be updated to include the P1 configs. See [test-file-specification.md](../test-file-specification.md) Section 4.2 for the full `regression-runner.ps1` parameter schema, config array format, and exit behavior. The Phase 1 addition to the config array is:
 
@@ -818,9 +824,9 @@ $configs = @(
 
 Note: the `ms2` field is required in the runner's config object schema (see spec Section 4.2); set it to `$null` for configs that do not use an MS2 spectrum file.
 
-4. **DLL placement.** OpenMS DLLs (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`) must be in `FlashIDA/dll/`. Thermo DLLs must be in `FlashIDA/dependencies/`. Both are restored via secrets/cache as established in Phase 0. No change to secret strategy.
+4. **DLL placement.** OpenMS DLLs (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`) are committed in `FlashIDA/dll/` and copied to `FlashIDA/bin/` by MSBuild (Phase 0 lesson #5). Thermo DLLs are decrypted from `FlashIDA/dependencies/thermo-dlls.zip.enc` using `openssl enc -d -aes-256-cbc -pbkdf2` with the `THERMO_DLL_PASSPHRASE` secret (Phase 0 lesson #3, Strategy B). No change to secret strategy.
 
-5. **OpenMS DLL cache key.** Because Phase 1 modifies C++ source files (`FLASHIda.cpp`, `FLASHIda.h`), the OpenMS submodule commit hash changes when the Phase 1 C++ changes are committed to the `flashida-v9-bridge` branch. This triggers a C++ rebuild via `build-openms-dll.yml`. The cache invalidation happens automatically — no CI workflow change is needed; only the submodule pointer in the FlashIDA repo must be updated to point to the new OpenMS commit.
+5. **OpenMS DLL update.** Because Phase 1 modifies C++ source files (`FLASHIda.cpp`, `FLASHIda.h`), the OpenMS submodule commit hash changes when the Phase 1 C++ changes are committed to the `flashida-v9-bridge` branch. This requires rebuilding DLLs via `build-openms-dll.yml` and committing the updated DLLs to `FlashIDA/dll/`. (Phase 0 lesson #5: DLLs are committed in the repo, not downloaded from a cross-workflow artifact. MSBuild copies them to `FlashIDA/bin/` via `CopyToOutputDirectory`.) The submodule pointer in the FlashIDA repo must also be updated to point to the new OpenMS commit.
 
 6. **No new CI secrets** are needed for Phase 1.
 
@@ -836,7 +842,7 @@ No `ubuntu-latest` tests are added in Phase 1. The first C++ unit tests appear i
 
 ### `build-openms-dll.yml` trigger
 
-Phase 1 requires a C++ rebuild (Build #1 prep) because `FLASHIda.cpp` and `FLASHIda.h` are modified. The `build-openms-dll.yml` workflow must be triggered (manually or by push to the `flashida-v9-bridge` OpenMS branch). The FlashIDA CI then picks up the new artifact via the cache key mechanism.
+Phase 1 requires a C++ rebuild (Build #1 prep) because `FLASHIda.cpp` and `FLASHIda.h` are modified. The `build-openms-dll.yml` workflow must be triggered (manually or by push to the `flashida-v9-bridge` OpenMS branch). After the build completes, download the DLL artifacts and commit the updated DLLs to `FlashIDA/dll/`. (Phase 0 lesson #5: DLLs are committed in the repo; MSBuild copies them to `FlashIDA/bin/` at build time. There is no cross-workflow artifact download in `flashida-ci.yml`.)
 
 ---
 
@@ -844,9 +850,9 @@ Phase 1 requires a C++ rebuild (Build #1 prep) because `FLASHIda.cpp` and `FLASH
 
 After all implementation steps are complete, verify the working product by inspecting CI job output. No local Windows execution is required or expected.
 
-**Verification 1: `Flash.exe -t` runs with JSON config**
+**Verification 1: `Flash.exe` runs with JSON config**
 
-Automated by: CI job `windows-tests`. Verify by inspecting CI job output for the P1-R01 regression step. Expected: exit code 0, `output.tsv` produced, `compare_golden.py` reports no differences against `baseline_phase0.tsv`.
+Automated by: CI job `windows-tests`. Verify by inspecting CI job output for the P1-R01 regression step. Expected: exit code 0, `output.tsv` produced, `compare_golden.py` reports no differences against `baseline_phase0.tsv`. (Invocation: `Flash.exe <input_file> <output_file> <method.xml>` -- no `-t` flag; see Phase 0 lesson #1.)
 
 **Verification 2: Round-trip field match**
 
@@ -895,7 +901,7 @@ The following checklist must be fully complete before Phase 1 is considered done
 - [ ] CI `windows-tests` job passes with all 7 Phase 0 tests (P0-U01 through P0-R01) still green (no regression).
 - [ ] CI job output for the P1-R01 regression step shows `compare_golden.py` exiting 0 (JSON config output matches `baseline_phase0.tsv`).
 - [ ] CI job output for the P1-R02 regression step shows `compare_golden.py` exiting 0 (legacy fallback output matches `baseline_phase0.tsv`).
-- [ ] CI job output confirms `Flash.exe -t` runs to completion without unhandled exceptions.
+- [ ] CI job output confirms `Flash.exe <input_file> <output_file> <method.xml>` runs to completion without unhandled exceptions. (No `-t` flag -- Phase 0 lesson #1.)
 - [ ] `OpenMS.dll` artifact updated to Build #1 DLL (includes JSON parsing branch).
 - [ ] OpenMS submodule pointer in FlashIDA repo updated to the Phase 1 OpenMS commit.
 - [ ] No new compiler warnings introduced in either C# or C++ code.

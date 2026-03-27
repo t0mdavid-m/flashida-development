@@ -17,6 +17,8 @@ Define the `ScanCommand` and `IsolationStage` blittable structs, implement a pri
 
 At the end of this phase the application behaves identically to Phase 2. No scan routing has changed. The new code is exercised in shadow mode only, building confidence before Phase 4 performs the switch-over.
 
+**Known limitation (Phase 0 compliance H-2):** The ContinuityTestHarness bypasses DataPipe — it calls bridge functions directly without going through the async pipeline. This means Phase 3 integration tests (P3-I01 through P3-I04) and stress tests (CT31, CT32) exercise the bridge and queue logic but do not test DataPipe threading or backpressure. Full pipeline testing requires the mock-based acquisition loop tests planned in later phases.
+
 ---
 
 ## Prerequisites
@@ -28,9 +30,11 @@ The following must exist and be green before Phase 3 work begins:
 3. Phase 2 complete: `OptimizationMetadata.h` and `DeconvolvedSpectrum` accessors implemented.
 4. All Phase 0, 1, and 2 tests pass (39 cumulative tests in CI after Phase 3 ships).
 5. The OpenMS submodule is on branch `flashida-v9-bridge` and the FlashIDA repo is on branch `flashida-v9-migration`.
-6. `FlashIDA/dll/OpenMS.dll` is the Phase 1+2 build artifact; it will be replaced by the Build #1 artifact that includes Phase 3 changes.
+6. `FlashIDA/dll/OpenMS.dll` is committed in the repo (Phase 0 lesson #5 — no download needed). It will be replaced by the Build #1 artifact that includes Phase 3 changes.
 
 **Build batching note:** Phases 1, 2, and 3 are batched into a single C++ build (Build #1). In practice this means all C++ changes for all three phases are developed together and compiled once. When working in this batch, treat the Build #1 OpenMS artifact as the combined output of all three phases. The phase separation exists for clarity of scope, not for separate compilation runs.
+
+**Submodule workflow note (Phase 0 lesson #15):** 48% of Phase 0 commits were submodule pointer updates. Batch same-side changes (all C# changes or all C++ changes) before updating the submodule pointer to reduce churn. For Phase 3, complete all C++ changes (Steps 1-5, 11, 13) before committing the submodule update in the FlashIDA repo, then do all C# changes (Steps 6-10, 12, 14) in a batch.
 
 ### User-Provided Inputs
 
@@ -307,6 +311,8 @@ void FLASHIda::cleanupExpiredCommands_()
 
 **`processScan_` (stub):**
 
+**Silent zero-result warning (Phase 0 lesson #14):** The C++ engine returns 0 for malformed input without an error code. When deconvolution returns 0 results unexpectedly, log the input data characteristics (RT, peak count, first/last m/z) before investigating engine internals. The bridge functions do not distinguish "no results found" from "input data is malformed."
+
 ```cpp
 int FLASHIda::processScan_(const double* mzs, const double* ints, int length,
                             double rt_min, int ms_level, const char* scan_description)
@@ -563,6 +569,8 @@ static private extern int GetNextTrackingId(IntPtr pObj);
 ```
 
 **Notes on calling convention:** The default P/Invoke calling convention on Windows x64 is the Microsoft x64 convention, which matches MSVC `extern "C"` exports. No `CallingConvention` attribute is needed.
+
+**DLL name note:** The `dllName` constant must be `"OpenMS.dll"` (with `.dll` extension), not `"OpenMS"`. Phase 0 lesson #12 confirmed the extension is required for the P/Invoke runtime to locate the DLL correctly.
 
 `CharSet.Ansi` on `ProcessScan` ensures the `string scanDesc` parameter is marshaled as a null-terminated ANSI (8-bit) string, matching `const char*` on the C++ side.
 
@@ -1192,15 +1200,17 @@ namespace Flash.Tests
 
 Phase 3 regression (P3-R01) reuses `ms1_smoke_test.txt` and `method_default.xml` from Phase 0. No new test spectrum or config files are needed. The golden file comparison target is `baseline_phase0.tsv` (the Phase 0 regression anchor that covers Phases 1–3).
 
+**Golden file capture workflow (Phase 0 lesson #15):** If any new golden files are needed, golden-file capture requires a minimum of 2 commits: the first commit runs CI and produces the golden artifact; the second commit includes the captured golden file. Batch multiple golden file captures into a single CI run to minimize churn.
+
 > **Note on spectrum file:** The authoritative cross-phase usage table in `test-file-specification.md` §1.1 lists `ms1_smoke_test.txt` as the Phase 3 P3-R01 input. This matches the Phase 0 baseline capture, ensuring the regression comparison is against an identical input. The stress test P3-S01 may use `ms1_high_density.txt` if that optional file is available; see `test-file-specification.md` §1.5 for its format and content requirements.
 
-Spectrum file formats (`ms1_smoke_test.txt`, `ms1_high_density.txt`) follow the tab-delimited layout defined in `test-file-specification.md` §1.1 and §1.5 respectively. The golden file format (15-column TSV, float tolerances, `compare_golden.py` comparison rules) is defined in `test-file-specification.md` §2.1–2.3. The config file format for `method_default.xml` is defined in `test-file-specification.md` §3.1–3.2.
+Spectrum file formats (`ms1_smoke_test.txt`, `ms1_high_density.txt`) follow the tab-delimited layout defined in `test-file-specification.md` §1.1 and §1.5 respectively. **Format note (Phase 0 lesson #2):** The actual header format is `Spec scan=N\t<rt_seconds>` (tab-separated, RT in seconds), not `Spec scan=N rt=R.RRRR` (space-separated, RT in minutes). Flash.exe's parser does `line.Split('\t')` and divides by 60. The golden file format (15-column TSV, float tolerances, `compare_golden.py` comparison rules) is defined in `test-file-specification.md` §2.1–2.3. The config file format for `method_default.xml` is defined in `test-file-specification.md` §3.1–3.2.
 
 ---
 
 ## Test Cases
 
-All 16 tests are listed below with their IDs, tiers, descriptions, expected outcomes, and CI runner assignments. Tests are additive — all prior phase tests (P0-* through P2-*) must continue to pass.
+All 18 tests are listed below with their IDs, tiers, descriptions, expected outcomes, and CI runner assignments (16 Phase 3 tests + 2 stress tests CT31/CT32 deferred from Phase 0). Tests are additive — all prior phase tests (P0-* through P2-*) must continue to pass.
 
 ### Test Summary (Quick Reference)
 
@@ -1221,7 +1231,9 @@ All 16 tests are listed below with their IDs, tiers, descriptions, expected outc
 | P3-I03 | Calls `GetNextScanCommand` with no prior processing and asserts return == 1 and `MsnLevel == 1`, confirming the empty-queue MS1 fallback works across the P/Invoke boundary. |
 | P3-I04 | Calls `GetNextTrackingId` 100 times and asserts each result is strictly greater than the previous, validating monotonic increment across the bridge. |
 | P3-I05 | Runs `dumpbin /exports OpenMS.dll` in CI and checks that `ProcessScan`, `GetNextScanCommand`, and `GetNextTrackingId` appear, confirming the three new exports are present in the shipped DLL. |
-| P3-R01 | Runs `Flash.exe -t` with `ms1_smoke_test.txt` and compares TSV output to `baseline_phase0.tsv`, verifying Phase 3 shadow validation leaves deconvolution results unchanged; also checks stdout for at least one `[TRACK-CREATE]` entry. |
+| P3-R01 | Runs `Flash.exe` with `ms1_smoke_test.txt` and compares TSV output to `baseline_phase0.tsv`, verifying Phase 3 shadow validation leaves deconvolution results unchanged; also checks stdout for at least one `[TRACK-CREATE]` entry. **Note:** The entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()` — there is no `-t` flag (Phase 0 lesson #1). |
+| CT31 | Stress test: 1000 scans sequential through `ProcessScan` + `GetNextScanCommand`. Deferred from Phase 0 (lesson #13). |
+| CT32 | Stress test: concurrent multi-threaded `ProcessScan` calls. Deferred from Phase 0 (lesson #13). |
 
 ### Tier 1: C# Unit Tests (runner: `windows-latest`)
 
@@ -1261,11 +1273,26 @@ These tests load `OpenMS.dll` via P/Invoke and require both OpenMS DLLs in `Flas
 
 | ID | Test name | Description | Expected outcome |
 |----|-----------|-------------|-----------------|
-| P3-R01 | `Regression_ShadowValidation` | `Flash.exe -t` with `ms1_smoke_test.txt` + `method_default.xml`; compare TSV output to `baseline_phase0.tsv` | TSV output matches `baseline_phase0.tsv` within tolerance; TRACK log entries appear in console output (checked by scanning stdout for `[TRACK-CREATE]`) |
+| P3-R01 | `Regression_ShadowValidation` | `Flash.exe ms1_smoke_test.txt output.tsv method_default.xml`; compare TSV output to `baseline_phase0.tsv` | TSV output matches `baseline_phase0.tsv` within tolerance; TRACK log entries appear in console output (checked by scanning stdout for `[TRACK-CREATE]`) |
+| CT31 | `StressTest_1000ScansSequential` | Feed 1000 scans sequentially through `ProcessScan` + `GetNextScanCommand`; verify no crash, all tracking IDs unique | All 1000 scans processed; no exceptions; 1000 unique tracking IDs (deferred from Phase 0 lesson #13) |
+| CT32 | `StressTest_ConcurrentProcessing` | Feed scans from multiple threads through `ProcessScan`; verify thread safety | No data corruption; no duplicate tracking IDs; `queue_mutex_` prevents races (deferred from Phase 0 lesson #13) |
 
 The golden file comparison uses `compare_golden.py` (defined in `test-file-specification.md` §4.1; also referenced from `testing-strategy.md` Section 6.2). The comparison applies the tolerances specified in `test-file-specification.md` §2.1: exact match for `charges` and `hcd`; absolute tolerance 1e-6 for float values ≤ 1.0, relative tolerance 1e-4 for float values > 1.0. The TRACK log check is an additional assertion: the CI script scans the captured stdout for at least one `[TRACK-CREATE]` entry, confirming the shadow path is active.
 
 Golden file changes in Phase 3 are a red flag and must be investigated before merging (Phase 3 claims zero behavioral change; see `test-file-specification.md` §2.4 for the update procedure if an intentional change does occur).
+
+**Tolerance-based golden comparison (Phase 0 compliance H-3):** Phase 0 uses exact-match golden comparison. If float drift becomes an issue in Phase 3 (e.g., due to shadow path deconvolution affecting floating-point state), upgrade `compare_golden.py` to tolerance-based comparison: absolute tolerance 1e-6 for float values <= 1.0, relative tolerance 1e-4 for float values > 1.0, exact match for integer fields (`charges`, `hcd`). Phase 3 is the designated phase for this upgrade if needed.
+
+### Tier 2: Stress Tests CT31/CT32 (runner: `windows-latest`)
+
+**Deferred from Phase 0 (lesson #13).** The acquisition-loop-testing-strategy specifies CT31 and CT32 as "Introduced: Phase 0" but they were deferred because they require the concurrent pipeline infrastructure. Phase 3 introduces the ScanCommand struct and pipeline refactor, making it the natural place to implement these tests. Remove the `[Ignore]` attributes from the Phase 0 stubs and replace `Assert.Inconclusive` with real test logic.
+
+| ID | Test name | Description | Expected outcome |
+|----|-----------|-------------|-----------------|
+| CT31 | `StressTest_1000ScansSequential` | Feed 1000 scans sequentially through `ProcessScan` and `GetNextScanCommand`; verify no crash, all tracking IDs unique, queue drains to MS1 fallback at the end | All 1000 scans processed; no exceptions; tracking ID set has 1000 unique entries |
+| CT32 | `StressTest_ConcurrentProcessing` | Feed scans from multiple threads simultaneously through `ProcessScan`; verify thread safety of the queue and tracking ID counter under contention | No data corruption; no duplicate tracking IDs; `queue_mutex_` prevents race conditions |
+
+**Note:** These are Tier 2 tests (load OpenMS.dll via P/Invoke). They run in the `windows-tests` CI job.
 
 ---
 
@@ -1284,18 +1311,22 @@ ubuntu-latest job: cpp-unit-tests
   - Upload layout.txt as artifact "cpp-layout-output"
 
 windows-latest job: windows-tests (needs: cpp-unit-tests)
-  - Restore Thermo DLLs (secret)
-  - Download OpenMS DLL artifact (cache or build artifact)
+  - Restore Thermo DLLs (openssl-encrypted zip, Strategy B; Phase 0 lesson #3)
+  - OpenMS DLLs already committed in FlashIDA/dll/ — no download needed (Phase 0 lesson #5)
   - MSBuild Flash.Tests.csproj
   - Download "cpp-layout-output" artifact from cpp-unit-tests job
-  - nunit3-console Flash.Tests.dll
+  - packages\NUnit.ConsoleRunner.*\tools\nunit3-console.exe Flash.Tests.dll
+    (run from working directory FlashIDA\bin\; Phase 0 lesson #12)
     -> P3-U01, U02, U03, U04 (ScanCommandLayoutTests.cs)
-  - Flash.exe -t + compare_golden.py  -> P3-R01
-  - nunit3-console Flash.Tests.dll --where "class == BridgePhase3Tests"
+  - Flash.exe <input> <output> <method.xml> + compare_golden.py  -> P3-R01
+  - packages\NUnit.ConsoleRunner.*\tools\nunit3-console.exe Flash.Tests.dll --where "class == BridgePhase3Tests"
+    (run from working directory FlashIDA\bin\; Phase 0 lesson #12)
     -> P3-I01, I02, I03, I04
   - Step: Verify DLL exports (dumpbin /exports)
     -> P3-I05
-  - (conditional) Stress tests: No Phase 3 stress tests. Runs prior-phase stress tests (if any).
+  - Stress tests: CT31 (1000 scans sequential) and CT32 (concurrent processing)
+    (deferred from Phase 0 lesson #13; Tier 2 — loads OpenMS.dll)
+    -> CT31, CT32
 ```
 
 ### Cross-Job Artifact for `ScanCommandLayoutTest`
@@ -1358,7 +1389,7 @@ Add the following to the regression test step in the `windows-tests` job. The sp
 - name: Run regression test with shadow validation
   shell: powershell
   run: |
-    & "FlashIDA\src\Flash\bin\Debug\Flash.exe" -t `
+    & "FlashIDA\bin\Flash.exe" `
       "test-data\spectra\ms1_smoke_test.txt" `
       "output\phase3_shadow.tsv" `
       "test-data\configs\method_default.xml" `
@@ -1399,7 +1430,7 @@ All verifications are automated by CI. No local Windows machine is required.
 
 3. **C# layout tests pass:** Automated by: CI job `windows-tests` — NUnit reports 4 tests passed for `ScanCommandLayoutTests`. In particular, `ScanCommand_SizeMatchesCpp` and `IsolationStage_SizeMatchesCpp` pass with the expected sizes 1144 and 80.
 
-4. **Regression unchanged:** Automated by: CI job `windows-tests` — `Flash.exe -t` with `ms1_smoke_test.txt` (format: `test-file-specification.md` §1.1) and `method_default.xml` produces a TSV file that `compare_golden.py` (`test-file-specification.md` §4.1) reports as `PASS` against `baseline_phase0.tsv` (`test-file-specification.md` §2.2). The TSV output must be bit-for-bit identical to the Phase 0 baseline (the shadow path calls `processScan_` but does not change deconvolution state).
+4. **Regression unchanged:** Automated by: CI job `windows-tests` — `Flash.exe ms1_smoke_test.txt output.tsv method_default.xml` produces a TSV file that `compare_golden.py` (`test-file-specification.md` §4.1) reports as `PASS` against `baseline_phase0.tsv` (`test-file-specification.md` §2.2). The TSV output must be bit-for-bit identical to the Phase 0 baseline (the shadow path calls `processScan_` but does not change deconvolution state). **Note:** The entry point is `FLASHIdaWrapper.Main()` — there is no `-t` flag (Phase 0 lesson #1).
 
 5. **TRACK entries present:** Automated by: CI job `windows-tests` — the captured stdout of the regression step is scanned for at least one line matching `[TRACK-CREATE]`, confirming the shadow validation code path is active.
 
@@ -1430,10 +1461,11 @@ All of the following must be true before Phase 3 is considered complete and Buil
 - [ ] `char` field `SizeConst` values confirmed by P3-U04.
 - [ ] `ScanFactory.BuildFromCommand(ScanCommand)` method implemented and compiles.
 - [ ] Shadow validation calls added in `IDAScanProcessor`, `FAIMSScanProcessor`, `QuantScanProcessor`.
-- [ ] All 16 Phase 3 tests (P3-U01 through P3-R01) pass in CI.
+- [ ] All 18 Phase 3 tests (P3-U01 through P3-R01, plus CT31 and CT32) pass in CI.
 - [ ] All prior-phase tests (P0-*, P1-*, P2-* — 23 tests) continue to pass in CI.
-- [ ] `Flash.exe -t` output with `ms1_smoke_test.txt` is identical to `baseline_phase0.tsv` (P3-R01 passes in CI; see `test-file-specification.md` §2.2 for the golden file inventory).
-- [ ] `[TRACK-CREATE]` log entries appear in `Flash.exe -t` stdout.
+- [ ] `Flash.exe ms1_smoke_test.txt output.tsv method_default.xml` output is identical to `baseline_phase0.tsv` (P3-R01 passes in CI; see `test-file-specification.md` §2.2 for the golden file inventory). Note: entry point is `FLASHIdaWrapper.Main()`, no `-t` flag (Phase 0 lesson #1).
+- [ ] `[TRACK-CREATE]` log entries appear in `Flash.exe` stdout.
+- [ ] CT31 (1000 scans sequential) and CT32 (concurrent processing) stress tests implemented and passing (deferred from Phase 0 lesson #13).
 - [ ] No existing C# code references to old bridge functions are broken (existing 18 P/Invoke declarations unchanged).
 - [ ] Code formatted to project standards: C++ clang-format (LLVM, 150 col, 2-space indent, Allman braces); C# standard conventions.
 - [ ] `ScanCommandLayout_test` binary builds and its output matches hard-coded C# expected values (verified in CI job `cpp-unit-tests`).

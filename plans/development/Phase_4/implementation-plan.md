@@ -28,7 +28,7 @@ The following must be in place before beginning Phase 4 implementation:
 
 1. **Build #1 is complete and verified.** Phases 1, 2, and 3 are merged and all their tests pass:
    - P0-* through P3-* tests all pass in CI.
-   - `Flash.exe -t` runs with shadow validation, producing TRACK log entries.
+   - `Flash.exe` runs with shadow validation (entry point is `FLASHIdaWrapper.Main()`, no `-t` flag — see Phase 0 lesson #1), producing TRACK log entries.
    - `GetNextScanCommand` returns MS1 when queue is empty (stub behavior).
    - `ScanCommand` struct marshaling is verified (C# and C++ agree on layout, size, and field offsets).
    - JSON configuration is parsed by C++ and legacy auto-detect fallback works.
@@ -50,6 +50,10 @@ The following must be in place before beginning Phase 4 implementation:
 4. **Corresponding test spectrum files exist:**
    - `test-data/spectra/ms1_standard.txt`
    - `test-data/spectra/ms2_hcd_fragment.txt`
+
+   **Multi-scan parser caveat (Phase 0 lesson #9):** Spectrum files may contain multiple scans. Any test code that loads spectrum TSV files must stop at the first scan boundary (`Spec` header line) to avoid mixing peaks and RT values from different scans. Flash.exe's own parser handles multi-scan correctly (processes scan N when scan N+1's header appears), but test-side `LoadSpectrum`/`FromTsv` parsers must break on the second `Spec` line. Failure to do so produces silent zero-result deconvolution (see lesson #14).
+
+   **Spectrum header format (Phase 0 lesson #2):** Flash.exe's parser requires tab-separated headers with RT in seconds: `Spec scan=N\t<rt_seconds>` (no `rt=` prefix). The parser splits on `\t` and divides the second token by 60. This deviates from the test-file-specification's space-separated `rt=R.RRRR` format. Use the tab+seconds format for all spectrum files.
 
    **`ms1_standard.txt` specification (DATA-5):** The full format definition, size constraints, extraction command, and content requirements are in [`../test-file-specification.md §1.2`](../test-file-specification.md). Summary of mandatory content criteria:
    - At least 5 independently deconvolvable charge envelopes across all scans.
@@ -322,6 +326,8 @@ extern "C" OPENMS_DLLAPI int ProcessScan(
 
 This is a one-line change. Verify it does not break the stub behavior expected by P3-I02 — that test specifically checks that the stub returns 0. P3-I02 must be updated or superseded by P4-I02, which validates the new non-zero return behavior.
 
+**Silent zero-result failures (Phase 0 lesson #14):** The C++ engine returns 0 without an error code when input data is malformed (wrong RT, mixed peaks from multi-scan parsing, etc.). When `ProcessScan` returns 0 unexpectedly, log the input data characteristics (RT, peak count, first/last m/z) before investigating engine internals. The bridge does not distinguish "no results found" from "input data is malformed."
+
 ---
 
 ### Step 5: C# Switch-Over — Replace Old Bridge Call Sequences
@@ -452,7 +458,11 @@ test-data/golden/phase4_ms3_mode3.tsv
 
 The authoritative golden file format (15-column TSV, column definitions, numeric tolerances, line ending normalization) and the inspection checklist are defined in [`../test-file-specification.md §2`](../test-file-specification.md). See §2.1 for the column schema, §2.2 for the complete inventory of Phase 4 golden files and their inputs, §2.3 for the step-by-step capture procedure, and §2.4 for the update procedure when a behavioral change requires a golden file refresh.
 
-Golden files are captured entirely through CI — there is no local `Flash.exe -t` invocation. The capture workflow is:
+Golden files are captured entirely through CI — there is no local `Flash.exe` invocation.
+
+**2-commit minimum (Phase 0 lesson #15):** Golden file capture inherently requires at least 2 commits: the first runs CI and produces the golden artifact; the second includes the captured golden file. With 9 Phase 4 golden files, batch all captures into a single CI run to minimize churn.
+
+The capture workflow is:
 
 1. Push the Phase 4 implementation branch to GitHub.
 2. The CI `capture-golden` job (or a manually triggered workflow dispatch) runs the regression suite in golden-capture mode using `regression-runner.ps1 -captureMode` (see `test-file-specification.md §4.2` for script interface): instead of comparing against an existing golden file, it writes the output to a named artifact.
@@ -464,6 +474,8 @@ Golden files are captured entirely through CI — there is no local `Flash.exe -
 Subsequent CI runs use the committed files as the comparison baseline for P4-R01 through P4-R10. Comparisons are performed by `compare_golden.py` (see `test-file-specification.md §4.1` for the comparison algorithm, tolerance values, and failure conditions).
 
 The regression runner script (`regression-runner.ps1`) must be updated to include Phase 4 configs and golden files, and must support a `-captureMode` switch that writes output files rather than comparing them. The full script interface is defined in `test-file-specification.md §4.2`.
+
+**Submodule batching (Phase 0 lesson #15):** Phase 4 has substantial changes on both C++ and C# sides. Batch all same-side changes before updating the submodule pointer to reduce churn (48% of Phase 0 commits were submodule pointer updates). Recommended commit sequence: (1) all C++ changes to FLASHIda.cpp/h and bridge functions, (2) update submodule pointer, (3) all C# changes to Flash.cs/Parameter.cs/ScanFactory.cs, (4) test data and golden files.
 
 ---
 
@@ -489,11 +501,13 @@ The regression runner script (`regression-runner.ps1`) must be updated to includ
 | `FlashIDA/src/Flash/Flash.cs` | Modify | `ProcessSpectrum` callback: add `UseUnifiedBridge` branch. When true, loop `GetNextScanCommand` and call `SendCustomScan(scanFactory.BuildFromCommand(cmd))` for each returned command. When false, run existing old-path logic unchanged. |
 | `FlashIDA/src/Flash/IDA/IScanProcessor.cs` | Modify | Update implementing classes to call `wrapper.ProcessScan(...)` in the `UseUnifiedBridge=True` path instead of old bridge functions. |
 | `FlashIDA/src/Flash/IDA/ScanFactory.cs` | Modify | Verify and extend `BuildFromCommand()` to handle all mode variants: standard MS2, MS3 (two isolation stages), SPS-MS3, AGC, MS1 fallback. |
-| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | No change | P/Invoke declarations for `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` already added in Phase 3. Old bridge declarations remain but are no longer called when `UseUnifiedBridge=True`. |
+| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | No change | P/Invoke declarations for `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` already added in Phase 3 (DLL import name is `"OpenMS.dll"` with extension — Phase 0 lesson #12). Old bridge declarations remain but are no longer called when `UseUnifiedBridge=True`. |
 
 ### Test Data Files
 
 Config file format, key parameters per file, and the `UseUnifiedBridge` lifecycle are specified in [`../test-file-specification.md §3`](../test-file-specification.md). Golden file column schema, numeric tolerances, and the capture/update workflow are specified in `../test-file-specification.md §2`.
+
+**`.gitattributes` note (Phase 0 lesson #4):** `FlashIDA/.gitattributes` has `* text eol=crlf`, which forces CRLF conversion on ALL files. Any new binary file extensions (e.g., `.enc`, `.gpg`, `.zip`) must be added as `*.ext binary` in `.gitattributes` before committing, or they will be silently corrupted.
 
 | File | Change | Description |
 |------|--------|-------------|
@@ -542,7 +556,7 @@ All 21 tests added in this phase, with full descriptions, expected outcomes, and
 | P4-R03 | Deep mode produces more precursor targets than standard DDA (lower score threshold). Confirms that the deep-mode scoring branch is active end-to-end and reflected in golden output. |
 | P4-R04 | Inclusion list mode: only masses listed in the inclusion list appear as MS2 targets. Confirms that the targeting filter suppresses unlisted masses in the unified path. |
 | P4-R05 | Exclusion list mode: masses in the exclusion list are absent from MS2 targets while others proceed normally. Confirms the exclusion filter applies in the unified path. |
-| P4-R06 | Tag-based targeting mode: tag-matched masses appear as MS2 targets even if below the top-N threshold. Confirms the tag targeting route runs within a full `Flash.exe -t` invocation. |
+| P4-R06 | Tag-based targeting mode: tag-matched masses appear as MS2 targets even if below the top-N threshold. Confirms the tag targeting route runs within a full `Flash.exe` invocation. |
 | P4-R07 | Isobaric quant mode: differential-abundance gating is reflected in the golden output (follow-up MS2 commands present only for above-threshold spectra). Confirms the quant routing route end-to-end. |
 | P4-R08 | MS3 mode 1 (Source CID): MS3 commands at `priority=3` appear in output for a known MS2 scan. Confirms source-CID MS3 target selection and command generation. |
 | P4-R09 | MS3 mode 2 (SPS): MS3 commands with `num_isolation_stages=2` appear in output. Confirms SPS-specific command building end-to-end. |
@@ -570,31 +584,33 @@ These tests run entirely within C++ using the OpenMS ClassTest framework. They r
 
 These tests load `OpenMS.dll` via P/Invoke and exercise the bridge from the C# side with known inputs. They require Thermo DLLs (for build) and OpenMS DLLs (for runtime).
 
+**NUnit runner note (Phase 0 lesson #12):** The NUnit console runner must be invoked by its full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.16.3/tools/nunit3-console.exe`), not assumed to be on PATH. The working directory must be `FlashIDA/bin/` so that native DLLs (`OpenMS.dll` and dependencies) are found by the .NET runtime's DLL search path. Relative paths in tests (e.g., `..\\test-data\\`) depend on this specific working directory.
+
 | Test ID | Description | Expected Outcome |
 |---------|-------------|------------------|
 | P4-I01 | Feature flag `UseUnifiedBridge=False` produces old behavior | Load a `FLASHIda` instance with `method_default.xml` where `UseUnifiedBridge=False`. Run the old bridge call sequence (`GetPeakGroupSize`, `GetIsolationWindows`) against `ms1_standard.txt`. Verify output matches Phase 3 behavior (same scan commands as Phase 3 integration tests). This confirms the flag gate is functional and the old path is not broken. |
 | P4-I02 | Feature flag `UseUnifiedBridge=True` produces matching behavior | Load a `FLASHIda` instance with `method_default.xml` where `UseUnifiedBridge=True`. Call `ProcessScan` with the same `ms1_standard.txt` data. Call `GetNextScanCommand` to retrieve commands. Verify: `ProcessScan` returns > 0 (non-stub), returned commands have `msn_level=2`, `precursor_mz` values match what the old path would generate. This is the primary integration-level correctness check for the switch-over. |
 
-### Regression Tests — `Flash.exe -t` Golden File Comparison (Tier 3, `windows-latest`)
+### Regression Tests — `Flash.exe` Golden File Comparison (Tier 3, `windows-latest`)
 
-All regression tests run `Flash.exe -t` with a method config and compare output against a committed golden file using `compare_golden.py`. All require Thermo DLLs and OpenMS DLLs.
+All regression tests run `Flash.exe <input_file> <output_file> <method.xml>` with a method config and compare output against a committed golden file using `compare_golden.py`. All require Thermo DLLs and OpenMS DLLs.
 
 **Note on golden file provenance:** P4-R02 through P4-R10 golden files are created fresh by running the verified Phase 4 build with `UseUnifiedBridge=True`. They are not updated versions of Phase 3 golden files. If the Phase 4 output for standard DDA differs from Phase 3 output, the difference must be investigated and explained before committing the golden file. In the ideal case, standard DDA output is identical to Phase 3.
 
 | Test ID | Description | Expected Outcome |
 |---------|-------------|------------------|
-| P4-R01 | Regression gate: `UseUnifiedBridge=False` | `Flash.exe -t ms1_standard.txt output.tsv method_default.xml` with `UseUnifiedBridge=False`. Output must match the Phase 3 golden file line-for-line (within `compare_golden.py` numeric tolerances). This test confirms the flag gate works and the old path is completely undisturbed by the Phase 4 changes. |
-| P4-R02 | Standard DDA: `UseUnifiedBridge=True` | `Flash.exe -t ms1_standard.txt output.tsv method_default.xml` with `UseUnifiedBridge=True`. Compare to `phase4_standard_dda.tsv` golden. Row count and deconvolution values must match. This is the primary behavioral equivalence check for the switch-over. |
-| P4-R03 | Deep mode: `UseUnifiedBridge=True` | `Flash.exe -t ms1_standard.txt output.tsv method_deep.xml` with `UseUnifiedBridge=True`. Compare to `phase4_deep_mode.tsv`. Verify that deep mode produces more precursor targets than standard DDA (expected given lower score threshold). |
-| P4-R04 | Inclusion list mode | `Flash.exe -t ms1_standard.txt output.tsv method_inclusion.xml` with `UseUnifiedBridge=True`. Compare to `phase4_inclusion.tsv`. Verify only listed masses appear as targets. |
-| P4-R05 | Exclusion list mode | `Flash.exe -t ms1_standard.txt output.tsv method_exclusion.xml` with `UseUnifiedBridge=True`. Compare to `phase4_exclusion.tsv`. Verify listed masses are absent from targets. |
-| P4-R06 | Tag-based targeting mode | `Flash.exe -t ms1_standard.txt output.tsv method_tag_targeting.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_tag_targeting.tsv`. Verify tag-matched masses appear in targets. |
-| P4-R07 | Isobaric quant mode | `Flash.exe -t ms1_standard.txt output.tsv method_quant.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_quant.tsv`. Verify quant routing is reflected in output. |
-| P4-R08 | MS3 mode 1 (Source CID / SPS) | `Flash.exe -t ms1_standard.txt output.tsv method_ms3_mode1.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode1.tsv`. Verify MS3 commands appear at priority 3 in log. |
-| P4-R09 | MS3 mode 2 | `Flash.exe -t ms1_standard.txt output.tsv method_ms3_mode2.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode2.tsv`. |
-| P4-R10 | MS3 mode 3 | `Flash.exe -t ms1_standard.txt output.tsv method_ms3_mode3.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode3.tsv`. |
+| P4-R01 | Regression gate: `UseUnifiedBridge=False` | `Flash.exe ms1_standard.txt output.tsv method_default.xml` with `UseUnifiedBridge=False`. Output must match the Phase 3 golden file line-for-line (within `compare_golden.py` numeric tolerances). This test confirms the flag gate works and the old path is completely undisturbed by the Phase 4 changes. |
+| P4-R02 | Standard DDA: `UseUnifiedBridge=True` | `Flash.exe ms1_standard.txt output.tsv method_default.xml` with `UseUnifiedBridge=True`. Compare to `phase4_standard_dda.tsv` golden. Row count and deconvolution values must match. This is the primary behavioral equivalence check for the switch-over. |
+| P4-R03 | Deep mode: `UseUnifiedBridge=True` | `Flash.exe ms1_standard.txt output.tsv method_deep.xml` with `UseUnifiedBridge=True`. Compare to `phase4_deep_mode.tsv`. Verify that deep mode produces more precursor targets than standard DDA (expected given lower score threshold). |
+| P4-R04 | Inclusion list mode | `Flash.exe ms1_standard.txt output.tsv method_inclusion.xml` with `UseUnifiedBridge=True`. Compare to `phase4_inclusion.tsv`. Verify only listed masses appear as targets. |
+| P4-R05 | Exclusion list mode | `Flash.exe ms1_standard.txt output.tsv method_exclusion.xml` with `UseUnifiedBridge=True`. Compare to `phase4_exclusion.tsv`. Verify listed masses are absent from targets. |
+| P4-R06 | Tag-based targeting mode | `Flash.exe ms1_standard.txt output.tsv method_tag_targeting.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_tag_targeting.tsv`. Verify tag-matched masses appear in targets. |
+| P4-R07 | Isobaric quant mode | `Flash.exe ms1_standard.txt output.tsv method_quant.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_quant.tsv`. Verify quant routing is reflected in output. |
+| P4-R08 | MS3 mode 1 (Source CID / SPS) | `Flash.exe ms1_standard.txt output.tsv method_ms3_mode1.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode1.tsv`. Verify MS3 commands appear at priority 3 in log. |
+| P4-R09 | MS3 mode 2 | `Flash.exe ms1_standard.txt output.tsv method_ms3_mode2.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode2.tsv`. |
+| P4-R10 | MS3 mode 3 | `Flash.exe ms1_standard.txt output.tsv method_ms3_mode3.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode3.tsv`. |
 
-**Timing budget note:** 10 regression configs (P4-R01 through P4-R10) each invoke `Flash.exe -t` as a separate process. With process startup overhead, this easily reaches 10-20 minutes of the 20-minute Tier 3 budget. Monitor CI wall time on the first run. If the budget is exceeded:
+**Timing budget note:** 10 regression configs (P4-R01 through P4-R10) each invoke `Flash.exe` as a separate process. With process startup overhead, this easily reaches 10-20 minutes of the 20-minute Tier 3 budget. Monitor CI wall time on the first run. If the budget is exceeded:
 1. Parallelize: split the 10 configs across two jobs (`windows-tests` and a new `regression-extended` job) using `needs` to share build artifacts.
 2. Reduce: identify configs that are functionally redundant in test mode (e.g., if exclusion and inclusion list modes exercise the same code paths on the same small spectrum, they may be fast). Optimize test spectrum size.
 3. The flag-off regression (P4-R01) should be kept as a single fast run using the minimal smoke test spectrum, not the full `ms1_standard.txt`, to minimize its overhead.
@@ -667,15 +683,23 @@ windows-tests:
     - run: dumpbin /exports FlashIDA\dll\OpenMS.dll  # DLL export verification
 ```
 
+**Build output path (Phase 0 lesson #12):** The actual build output goes to `FlashIDA/bin/`, not `FlashIDA/src/Flash/bin/Debug/`. All CI paths, test runner invocations, and working directories must use `FlashIDA/bin/`.
+
 #### 5. Cache Key Unchanged
 
 The OpenMS DLL cache key is the submodule commit hash. Since Phase 4 advances the OpenMS submodule (new C++ changes in `FLASHIda.cpp`), the cache will miss on the first Phase 4 build and trigger a full rebuild via `build-openms-dll.yml`. This is expected and correct.
+
+#### 6. DLL Availability Notes
+
+**Thermo DLLs (Phase 0 lesson #3):** Thermo DLLs are provided via Strategy B — an openssl-encrypted zip committed to the repo (`FlashIDA/dependencies/thermo-dlls.zip.enc`), decrypted in CI using the `THERMO_DLL_PASSPHRASE` secret. Do not use base64 secrets (Strategy A) as they exceed GitHub's 48 KB per-secret limit.
+
+**OpenMS DLLs (Phase 0 lesson #5):** The OpenMS DLLs are already committed in `FlashIDA/dll/` and copied to the build output via `CopyToOutputDirectory` in `Flash.csproj`. No cache/download steps are needed unless the submodule is updated and DLLs are rebuilt.
 
 ---
 
 ## Working Product Verification
 
-All verification is performed by inspecting CI job results — there is no local `Flash.exe -t` or `dumpbin` invocation required from a developer workstation.
+All verification is performed by inspecting CI job results — there is no local `Flash.exe` or `dumpbin` invocation required from a developer workstation.
 
 ### Verification 1: Flag-Off Regression (No Behavioral Change)
 

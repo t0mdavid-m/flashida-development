@@ -29,6 +29,8 @@ extern "C" OPENMS_DLLAPI int ProcessScan(
 
 Returns number of commands pushed. Tracking ID: 4-char base-36, C++ atomic counter.
 
+**Caveat — silent failures:** The C++ engine returns 0 without an error code when input data is malformed (e.g., wrong RT units, mixed peaks from multiple scans). Callers cannot distinguish "no results found" from "input data is invalid." When deconvolution returns 0 results unexpectedly, log the input data characteristics (RT, peak count, first/last m/z) before investigating engine internals. (See Phase 0 lessons-learned #14.)
+
 **Audit log:**
 
 | Event | Trigger | Condition |
@@ -550,7 +552,7 @@ for label, ces in results.items():
 | Isobaric Quant | Medium | isDifferentiallyAbundant internal |
 | MS3 (all modes) | Medium | Fragment selection via queue |
 | FAIMS (multi-CV) | **High** | CV state machine in C++ |
-| Test mode | Low | Old wrappers during migration |
+| Test mode | Low | Old wrappers during migration. Entry point is `FLASHIdaWrapper.Main()`, invoked as `Flash.exe <input_file> <output_file> <method.xml>` (no `-t` flag). |
 
 ---
 
@@ -586,7 +588,7 @@ for label, ces in results.items():
 **C++ build required:** Yes (Build #1-prep). Minimal change: JSON parsing in constructor only. All existing behavior untouched.
 
 **Working Product Verification:**
-1. `Flash.exe -t` runs successfully with JSON config — deconvolution results identical to legacy config.
+1. `Flash.exe <input_file> <output_file> <method.xml>` runs successfully with JSON config — deconvolution results identical to legacy config. (Note: the entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()`. There is no `-t` flag.)
 2. Unit test: round-trip `method.xml` → `ToJSON()` → C++ parse → verify all fields match.
 3. Legacy format still works (auto-detect fallback).
 
@@ -610,7 +612,7 @@ for label, ces in results.items():
 **C++ build required:** Yes (batched with Phase 1 into Build #1).
 
 **Working Product Verification:**
-1. `Flash.exe -t` runs successfully — no behavioral change since no code populates metadata yet.
+1. `Flash.exe <input_file> <output_file> <method.xml>` runs successfully — no behavioral change since no code populates metadata yet.
 2. OpenMS unit test: create `DeconvolvedSpectrum`, set metadata, call `toSpectrum()`, verify `getMetaValue()` returns correct values.
 3. Verify `hasOptimizationMetadata()` returns false for all spectra in normal operation (zero overhead confirmed).
 
@@ -639,7 +641,7 @@ for label, ces in results.items():
 **C++ build required:** Yes (Build #1, batched with Phases 1 + 2).
 
 **Working Product Verification:**
-1. `Flash.exe -t` runs successfully — all existing behavior unchanged. Shadow calls to `ProcessScan` produce TRACK log entries.
+1. `Flash.exe <input_file> <output_file> <method.xml>` runs successfully — all existing behavior unchanged. Shadow calls to `ProcessScan` produce TRACK log entries.
 2. Verify `ScanCommand` struct marshaling: C# writes known values → C++ reads them back → values match (alignment/packing test).
 3. Verify `GetNextScanCommand` returns MS1 (queue is empty, so it always falls through to empty→MS1).
 4. Verify tracking ID generation: sequential base-36 IDs, no collisions across 10,000 calls.
@@ -677,8 +679,8 @@ for label, ces in results.items():
 **C++ build required:** Yes (Build #2).
 
 **Working Product Verification:**
-1. `Flash.exe -t` with `UseUnifiedBridge=False` — identical to Phase 3 behavior (regression check).
-2. `Flash.exe -t` with `UseUnifiedBridge=True` — standard DDA produces same deconvolution results and same scan commands (compare log output line-by-line).
+1. `Flash.exe <input_file> <output_file> <method.xml>` with `UseUnifiedBridge=False` — identical to Phase 3 behavior (regression check).
+2. `Flash.exe <input_file> <output_file> <method.xml>` with `UseUnifiedBridge=True` — standard DDA produces same deconvolution results and same scan commands (compare log output line-by-line).
 3. Test each mode individually with `UseUnifiedBridge=True`: deep mode, inclusion list, exclusion list, tag targeting, conditional MS2, quant, MS3 (all 4 sub-modes).
 4. Verify TRACK audit trail: every pushed command has `[TRACK-CREATE]`, every resolved scan has `[TRACK-RESOLVE]`, stale entries get `[TRACK-EXPIRE]`.
 5. Verify the race condition fix: `ProcessScan` returns atomic command count, no `GetPeakGroupSize` → `GetIsolationWindows` size mismatch possible.
@@ -712,7 +714,7 @@ for label, ces in results.items():
 **C++ build required:** No.
 
 **Working Product Verification:**
-1. `Flash.exe -t` runs with `UnifiedScanProcessor` — all modes produce identical results to Phase 4.
+1. `Flash.exe <input_file> <output_file> <method.xml>` runs with `UnifiedScanProcessor` — all modes produce identical results to Phase 4.
 2. Verify DataPipe correctly propagates completion (sentinel handling replaced by `ActionBlock` completion).
 3. Verify FAIMS mode still works — `ScanScheduler` still active for CV cycling, `FAIMSScanProcessor` still active (but now delegates to `UnifiedScanProcessor` internally for the ProcessScan call).
 4. Code coverage: confirm `QuantScanProcessor` is fully dead (no references remain).
@@ -750,8 +752,8 @@ for label, ces in results.items():
 **C++ build required:** Yes (Build #3).
 
 **Working Product Verification:**
-1. `Flash.exe -t` without FAIMS config — all non-FAIMS modes unchanged (regression).
-2. `Flash.exe -t` with FAIMS config (3 CVs) — CV cycling order matches old behavior exactly. Log CV transitions and compare.
+1. `Flash.exe <input_file> <output_file> <method.xml>` without FAIMS config — all non-FAIMS modes unchanged (regression).
+2. `Flash.exe <input_file> <output_file> <method.xml>` with FAIMS config (3 CVs) — CV cycling order matches old behavior exactly. Log CV transitions and compare.
 3. Test adaptive CV skipping: configure low precursor threshold, verify CVs are skipped when precursor count is below threshold and `max_cv_skip` is not exceeded.
 4. Test CV skip limit: verify that after `max_cv_skip` consecutive skips, the CV is forced even with low precursor count.
 5. Verify `ScanScheduler.cs` has zero remaining references in codebase before deletion.
@@ -778,8 +780,8 @@ for label, ces in results.items():
 **C++ build required:** Yes (Build #4).
 
 **Working Product Verification:**
-1. `Flash.exe -t` with exploration disabled — identical to Phase 6 (regression).
-2. `Flash.exe -t` with exploration enabled, MS2 CE optimization (20-40, step 5) — verify 5 variant scans pushed per selected precursor.
+1. `Flash.exe <input_file> <output_file> <method.xml>` with exploration disabled — identical to Phase 6 (regression).
+2. `Flash.exe <input_file> <output_file> <method.xml>` with exploration enabled, MS2 CE optimization (20-40, step 5) — verify 5 variant scans pushed per selected precursor.
 3. Verify exploration convergence: after all variants return, winner is selected by `FragmentationQuality` score, winner's CE is used for subsequent scans of same precursor.
 4. Verify queue overflow protection: with `MaxQueueForExploration=50`, exploration is suppressed when queue exceeds threshold.
 5. Verify MS1 cycle time suppression: during active exploration, MS1 is not injected by cycle time even if deadline passes. Resumes after exploration completes.
@@ -812,11 +814,11 @@ for label, ces in results.items():
 **C++ build required:** Yes (batched with Phase 7 into Build #4).
 
 **Working Product Verification:**
-1. `Flash.exe -t` runs successfully — final form of the application.
+1. `Flash.exe <input_file> <output_file> <method.xml>` runs successfully — final form of the application.
 2. Verify only 5 exported symbols in `OpenMS.dll` bridge (use `dumpbin /exports` on Windows).
 3. Verify no C# code references any removed bridge function (compile succeeds with zero warnings).
 4. Verify `MethodDocGenerator` produces correct output from `[Description]` attributes.
-5. Full regression test: run `Flash.exe -t` with every configuration variant (standard DDA, deep, inclusion, exclusion, tag targeting, conditional MS2, quant, MS3 all modes, FAIMS, exploration) and compare output to Phase 7 baseline.
+5. Full regression test: run `Flash.exe <input_file> <output_file> <method.xml>` with every configuration variant (standard DDA, deep, inclusion, exclusion, tag targeting, conditional MS2, quant, MS3 all modes, FAIMS, exploration) and compare output to Phase 7 baseline.
 
 **Scope:** M
 

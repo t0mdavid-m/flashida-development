@@ -40,6 +40,38 @@ No new user-provided spectrum data is required for Phase 7 (reuses `ms1_standard
 
 ---
 
+## Phase 0 Lessons Learned — Cross-References
+
+The following lessons from [../Phase_0/lessons-learned.md](../Phase_0/lessons-learned.md) apply to Phase 7. Read these before implementation.
+
+1. **Flash.exe entry point (lesson #1):** The entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()`. There is no `-t` flag. Correct invocation: `Flash.exe <input_file> <output_file> <method.xml> [ms2_file]`.
+
+2. **Build output path (lesson #12):** The actual build output goes to `FlashIDA/bin/`, not `FlashIDA/src/Flash/bin/Debug/`. All CI paths, test paths, and regression runner references must use `FlashIDA/bin/`.
+
+3. **DLL name in P/Invoke (lesson #12):** The actual DLL import uses `"OpenMS.dll"` (with extension), not `"OpenMS"`. Any P/Invoke `[DllImport]` references must use the full filename.
+
+4. **NUnit runner invocation (lesson #12):** CI invokes the NUnit console runner by full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.16.3/tools/nunit3-console.exe`), not by assuming it is on PATH. Working directory must be `FlashIDA/bin/` so that native DLLs (`OpenMS.dll` and dependencies) are found by the .NET runtime's DLL search path.
+
+5. **Spectrum file format (lesson #2):** Spectrum files use tab-separated headers with RT in seconds (`Spec scan=N\t<seconds>`), not the space-separated format with RT in minutes described in test-file-specification.md. The parser divides by 60 internally.
+
+6. **Thermo DLL strategy (lesson #3):** Thermo DLLs use Strategy B — openssl-encrypted zip committed to the repo (`FlashIDA/dependencies/thermo-dlls.zip.enc`), with the passphrase stored as `THERMO_DLL_PASSPHRASE` secret. Do not use base64 (exceeds GitHub secret limit) or GPG (Windows CI incompatibility).
+
+7. **OpenMS DLLs (lesson #5):** OpenMS DLLs are already committed in `FlashIDA/dll/`. Do not add cache/download steps for OpenMS DLLs. MSBuild copies them to the build output via `CopyToOutputDirectory` in `Flash.csproj`.
+
+8. **Golden file capture (lesson #15):** Golden-file capture requires a 2-commit minimum. The first commit runs CI and produces the golden artifact; the second commit includes the captured golden file. Phases with multiple golden files should batch captures into a single CI run.
+
+9. **Test tier labels (lesson #12):** C# tests that load `OpenMS.dll` via P/Invoke (AL-CT / bridge tests) are Tier 2, not Tier 1, matching the convention that DLL-dependent tests are Tier 2.
+
+10. **Silent P/Invoke failures (lesson #14):** The C++ deconvolution engine returns 0 results without an error code when input data is malformed. When deconvolution returns 0 results unexpectedly, log the input data characteristics (RT, peak count, first/last m/z, precursor mass/charge for MS2) before investigating engine internals. The bridge functions do not distinguish "no results found" from "input data is malformed."
+
+11. **Submodule batching (lesson #15):** Batch same-side changes (all C# changes or all C++ changes) before updating the submodule pointer to reduce churn. In Phase 0, 48% of commits were submodule pointer updates.
+
+12. **Multi-scan parser (lesson #9):** Any new code that loads spectrum TSV files must stop at the first scan boundary (`if (started) break;` on encountering a second `Spec` line). Flash.exe's `Main()` parser handles multi-scan correctly (processes scan N when scan N+1's header is encountered), but test parsers must stop at the first scan for single-scan loading.
+
+13. **`.gitattributes` (lesson #4):** `FlashIDA/.gitattributes` has `* text eol=crlf`, which forces CRLF conversion on ALL files. Any new binary file extensions (`.enc`, `.gpg`, `.zip`, etc.) must be added to `.gitattributes` as `binary` before committing to prevent silent corruption.
+
+---
+
 ## Detailed Implementation Steps
 
 ### Step 1: Extend JSON config parsing for full exploration config
@@ -610,12 +642,12 @@ Ensure `ToJSON()` serializes the full `<ParameterOptimization>` block into the `
 
 ### Step 11: Capture the Phase 7 golden file
 
-The golden file for exploration-enabled output is named **`phase7_exploration.tsv`** (canonical name per [../test-file-specification.md](../test-file-specification.md) Section 2.2). It lives in `FlashIDA/test-data/golden/` alongside all other golden files. Its format is the standard 15-column TSV defined in [../test-file-specification.md](../test-file-specification.md) Section 2.1, extended with `OptimizationMetadata` metavalue columns for exploration variant rows (see WPV-6 for the additional column names).
+The golden file for exploration-enabled output is named **`phase7_exploration.tsv`** (canonical name per [../test-file-specification.md](../test-file-specification.md) Section 2.2). It lives in `FlashIDA/test-data/golden/` alongside all other golden files. Its format is the standard 15-column TSV defined in [../test-file-specification.md](../test-file-specification.md) Section 2.1, extended with `OptimizationMetadata` metavalue columns for exploration variant rows (see WPV-6 for the additional column names). Note: spectrum input files use tab-separated headers with RT in seconds (Phase 0 lesson #2); the golden file is also tab-separated.
 
-Because there is no Windows machine available for local development, `phase7_exploration.tsv` is captured via a CI-artifact workflow rather than a local `Flash.exe -t` invocation:
+Because there is no Windows machine available for local development, `phase7_exploration.tsv` is captured via a CI-artifact workflow rather than a local `Flash.exe` invocation. Golden-file capture requires a 2-commit minimum (Phase 0 lesson #15): the first commit runs CI and produces the golden artifact; the second commit includes the captured golden file.
 
-1. Commit the Phase 7 code changes (C++, C#, `method_exploration.xml`) **without** `test-data/golden/phase7_exploration.tsv`.
-2. Push the branch. The `windows-tests` CI job runs `Flash.exe -t` with `method_exploration.xml` and uploads the produced TSV as a build artifact named `exploration-golden-candidate`.
+1. Batch same-side changes before updating the submodule pointer (Phase 0 lesson #15). Commit the Phase 7 code changes (C++, C#, `method_exploration.xml`) **without** `test-data/golden/phase7_exploration.tsv`.
+2. Push the branch. The `windows-tests` CI job runs `Flash.exe ms1_standard.txt output.tsv method_exploration.xml` and uploads the produced TSV as a build artifact named `exploration-golden-candidate`.
 3. Download the artifact from the GitHub Actions run page, inspect it: confirm that extra rows corresponding to exploration variant scans are present and that `OptimizationMetadata` fields appear as additional TSV columns (or mzML metavalues, depending on how test mode serializes them). Follow the general golden file inspection checklist in [../test-file-specification.md](../test-file-specification.md) Section 2.3 (steps 3–5).
 4. Once the output looks correct, commit the file as `FlashIDA/test-data/golden/phase7_exploration.tsv` and update `FlashIDA/test-data/golden/README.md` to document its provenance.
 
@@ -647,6 +679,8 @@ The regression golden file for `P7-R01` (exploration disabled) is the existing `
 
 ### FlashIDA (C#) — no new C++ bridge API changes
 
+**Note:** Although Phase 7 adds no new bridge functions, the existing P/Invoke bridge has a silent zero-result failure mode (Phase 0 lesson #14). The C++ engine returns 0 results without an error code when input data is malformed. If exploration variants return 0 deconvolved fragments unexpectedly, log the input data characteristics (RT, peak count, first/last m/z) before investigating engine internals. P/Invoke DLL imports use `"OpenMS.dll"` (with `.dll` extension, lesson #12). NUnit tests must run from `FlashIDA/bin/` working directory so native DLLs are found (lesson #12).
+
 | File | Action | Description |
 |------|--------|-------------|
 | `FlashIDA/src/Flash/IDA/Parameter.cs` | Modify | Extend `ToJSON()` to serialize full `<ParameterOptimization>` XML subtree into the `exploration` JSON object with all sub-keys matching the C++ parser |
@@ -656,7 +690,7 @@ The regression golden file for `P7-R01` (exploration disabled) is the existing `
 | File | Action | Description |
 |------|--------|-------------|
 | `FlashIDA/test-data/configs/method_exploration.xml` | Create | Method config with `<ParameterOptimization><Active>True</Active>` and CE 20-40 step 5 |
-| `FlashIDA/test-data/golden/phase7_exploration.tsv` | Create | Golden file captured from `Flash.exe -t` with `method_exploration.xml` after Build #4 (canonical name per [test-file-specification.md](../test-file-specification.md) §2.2) |
+| `FlashIDA/test-data/golden/phase7_exploration.tsv` | Create | Golden file captured from `Flash.exe` with `method_exploration.xml` after Build #4 (canonical name per [test-file-specification.md](../test-file-specification.md) §2.2) |
 
 ### CI workflow
 
@@ -668,7 +702,7 @@ The regression golden file for `P7-R01` (exploration disabled) is the existing `
 
 ## Test Cases
 
-All 12 tests for Phase 7 are listed below with full descriptions, expected outcomes, and the CI job that runs them. Tests P7-U01 through P7-U10 are C++ unit tests (Tier 1); P7-R01 and P7-R02 are regression tests (Tier 3).
+All 12 tests for Phase 7 are listed below with full descriptions, expected outcomes, and the CI job that runs them. Tests P7-U01 through P7-U10 are C++ unit tests (Tier 1); P7-R01 and P7-R02 are regression tests (Tier 3). Note: any C# tests that load `OpenMS.dll` via P/Invoke (AL-CT / bridge tests) are Tier 2, not Tier 1, per Phase 0 lesson #9 — the tier convention is that DLL-dependent tests are Tier 2.
 
 ### Test Summary (Quick Reference)
 
@@ -761,15 +795,15 @@ All 12 tests for Phase 7 are listed below with full descriptions, expected outco
 
 **Tier:** 3 (regression)
 **CI runner:** `windows-latest`, `windows-tests` job
-**Description:** Run `Flash.exe -t` with `method_default.xml` (exploration disabled — no `<ParameterOptimization>` section or `<Active>False</Active>`). Spectrum input: `ms1_standard.txt` (see [../test-file-specification.md](../test-file-specification.md) §1.2 for content requirements). Comparison is performed by `compare_golden.py` using the tolerances defined in [../test-file-specification.md](../test-file-specification.md) §2.1.
+**Description:** Run `Flash.exe ms1_standard.txt output.tsv method_default.xml` (exploration disabled — no `<ParameterOptimization>` section or `<Active>False</Active>`). Entry point is `FLASHIdaWrapper.Main()` — there is no `-t` flag (Phase 0 lesson #1). Spectrum input: `ms1_standard.txt` (see [../test-file-specification.md](../test-file-specification.md) §1.2 for content requirements). Comparison is performed by `compare_golden.py` using the tolerances defined in [../test-file-specification.md](../test-file-specification.md) §2.1.
 **Expected outcome:** Output matches the Phase 4 standard DDA golden file (`test-data/golden/phase4_standard_dda.tsv`). Zero deviation in row count, string fields, and floating-point fields within tolerance. No `EXPL:` entries in the console log. `active_exploration_groups_` remains empty throughout.
 
 ### P7-R02 — Exploration enabled produces variant scans in output
 
 **Tier:** 3 (regression)
 **CI runner:** `windows-latest`, `windows-tests` job
-**Description:** Run `Flash.exe -t` with `method_exploration.xml` (CE 20-40 step 5, `MaxVariantsPerPrecursor=5`). Spectrum input: `ms1_standard.txt` (see [../test-file-specification.md](../test-file-specification.md) §1.2). Config file format and key parameters for `method_exploration.xml` are specified in [../test-file-specification.md](../test-file-specification.md) §3.2. Comparison is performed by `compare_golden.py` using the standard tolerances from [../test-file-specification.md](../test-file-specification.md) §2.1.
-**Expected outcome:** Output file matches the committed golden file `test-data/golden/phase7_exploration.tsv`. The golden file contains more rows than `phase4_standard_dda.tsv` — specifically, for each selected precursor there are up to 5 exploration variant scan records in addition to the standard MS2 record. `EXPL-WINNER` log entries appear in console output. `OptimizationMetadata` fields appear as metavalues in the output (verifiable from the TSV columns, if the test mode serializes them, or from inspecting mzML output if `Flash.exe -t` produces mzML). This is a new golden file created fresh at this phase, not a comparison against a prior phase.
+**Description:** Run `Flash.exe ms1_standard.txt output.tsv method_exploration.xml` (CE 20-40 step 5, `MaxVariantsPerPrecursor=5`). Entry point is `FLASHIdaWrapper.Main()` — there is no `-t` flag (Phase 0 lesson #1). Spectrum input: `ms1_standard.txt` (see [../test-file-specification.md](../test-file-specification.md) §1.2). Config file format and key parameters for `method_exploration.xml` are specified in [../test-file-specification.md](../test-file-specification.md) §3.2. Comparison is performed by `compare_golden.py` using the standard tolerances from [../test-file-specification.md](../test-file-specification.md) §2.1.
+**Expected outcome:** Output file matches the committed golden file `test-data/golden/phase7_exploration.tsv`. The golden file contains more rows than `phase4_standard_dda.tsv` — specifically, for each selected precursor there are up to 5 exploration variant scan records in addition to the standard MS2 record. `EXPL-WINNER` log entries appear in console output. `OptimizationMetadata` fields appear as metavalues in the output (verifiable from the TSV columns, if the test mode serializes them, or from inspecting mzML output if `Flash.exe` produces mzML). This is a new golden file created fresh at this phase, not a comparison against a prior phase.
 
 ---
 
@@ -811,17 +845,26 @@ Also note that `method_exploration_overflow.xml` and `method_exploration_ms3.xml
 
 Phase 7 adds only C++ unit tests (existing `cpp-unit-tests` job, `ubuntu-latest`) and one new regression config (existing `windows-tests` job, `windows-latest`). No new runner, no new job, no new secrets. The existing Build #4 artifact cache key (OpenMS submodule hash) automatically handles the DLL rebuild when the C++ source advances.
 
+#### 5. CI infrastructure reminders (Phase 0 lessons)
+
+- **Thermo DLLs (lesson #3):** Use Strategy B — decrypt `FlashIDA/dependencies/thermo-dlls.zip.enc` with `openssl enc -d -aes-256-cbc -pbkdf2` using `THERMO_DLL_PASSPHRASE` secret. Do not use base64 or GPG.
+- **OpenMS DLLs (lesson #5):** Already committed in `FlashIDA/dll/`. Do not add cache/download steps. MSBuild copies them via `CopyToOutputDirectory`.
+- **NUnit runner (lesson #12):** Invoke by full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.16.3/tools/nunit3-console.exe`). Working directory must be `FlashIDA/bin/`.
+- **Build output (lesson #12):** Output goes to `FlashIDA/bin/`, not `FlashIDA/src/Flash/bin/Debug/`.
+- **Submodule batching (lesson #15):** Batch same-side changes (all C++ or all C#) before updating the submodule pointer to minimize churn.
+- **`.gitattributes` (lesson #4):** If any new binary file extensions are introduced, add them to `FlashIDA/.gitattributes` as `binary` before committing.
+
 ---
 
 ## Working Product Verification
 
-Because there is no Windows machine available, all WPV items are verified via CI jobs rather than local `Flash.exe -t` invocations. Each item maps to a CI job that produces observable evidence (log output, artifact output, or test pass/fail status).
+Because there is no Windows machine available, all WPV items are verified via CI jobs rather than local `Flash.exe` invocations (entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()` — there is no `-t` flag; see Phase 0 lesson #1). Each item maps to a CI job that produces observable evidence (log output, artifact output, or test pass/fail status).
 
 **WPV-1: Exploration disabled — identical to Phase 6**
-Verified by the `P7-R01` regression test in the `windows-tests` CI job (`windows-latest`). The job runs `Flash.exe -t` with `method_default.xml` (using `ms1_standard.txt`) and compares output against `test-data/golden/phase4_standard_dda.tsv` using `compare_golden.py` (comparison tolerances: [../test-file-specification.md](../test-file-specification.md) §2.1). The CI step must report `PASS`.
+Verified by the `P7-R01` regression test in the `windows-tests` CI job (`windows-latest`). The job runs `Flash.exe ms1_standard.txt output.tsv method_default.xml` and compares output against `test-data/golden/phase4_standard_dda.tsv` using `compare_golden.py` (comparison tolerances: [../test-file-specification.md](../test-file-specification.md) §2.1). The CI step must report `PASS`.
 
 **WPV-2: CE optimization produces 5 variant scans per precursor**
-Verified by the `P7-R02` regression test in the `windows-tests` CI job (`windows-latest`). The job runs `Flash.exe -t` with `method_exploration.xml` and compares output against `test-data/golden/phase7_exploration.tsv`. Inspect the golden file (captured via the CI-artifact workflow in Step 11) to confirm that for each precursor selected by standard DDA scoring there are 5 additional rows with `EXPL:` scan descriptions, and that `EXPL-WINNER` log entries appear in the CI job log.
+Verified by the `P7-R02` regression test in the `windows-tests` CI job (`windows-latest`). The job runs `Flash.exe ms1_standard.txt output.tsv method_exploration.xml` and compares output against `test-data/golden/phase7_exploration.tsv`. Inspect the golden file (captured via the CI-artifact workflow in Step 11) to confirm that for each precursor selected by standard DDA scoring there are 5 additional rows with `EXPL:` scan descriptions, and that `EXPL-WINNER` log entries appear in the CI job log.
 
 **WPV-3: Winner is selected by FragmentationQuality score**
 Verified by inspecting the `EXPL-WINNER` log lines in the `windows-tests` CI job log for the `P7-R02` run. Confirm that the logged CE value corresponds to the variant with the highest `fragmentation_quality_score` across the 5 variant rows visible in the `phase7_exploration.tsv` artifact.
@@ -860,8 +903,8 @@ This is also verified structurally by P7-U07 and P7-U08 in the `cpp-unit-tests` 
 - [ ] `test-data/golden/phase7_exploration.tsv` exists and is committed (canonical name per [../test-file-specification.md](../test-file-specification.md) §2.2).
 - [ ] `FLASHIda_exploration_test` C++ test binary is listed in `executables.cmake` and discovered by CTest.
 - [ ] `.github/workflows/flashida-ci.yml` regression runner includes `method_exploration.xml` with golden file `phase7_exploration.tsv` (entry name `p7_exploration`, per [../test-file-specification.md](../test-file-specification.md) §4.2 config array).
-- [ ] `Flash.exe -t` with exploration disabled produces output identical to `phase4_standard_dda.tsv` (P7-R01 passes in CI (`windows-tests` job); comparison uses `compare_golden.py` tolerances from [../test-file-specification.md](../test-file-specification.md) §2.1).
-- [ ] `Flash.exe -t` with `method_exploration.xml` produces EXPL-WINNER log entries and variant rows in output matching `phase7_exploration.tsv` (P7-R02 passes in CI).
+- [ ] `Flash.exe ms1_standard.txt output.tsv method_default.xml` with exploration disabled produces output identical to `phase4_standard_dda.tsv` (P7-R01 passes in CI (`windows-tests` job); comparison uses `compare_golden.py` tolerances from [../test-file-specification.md](../test-file-specification.md) §2.1).
+- [ ] `Flash.exe ms1_standard.txt output.tsv method_exploration.xml` produces EXPL-WINNER log entries and variant rows in output matching `phase7_exploration.tsv` (P7-R02 passes in CI).
 - [ ] MS3 recursive exploration creates child groups and respects `MaxExplorationDepth` (P7-U07, P7-U08 pass in CI (`cpp-unit-tests` job)).
 - [ ] No new C++ compiler warnings introduced (existing `/Wall` or `-Wall` build flags must remain clean).
 - [ ] Code review complete: `ExplorationGroup` / `ExplorationVariant` structs, `feedExplorationResult_()` winner logic, depth-limit check, and MS1 suppression logic reviewed by at least one other developer.

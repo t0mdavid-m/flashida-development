@@ -19,7 +19,7 @@
 
 The two runner types are independent and execute in parallel whenever both have work to do.
 
-**No local Windows machine is required.** All C# builds, integration tests, and regression runs happen exclusively on `windows-latest`. The `windows-latest` runner provides everything needed: MSBuild (via VS Build Tools 2022), NuGet CLI, .NET Framework 4.8, `dumpbin.exe`, Python 3.8+, and 7-Zip.
+**No local Windows machine is required.** All C# builds, integration tests, and regression runs happen exclusively on `windows-latest`. The `windows-latest` runner provides everything needed: MSBuild (via VS Build Tools 2022), NuGet CLI, .NET Framework 4.8, `dumpbin.exe`, Python 3.8+, and openssl.
 
 ### Pre-Installed Software
 
@@ -28,7 +28,7 @@ The two runner types are independent and execute in parallel whenever both have 
 - .NET Framework 4.8 Developer Pack
 - NuGet CLI (`nuget.exe` on PATH)
 - Python 3.8+
-- 7-Zip (for Strategy B DLL decryption)
+- openssl (for Strategy B DLL decryption; `openssl enc -aes-256-cbc -pbkdf2`)
 
 **`ubuntu-latest`:**
 - GCC 11+ or Clang 14+ (C++20 support)
@@ -45,56 +45,24 @@ The two runner types are independent and execute in parallel whenever both have 
 `Flash.csproj` has compile-time references to five Thermo assemblies:
 `API-2.0.dll`, `Fusion.API-1.0.dll`, `Spectrum-1.0.dll`, `Thermo.TNG.Factory.dll`, `Thermo.TNG.Client.API.dll`.
 
-These are proprietary and not committed to the repository. They must be present in `FlashIDA/dependencies/` before MSBuild runs. Two strategies — pick one and use it for all phases:
+These are proprietary and not committed to the repository. They must be present in `FlashIDA/dependencies/` before MSBuild runs.
 
-**Strategy A — Base64 secret (`THERMO_IAPI_DLLS_BASE64`):**
-- Zip all five DLLs, base64-encode the zip, store as a single GitHub repository secret.
-- CI step: decode → write zip → `Expand-Archive` to `FlashIDA\dependencies\` → delete zip.
-- Preferred when the zip fits within the GitHub secret size limit.
+**Chosen strategy: openssl-encrypted archive (`THERMO_DLL_PASSPHRASE`)**
+- The five Thermo DLLs compress to a 75 KB zip. Base64 encoding produces 101 KB, exceeding GitHub's 48 KB per-secret limit, so Strategy A (base64 secret) is not viable.
+- The encrypted archive is committed at `FlashIDA/dependencies/thermo-dlls.zip.enc`, encrypted with `openssl enc -aes-256-cbc -pbkdf2`. The passphrase is stored as the `THERMO_DLL_PASSPHRASE` GitHub repository secret.
+- CI step: `openssl enc -d -aes-256-cbc -pbkdf2` to decrypt → `Expand-Archive` to `FlashIDA\dependencies\` → delete zip.
+- GPG encryption does not work on Windows CI runners (digest algorithm incompatibility). Always use openssl.
 - See [testing-strategy.md Section 3.3](testing-strategy.md#33-handling-proprietary-dlls) for the one-time setup commands.
 
-**Strategy B — Encrypted archive (`THERMO_DLL_PASSPHRASE`):**
-- Encrypt all DLLs into `FlashIDA/dependencies/thermo-iapi-encrypted.7z` with AES-256.
-- Commit the `.7z` file; store only the passphrase as `THERMO_DLL_PASSPHRASE`.
-- CI step: `7z x` with the passphrase into `FlashIDA\dependencies\`.
-- Preferred when total DLL size exceeds the GitHub secrets limit.
-- See [testing-strategy.md Section 3.3](testing-strategy.md#33-handling-proprietary-dlls) for setup commands.
+> **Note (`.gitattributes`):** `FlashIDA/.gitattributes` has `* text eol=crlf`, which forces CRLF conversion on all files. Binary files (`.enc`, `.zip`, `.gpg`) are silently corrupted by this conversion. Ensure `.gitattributes` contains `*.enc binary`, `*.zip binary`, and `*.gpg binary` entries before committing any encrypted or compressed archives. (Phase 0 lesson #4)
 
 After restoring, the CI step also copies Thermo DLLs into the build output directory alongside `Flash.exe`. This prevents `FileNotFoundException` at runtime if the .NET CLR attempts to resolve Thermo assemblies during JIT compilation of `FLASHIdaWrapper`.
 
 ### OpenMS DLL Artifacts
 
-Pre-built Windows DLLs (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`) are produced by the `build-openms-dll.yml` workflow (which targets the `flashida-v9-bridge` branch of the OpenMS submodule). They are placed in `FlashIDA/dll/` before MSBuild runs and copied to the build output directory alongside `Flash.exe`.
+Pre-built Windows DLLs (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`) are already committed in `FlashIDA/dll/`. MSBuild copies these to the build output directory (`FlashIDA/bin/`) alongside `Flash.exe` via `CopyToOutputDirectory` in `Flash.csproj`. **No cache or cross-workflow download step is needed in CI.** (Phase 0 lesson #5)
 
-**Cache key:** the OpenMS submodule commit hash.
-
-```yaml
-- name: Get OpenMS submodule commit hash
-  id: openms-hash
-  shell: bash
-  run: echo "hash=$(git -C OpenMS rev-parse HEAD)" >> $GITHUB_OUTPUT
-
-- name: Restore cached OpenMS DLLs
-  id: dll-cache
-  uses: actions/cache@v4
-  with:
-    path: FlashIDA/dll/
-    key: openms-dlls-${{ steps.openms-hash.outputs.hash }}
-
-- name: Download OpenMS DLLs from build workflow
-  if: steps.dll-cache.outputs.cache-hit != 'true'
-  uses: dawidd6/action-download-artifact@v3
-  with:
-    workflow: build_dlls.yml
-    name: openms-dlls
-    path: FlashIDA/dll/
-    branch: flashida-v9-bridge
-```
-
-**When to rebuild vs. reuse:**
-- Cache hit: DLLs reused as-is. No OpenMS build triggered.
-- Cache miss: Download from the latest `build-openms-dll.yml` artifact on `flashida-v9-bridge`.
-- If no artifact exists for the current submodule hash (e.g., after advancing the submodule to a new build batch): manually trigger `build-openms-dll.yml` on the `flashida-v9-bridge` branch and wait for it to complete before pushing to `flashida-ci.yml`.
+> **When DLLs need rebuilding:** If the OpenMS submodule is advanced and the C++ bridge API changes, the DLLs must be rebuilt. At that point, a `build-openms-dll.yml` workflow and cache/download steps should be reintroduced. Until then, the committed DLLs are used as-is.
 
 ---
 
@@ -105,7 +73,7 @@ Pre-built Windows DLLs (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Ne
 ```
 .github/workflows/
   flashida-ci.yml          # Main workflow: all test tiers, PR gate
-  build-openms-dll.yml     # OpenMS DLL build (C++ changes only)
+  build-openms-dll.yml     # OpenMS DLL build (C++ changes only; not needed while DLLs are committed in FlashIDA/dll/)
 ```
 
 ### `flashida-ci.yml` Jobs
@@ -130,12 +98,12 @@ cpp-unit-tests  (ubuntu-latest)       windows-tests  (windows-latest)
 - Active starting Phase 2 (first C++ tests); disabled with `if: false` in Phase 0.
 
 **`windows-tests`** (Tiers 1–4, windows-latest):
-- Restores Thermo DLLs from secret; restores or downloads OpenMS DLLs.
-- Builds solution via MSBuild; copies DLLs to build output.
-- Runs NUnit tests (`nunit3-console Flash.Tests.dll`) — covers Tier 1 (unit) and Tier 2 (integration/bridge) tests.
+- Restores Thermo DLLs from secret. OpenMS DLLs are already committed in `FlashIDA/dll/` (no download needed).
+- Builds solution via MSBuild; copies DLLs to build output (`FlashIDA/bin/`).
+- Runs NUnit tests by full path from the NuGet packages directory (e.g., `packages\NUnit.ConsoleRunner.3.x.x\tools\nunit3-console.exe`), with working directory set to `FlashIDA/bin/` so that native DLLs are found by the .NET runtime. Uses `--where "class =~ ..."` filter (not `--where "cat == ..."`) for bridge test selection. Covers Tier 1 (unit) and Tier 2 (integration/bridge) tests.
 - Verifies bridge smoke tests passed (inline result check, `if: always()`).
 - In Phase 3+: runs `dumpbin /exports` verification of `OpenMS.dll`.
-- Runs regression suite (`regression-runner.ps1`): executes `Flash.exe -t` for each config, compares output to golden files via `compare_golden.py`.
+- Runs regression suite (`regression-runner.ps1`): executes `Flash.exe <input_file> <output_file> <method.xml>` for each config, compares output to golden files via `compare_golden.py`.
 - Runs stress tests (conditional step, activated in Phase 3): reduced iterations (1k ProcessScan calls, 50 FAIMS events) to stay within the 10-minute budget.
 - Uploads regression output and NUnit results as artifacts.
 
@@ -180,7 +148,7 @@ This procedure applies to every phase that introduces a new golden file. The pro
 
 **Standard procedure:**
 
-1. **Commit test data, configs, and code — but not the golden file.** The CI `windows-tests` job always runs `Flash.exe -t` and uploads the output regardless of whether a golden file exists yet.
+1. **Commit test data, configs, and code — but not the golden file.** The CI `windows-tests` job always runs `Flash.exe <input_file> <output_file> <method.xml>` and uploads the output regardless of whether a golden file exists yet.
 
 2. **Push.** CI runs on `windows-latest`. The `windows-tests` job produces a `golden-capture` artifact containing the raw TSV output(s). (The regression step may fail on this first push if comparing against a non-existent golden file — that is expected and acceptable.)
 
@@ -195,6 +163,8 @@ This procedure applies to every phase that introduces a new golden file. The pro
 5. **Commit.** Copy the reviewed file(s) to `FlashIDA/test-data/golden/<name>.tsv` and commit.
 
 6. **Push again.** On this second push, `compare_golden.py` finds the committed golden file and the regression step passes.
+
+> **CI budget note (Phase 0 lesson #15):** Golden-file capture requires a minimum of 2 commits (one to produce the artifact, one to commit it). Phases with multiple golden files should batch captures into a single CI run to minimize round-trips.
 
 **What to document per golden file (in the PR description or in `golden/README.md`):**
 - Source `.mzML` file name and scan number used to produce the input spectrum.
@@ -220,6 +190,11 @@ Phases within the same build batch (e.g., Phases 1 + 2 + 3 in Build #1) can be d
 - All branches in the batch must share the same OpenMS submodule commit — the one that will be built by `build-openms-dll.yml` for that batch.
 - C++ changes from multiple phases must be combined into the submodule before triggering the build. Coordinate C++ commits on `flashida-v9-bridge` before opening individual PRs.
 - The final merge into `flashida-v9-migration` should happen after all phases in the batch pass CI individually. Merge in phase order (Phase 1 → 2 → 3) to keep the history clean.
+
+### Submodule Churn and CI Round-Trips (Phase 0 lesson #15)
+
+- **Submodule pointer updates** accounted for ~48% of Phase 0 commits (13 of 27). Batch same-side changes (all C# changes together, or all C++ changes together) before updating the submodule pointer to reduce churn.
+- **Thermo interface mocking** required 9 iterative commits in Phase 0 due to undocumented proprietary interfaces. Budget 2-3 extra CI round-trips per phase that touches Thermo interfaces.
 
 ### Merge Policy
 
@@ -249,13 +224,13 @@ No tag for Phase 0 or Phase 5 (no C++ build, no external release needed).
 
 ```
 FlashIDA/test-data/
-  spectra/          # Input spectra for Flash.exe -t (committed)
+  spectra/          # Input spectra for Flash.exe test mode (committed)
   configs/          # Method XML configs for test runs (committed)
   golden/           # Reference output files for regression (committed)
     README.md       # Provenance, update procedure, review expectations
 FlashIDA/test-scripts/
   compare_golden.py         # TSV comparison with numeric tolerance
-  regression-runner.ps1     # Orchestrates Flash.exe -t + comparison
+  regression-runner.ps1     # Orchestrates Flash.exe + comparison
   prepare-test-data.py      # Extracts scans from .mzML files
 ```
 
@@ -269,7 +244,7 @@ Spectrum files in `spectra/` must contain real measured isotope patterns from ac
 python prepare-test-data.py <source.mzML> FlashIDA/test-data/spectra/<output_name>.txt
 ```
 
-The script takes a source `.mzML` file and an output path. Extracted scans are tab-delimited (m/z, intensity) pairs with a `Spec scan=N rt=R.RRRR` header line. The developer specifies which scans to extract based on the data requirements documented in each phase plan.
+The script takes a source `.mzML` file and an output path. Extracted scans are tab-delimited (m/z, intensity) pairs with a tab-separated header line (`Spec scan=N\t<rt_seconds>`), where RT is a bare numeric value in seconds. The developer specifies which scans to extract based on the data requirements documented in each phase plan.
 
 ### Spectrum File Requirements (per phase)
 

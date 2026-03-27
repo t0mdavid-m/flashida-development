@@ -59,9 +59,13 @@ See **Section 3.3** for detailed instructions on obtaining and configuring these
 
 ### 0.5 OpenMS DLL Procurement
 
-The C# tests and regression suite require pre-built OpenMS DLLs (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`). Two options:
+The C# tests and regression suite require pre-built OpenMS DLLs (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`).
 
-1. **From CI (preferred):** Download the latest artifact from the `build-openms-dll.yml` workflow run. Place all DLLs in `FlashIDA/dll/`.
+> **Phase 0 lesson #5:** These DLLs are already committed in `FlashIDA/dll/`. MSBuild copies them to `FlashIDA/bin/` via `CopyToOutputDirectory`. No download or build step is needed unless the OpenMS submodule is advanced.
+
+If DLLs need to be updated:
+
+1. **From CI:** Download the latest artifact from the `build-openms-dll.yml` workflow run. Place all DLLs in `FlashIDA/dll/`.
 
 2. **Local build (slow, 30-60 min):** Follow the build instructions in `OpenMS/CLAUDE.md`. Copy output DLLs to `FlashIDA/dll/`.
 
@@ -88,11 +92,13 @@ Verify that `Flash.exe` is produced in the output directory.
 Run the smoke test to verify the full toolchain:
 
 ```powershell
-# Unit tests
-nunit3-console FlashIDA/src/Flash.Tests/bin/Debug/Flash.Tests.dll
+# Unit tests (run from FlashIDA/bin/ so native DLLs are found)
+# NUnit runner is invoked by full path from NuGet packages directory
+cd FlashIDA/bin
+..\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll
 
 # Regression test (test mode)
-FlashIDA/src/Flash/bin/Debug/Flash.exe -t test-data/spectra/ms1_standard.txt output.tsv test-data/configs/method_default.xml
+FlashIDA/bin/Flash.exe test-data/spectra/ms1_standard.txt output.tsv test-data/configs/method_default.xml
 ```
 
 ### 0.9 CI-Specific Setup
@@ -101,8 +107,9 @@ FlashIDA/src/Flash/bin/Debug/Flash.exe -t test-data/spectra/ms1_standard.txt out
 
 | Secret Name | Purpose | See Section |
 |-------------|---------|-------------|
-| `THERMO_IAPI_DLLS_BASE64` | Base64-encoded Thermo iAPI DLLs (Strategy A) | 3.3 |
-| `THERMO_DLL_PASSPHRASE` | Decryption passphrase for encrypted DLL blob (Strategy B) | 3.3 |
+| `THERMO_DLL_PASSPHRASE` | Decryption passphrase for openssl-encrypted DLL archive (Strategy B) | 3.3 |
+
+> **Note (Phase 0 lesson #3):** Strategy A (base64 secret via `THERMO_IAPI_DLLS_BASE64`) is not viable — the 5 Thermo DLLs compress to 75 KB, and base64 encoding produces 101 KB, exceeding GitHub's 48 KB per-secret limit. Strategy B (openssl-encrypted archive committed at `FlashIDA/dependencies/thermo-dlls.zip.enc`) is the chosen strategy.
 
 **Runner requirements:**
 
@@ -111,8 +118,8 @@ FlashIDA/src/Flash/bin/Debug/Flash.exe -t test-data/spectra/ms1_standard.txt out
 
 **First-run checklist:**
 
-1. Ensure secrets are configured in repository settings
-2. Trigger `build-openms-dll.yml` manually to create the initial DLL artifact
+1. Ensure `THERMO_DLL_PASSPHRASE` secret is configured in repository settings
+2. Verify OpenMS DLLs are committed in `FlashIDA/dll/` (no build needed unless submodule is advanced)
 3. Trigger `flashida-ci.yml` and verify all jobs pass
 4. Verify golden file comparison produces `PASS` output
 
@@ -123,8 +130,8 @@ FlashIDA/src/Flash/bin/Debug/Flash.exe -t test-data/spectra/ms1_standard.txt out
 FLASHIda operates at the intersection of two codebases (C# and C++), has no instrument hardware in CI, and has zero existing automated tests. The strategy therefore focuses on:
 
 - **Test what can be tested offline.** Every piece of logic that does not require `IFusionInstrumentAccess` is testable. This includes all deconvolution, scoring, configuration parsing, struct marshaling, queue behavior, and mode routing.
-- **Golden-file regression is the safety net.** `Flash.exe -t` already exists as an offline deconvolution harness. Its output, captured to files, becomes the regression baseline that gates every PR.
-- **C++ tests are gated by pre-built artifacts.** Building OpenMS from source takes 30-60 minutes on a beefy runner. CI uses cached DLL artifacts from `build_dlls.yml` for the C# test tier, and only rebuilds OpenMS when C++ source changes.
+- **Golden-file regression is the safety net.** `Flash.exe` in test mode (positional args, no `-t` flag — see Section 6.1) already exists as an offline deconvolution harness. Its output, captured to files, becomes the regression baseline that gates every PR.
+- **C++ tests are gated by pre-built artifacts.** Building OpenMS from source takes 30-60 minutes on a beefy runner. Pre-built DLLs are committed in `FlashIDA/dll/` (Phase 0 lesson #5); when the OpenMS submodule is advanced, `build_dlls.yml` rebuilds them.
 - **Bridge correctness is paramount.** The P/Invoke boundary is the single most fragile surface. It gets its own dedicated test binary and validation suite.
 - **Every phase adds tests; no phase removes them.** The test suite is purely additive. Phase N's tests become Phase N+1's regression suite.
 - **All tests run on every commit.** There is no nightly-only tier. Every push triggers the full test suite. Stress tests use reduced iteration counts to stay within time budgets.
@@ -144,7 +151,7 @@ FLASHIda operates at the intersection of two codebases (C# and C++), has no inst
 
 ### Tier 2: Integration Tests (every PR, < 15 min)
 
-**What:** Tests that exercise the cross-project bridge. A C# test process loads `OpenMS.dll` and calls bridge functions with known inputs, validating outputs.
+**What:** Tests that exercise the cross-project bridge. A C# test process loads `OpenMS.dll` and calls bridge functions with known inputs, validating outputs. Any test that loads a native DLL (including acquisition-loop continuity tests) belongs in Tier 2, not Tier 1.
 
 - Struct marshaling round-trips (C# writes `ScanCommand` -> C++ reads, C++ writes -> C# reads).
 - `CreateFLASHIda` with JSON config -> verify initialization did not crash.
@@ -152,11 +159,13 @@ FLASHIda operates at the intersection of two codebases (C# and C++), has no inst
 - `GetNextScanCommand` -> verify struct fields match expectations.
 - DLL export symbol verification (`dumpbin /exports` on Windows).
 
+> **Phase 0 lesson (silent P/Invoke failures):** Bridge functions return 0 for malformed input with no error code or exception. Tests must not assume that a 0 return value means "no results found" -- it may mean the input data was silently rejected. When deconvolution returns 0 results unexpectedly, log input data characteristics (RT, peak count, first/last m/z) before investigating engine internals.
+
 **When:** On every push to any PR branch. Runs on `windows-latest` (requires Windows for .NET 4.8 + MSVC DLL).
 
 ### Tier 3: Regression Tests (every PR, < 20 min)
 
-**What:** Golden-file comparison using `Flash.exe -t`. Captures full deconvolution output for a set of reference spectra and compares against checked-in golden files.
+**What:** Golden-file comparison using `Flash.exe` in test mode (positional args: `<input> <output> <method.xml> [ms2_file]`, no `-t` flag). Captures full deconvolution output for a set of reference spectra and compares against checked-in golden files.
 
 - Standard DDA mode with default `method.xml`.
 - Each acquisition mode variant (deep, inclusion, exclusion, tag targeting, etc.) with mode-specific method configs and test data.
@@ -194,7 +203,7 @@ FLASHIda operates at the intersection of two codebases (C# and C++), has no inst
 
 CI triggers include these branches alongside `main` and `develop`.
 
-**`flashida-ci.yml`** is the PR gate. It has four jobs covering all tiers:
+**`flashida-ci.yml`** is the PR gate. It has two jobs covering all tiers:
 
 ```yaml
 name: flashida-ci
@@ -207,52 +216,48 @@ on:
 jobs:
   cpp-unit-tests:
     runs-on: ubuntu-latest          # C++ unit tests only, no Windows needed
-    if: # only when C++ files changed
+    if: # only when C++ files changed (if: false in Phase 0)
     steps: [checkout, restore-cmake-cache, build-tests-only, ctest -R FLASH]
 
-  csharp-tests:
+  windows-tests:
     runs-on: windows-latest         # .NET 4.8 + OpenMS.dll
     steps:
       - checkout
-      - download-openms-dll-artifact   # from build-openms-dll.yml or cache
       - setup-msbuild
       - build Flash.Tests.csproj
-      - run nunit3-console Flash.Tests.dll
-      - run Flash.exe -t (regression)
+      # NUnit runner: invoke by full path from NuGet packages dir
+      # Working directory: FlashIDA/bin/ (native DLLs must be on search path)
+      # Filter: use --where "class =~ ..." (not @categories)
+      - run nunit3-console Flash.Tests.dll  # Tiers 1+2 (unit + bridge)
+      - verify bridge smoke tests passed (if: always())
+      - run dumpbin /exports validation (Phase 3+)
+      - run Flash.exe <input> <output> <method.xml> (regression, no -t flag)
       - compare golden files
-
-  bridge-tests:
-    runs-on: windows-latest
-    needs: [csharp-tests]           # reuses build artifacts
-    steps:
-      - run bridge test binary
-      - run dumpbin /exports validation
-
-  stress-tests:
-    runs-on: windows-latest
-    needs: [csharp-tests]           # reuses build artifacts
-    steps:
-      - run stress test suite (reduced iterations: 1k ProcessScan, 50 FAIMS events)
-      - run thread safety validation
+      - run stress test suite (Phase 3+, reduced: 1k ProcessScan, 50 FAIMS events)
+      - upload artifacts (regression output + NUnit results)
 ```
+
+> **Note:** The original design specified 4 separate jobs (`csharp-tests`, `bridge-tests`, `stress-tests` + `cpp-unit-tests`). The actual implementation consolidates all Windows-side testing into a single `windows-tests` job with sequential steps, which avoids cross-job artifact transfers and is simpler to maintain. See `environment-and-workflows.md` Section 3 for the authoritative CI description.
 
 ### 3.2 Handling the C++ Build
 
 The OpenMS build is extremely expensive. The strategy:
 
+> **Phase 0 lesson #5:** Pre-built Windows DLLs (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`) are already committed in `FlashIDA/dll/`. MSBuild copies these to `FlashIDA/bin/` via `CopyToOutputDirectory` in `Flash.csproj`. **No cache or cross-workflow download step is needed in CI.** The cache/download steps below should only be reintroduced when the OpenMS submodule is advanced and DLLs need rebuilding.
+
 1. **`build-openms-dll.yml`** already exists on the `FIdevelop` branch (see `OpenMS/.github/workflows/build_dlls.yml`). It builds on `windows-2022`, produces `OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll` as artifacts.
 
-2. **Artifact caching:** The `flashida-ci.yml` workflow downloads the latest DLL artifact from `build-openms-dll.yml` using `actions/download-artifact` (cross-workflow) or a GitHub release asset. DLLs are cached with a key derived from the OpenMS submodule commit hash:
+2. **(Not currently active)** **Artifact caching:** When DLLs need rebuilding, the `flashida-ci.yml` workflow downloads the latest DLL artifact from `build-openms-dll.yml` using `actions/download-artifact` (cross-workflow) or a GitHub release asset. DLLs are cached with a key derived from the OpenMS submodule commit hash:
 
    ```bash
    git -C OpenMS rev-parse HEAD
    ```
 
-3. **Conditional rebuild:** The CI workflow checks the submodule commit hash against the cached artifact key. If the hash matches, it skips the C++ build entirely and uses cached DLLs. If the hash differs, a rebuild is triggered.
+3. **(Not currently active)** **Conditional rebuild:** The CI workflow checks the submodule commit hash against the cached artifact key. If the hash matches, it skips the C++ build entirely and uses cached DLLs. If the hash differs, a rebuild is triggered.
 
 4. **C++ unit tests** are built separately — they only compile the test binaries, not the full OpenMS library. This is faster (~10 min vs 30-60 min) when using ccache from the existing workflow.
 
-**Cache key implementation:**
+**Cache key implementation (for future use when DLLs need rebuilding):**
 
 ```yaml
 - name: Get OpenMS submodule commit hash
@@ -281,7 +286,9 @@ The OpenMS build is extremely expensive. The strategy:
 
 Thermo iAPI DLLs (`API-2.0.dll`, `Fusion.API-1.0.dll`, etc.) are proprietary and cannot be committed to the repository in plaintext. Two strategies are available depending on the total DLL size.
 
-#### Strategy A: Base64 Secrets (for DLLs < 32 KB each)
+#### Strategy A: Base64 Secrets (for DLLs < 32 KB each) -- NOT VIABLE
+
+> **Not viable for FLASHIda.** The Thermo DLLs compress to 75 KB; base64 encoding produces 101 KB, exceeding GitHub's 48 KB per-secret limit. Use Strategy B instead.
 
 Suitable when individual DLL files are small enough to fit within GitHub's secret size limit.
 
@@ -319,26 +326,18 @@ Add each base64 string as a GitHub repository secret. For a single combined secr
     Get-ChildItem "FlashIDA\dependencies\*.dll" | ForEach-Object { Write-Host "  $_" }
 ```
 
-#### Strategy B: Encrypted Blob (for larger DLLs)
+#### Strategy B: Encrypted Blob (for larger DLLs) -- CHOSEN STRATEGY
 
 Suitable when DLLs exceed the GitHub secrets size limit. The encrypted archive is committed to the repository; only the passphrase is a secret.
 
-**One-time setup:**
+> **Phase 0 lesson #3:** The actual implementation uses `openssl enc -aes-256-cbc -pbkdf2` (not 7z or GPG). GPG failed on Windows CI runners due to digest algorithm incompatibility. The encrypted archive is committed at `FlashIDA/dependencies/thermo-dlls.zip.enc`. See `environment-and-workflows.md` Section 2 for the authoritative one-time setup and CI step.
 
-```powershell
-# Create AES-256 encrypted 7z archive of all proprietary DLLs
-# Requires 7-Zip installed (available on all GitHub Actions Windows runners)
-$passphrase = [System.Guid]::NewGuid().ToString()  # Generate strong passphrase
-Write-Host "Passphrase (add as THERMO_DLL_PASSPHRASE secret): $passphrase"
+**One-time setup (openssl):**
 
-7z a -p"$passphrase" -mhe=on -t7z `
-    "FlashIDA\dependencies\thermo-iapi-encrypted.7z" `
-    "FlashIDA\dependencies\API-2.0.dll" `
-    "FlashIDA\dependencies\Fusion.API-1.0.dll"
-    # Add all required DLLs
-
-Write-Host "Encrypted archive created. Commit thermo-iapi-encrypted.7z to the repo."
-Write-Host "Add passphrase as GitHub secret THERMO_DLL_PASSPHRASE"
+```bash
+# Encrypt the Thermo DLL zip with openssl (cross-platform)
+openssl enc -aes-256-cbc -pbkdf2 -in thermo-dlls.zip -out FlashIDA/dependencies/thermo-dlls.zip.enc
+# Store the passphrase as GitHub secret THERMO_DLL_PASSPHRASE
 ```
 
 **CI workflow step:**
@@ -349,9 +348,9 @@ Write-Host "Add passphrase as GitHub secret THERMO_DLL_PASSPHRASE"
   env:
     THERMO_PASSPHRASE: ${{ secrets.THERMO_DLL_PASSPHRASE }}
   run: |
-    7z x "FlashIDA\dependencies\thermo-iapi-encrypted.7z" `
-      -p"$env:THERMO_PASSPHRASE" `
-      -o"FlashIDA\dependencies" -aoa
+    openssl enc -d -aes-256-cbc -pbkdf2 -in FlashIDA\dependencies\thermo-dlls.zip.enc -out thermo-dlls.zip -pass pass:$env:THERMO_PASSPHRASE
+    Expand-Archive -Path thermo-dlls.zip -DestinationPath FlashIDA\dependencies -Force
+    Remove-Item thermo-dlls.zip
     Write-Host "Decrypted Thermo DLLs:"
     Get-ChildItem "FlashIDA\dependencies\*.dll" | ForEach-Object { Write-Host "  $_" }
 ```
@@ -374,7 +373,7 @@ Get-ChildItem FlashIDA\dependencies\*.dll | Select-Object Name
 #### Security Notes
 
 - GitHub Actions automatically redacts secret values from log output. Do not echo secrets directly.
-- The encrypted 7z archive (Strategy B) uses AES-256 with header encryption (`-mhe=on`), so file names inside the archive are also encrypted.
+- The encrypted archive (Strategy B) uses openssl AES-256-CBC with PBKDF2 key derivation. (The original 7z approach was replaced by openssl for cross-platform compatibility; see Phase 0 lesson #3.)
 - Onboard new developers by sharing the DLLs via a secure channel (encrypted email, shared drive with access control, or direct transfer). Never share via unencrypted channels.
 - `.gitignore` should contain `FlashIDA/dependencies/*.dll` to prevent accidental commits of plaintext DLLs.
 
@@ -406,6 +405,10 @@ FlashIDA/src/Flash.Tests/
 
 The test project targets .NET Framework 4.8 and uses NUnit 3 as the test framework. It references the main `Flash.csproj` and adds `nunit3-console` for CLI execution in CI.
 
+> **Phase 0 lesson (NUnit diagnostics):** `Console.WriteLine()` output appears in the `<output>` element of the NUnit XML results and is visible in CI artifacts. `TestContext.Error.WriteLine()` does **not** appear in XML results. Use `Console.WriteLine()` for diagnostic output that must survive CI.
+
+> **Phase 0 lesson (OneTimeSetUp failures):** When a `[OneTimeSetUp]` method fails (including `Assume.That` failures), ALL tests in the fixture are marked inconclusive with `site="Parent"` -- even tests that do not depend on the setup state. Diagnostic or independent tests must go in their own `[TestFixture]` class, never in a fixture with a `[OneTimeSetUp]` that may fail.
+
 ### 3.5 Test Data Management
 
 Test data lives in a dedicated directory:
@@ -414,7 +417,7 @@ Test data lives in a dedicated directory:
 FlashIDA/test-data/
   spectra/
     ms1_smoke_test.txt        # Minimal spectrum for Phase 0 smoke test
-    ms1_standard.txt          # Tab-delimited mz/intensity, used by Flash.exe -t
+    ms1_standard.txt          # Tab-delimited mz/intensity, used by Flash.exe test mode
     ms2_hcd_fragment.txt      # MS2 spectrum for tag-based targeting test
   configs/
     method_default.xml        # Standard DDA
@@ -441,7 +444,7 @@ FlashIDA/test-data/
     config_full.json          # Expected JSON from method_json_roundtrip.xml
 ```
 
-Golden files are committed to the repository. When an intentional behavioral change occurs, the developer runs `Flash.exe -t` locally with each config, inspects the diff, and commits updated golden files alongside the code change. The PR review process verifies that golden file changes are intentional.
+Golden files are committed to the repository. When an intentional behavioral change occurs, the developer runs `Flash.exe` locally with each config, inspects the diff, and commits updated golden files alongside the code change. The PR review process verifies that golden file changes are intentional.
 
 ---
 
@@ -457,11 +460,11 @@ Golden files are committed to the repository. When an intentional behavioral cha
 |---------|------|-------------|------------------|
 | P0-U01 | 1 (C#) | `Flash.sln` compiles without error | MSBuild exit code 0, no errors in output |
 | P0-U02 | 1 (C#) | `Flash.exe` exists in build output | File exists at expected path after build |
-| P0-U03 | 3 | `Flash.exe -t` runs with minimal spectrum, exits cleanly | Process exit code 0, no unhandled exceptions |
-| P0-U04 | 3 | `Flash.exe -t` output is non-empty valid TSV | Output file has header row + at least 1 data row, all columns present |
+| P0-U03 | 3 | `Flash.exe` test mode runs with minimal spectrum, exits cleanly | Process exit code 0, no unhandled exceptions |
+| P0-U04 | 3 | `Flash.exe` test mode output is non-empty valid TSV | Output file has header row + at least 1 data row, all columns present |
 | P0-I01 | 2 | `CreateFLASHIda()` does not crash | Bridge call returns non-null pointer, no access violation |
 | P0-I02 | 2 | `DisposeFLASHIda()` does not crash | Bridge call completes without exception after `CreateFLASHIda()` |
-| P0-R01 | 3 | Golden file captured as `baseline_phase0.tsv` | `Flash.exe -t` output saved; this becomes the regression baseline for Phase 1 |
+| P0-R01 | 3 | Golden file captured as `baseline_phase0.tsv` | `Flash.exe` test mode output saved; this becomes the regression baseline for Phase 1 |
 
 **Files created:**
 
@@ -470,7 +473,7 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | `Flash.Tests.csproj` | NUnit test project, references Flash.csproj |
 | `SmokeTests.cs` | P0-U01 through P0-U04 |
 | `BridgeSmokeTests.cs` | P0-I01, P0-I02 |
-| `ms1_smoke_test.txt` | Minimal spectrum (5-10 peaks with a recognizable charge envelope) |
+| `ms1_smoke_test.txt` | Multi-scan MS1 spectrum (2 scans; ~6,588 + ~21 peaks) from main elution region |
 | `baseline_phase0.tsv` | Captured output, committed as first golden file |
 | `golden/README.md` | Documents golden file provenance, how to update, and review expectations |
 
@@ -496,13 +499,13 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P1-I01 | 2 | `CreateFLASHIda(jsonString)` does not crash | C++ constructor returns non-null `FLASHIda*` |
 | P1-I02 | 2 | `CreateFLASHIda(legacyString)` still works | Legacy format auto-detected, returns non-null |
 | P1-I03 | 2 | JSON config values reach C++ internal state | After `CreateFLASHIda(json)`, call a diagnostic bridge function that returns parsed config values (e.g., min_charge, max_charge) and verify match |
-| P1-R01 | 3 | `Flash.exe -t` with JSON config path | Output matches `baseline_phase0.tsv` golden file |
-| P1-R02 | 3 | `Flash.exe -t` with legacy config (regression) | Output matches `baseline_phase0.tsv` — auto-detect fallback works |
+| P1-R01 | 3 | `Flash.exe` test mode with JSON config path | Output matches `baseline_phase0.tsv` golden file |
+| P1-R02 | 3 | `Flash.exe` test mode with legacy config (regression) | Output matches `baseline_phase0.tsv` — auto-detect fallback works |
 
 **Regression from Phase 0:** All P0-* tests must pass.
 
 **Working Product Verification automation:**
-- WPV-1 ("Flash.exe -t runs with JSON config"): Automated by P1-R01.
+- WPV-1 ("Flash.exe test mode runs with JSON config"): Automated by P1-R01.
 - WPV-2 ("Round-trip method.xml -> ToJSON() -> C++ parse"): Automated by P1-I03.
 - WPV-3 ("Legacy format still works"): Automated by P1-R02.
 
@@ -519,12 +522,12 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P2-U03 | 1 (C++) | Metadata fields have correct defaults | `group_id == 0`, `variant_index == -1`, `fragmentation_quality_score == -1`, etc. |
 | P2-U04 | 1 (C++) | `toSpectrum()` serializes metadata via `setMetaValue()` | Create spectrum with metadata, call `toSpectrum()`, verify `getMetaValue("optimization_group_id")` returns correct value |
 | P2-U05 | 1 (C++) | `toSpectrum()` without metadata does not set metavalues | Verify `getMetaValue` throws or returns empty for optimization keys |
-| P2-R01 | 3 | `Flash.exe -t` unchanged behavior | Output matches Phase 0/1 golden files exactly (no metadata populated yet) |
+| P2-R01 | 3 | `Flash.exe` test mode unchanged behavior | Output matches Phase 0/1 golden files exactly (no metadata populated yet) |
 
 **Regression from Phases 0-1:** All P0-* and P1-* tests must pass.
 
 **Working Product Verification automation:**
-- WPV-1 ("Flash.exe -t runs"): Automated by P2-R01.
+- WPV-1 ("Flash.exe test mode runs"): Automated by P2-R01.
 - WPV-2 ("OpenMS unit test for metadata"): Automated by P2-U01 through P2-U05.
 - WPV-3 ("hasOptimizationMetadata() returns false"): Automated by P2-U01.
 
@@ -551,12 +554,12 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P3-I03 | 2 | `GetNextScanCommand` returns valid struct | Call `GetNextScanCommand`, verify returned `ScanCommand` has `msn_level == 1` |
 | P3-I04 | 2 | `GetNextTrackingId` returns incrementing values | Call 100 times, verify monotonically increasing |
 | P3-I05 | 2 | DLL exports include new functions | `dumpbin /exports OpenMS.dll` contains `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` |
-| P3-R01 | 3 | `Flash.exe -t` with shadow validation | Output matches Phase 2 golden files; TRACK log entries present in console output |
+| P3-R01 | 3 | `Flash.exe` with shadow validation | Output matches Phase 2 golden files; TRACK log entries present in console output |
 
 **Regression from Phases 0-2:** All P0-* through P2-* tests must pass.
 
 **Working Product Verification automation:**
-- WPV-1 ("Flash.exe -t runs, behavior unchanged"): Automated by P3-R01.
+- WPV-1 ("Flash.exe test mode runs, behavior unchanged"): Automated by P3-R01.
 - WPV-2 ("ScanCommand marshaling"): Automated by P3-I01.
 - WPV-3 ("GetNextScanCommand returns MS1"): Automated by P3-U07, P3-I03.
 - WPV-4 ("Tracking ID uniqueness"): Automated by P3-U06.
@@ -580,16 +583,16 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P4-U09 | 1 (C++) | TRACK audit trail completeness | Feed 10 MS1 + 10 MS2 scans, verify every pushed command has TRACK-CREATE, every resolved scan has TRACK-RESOLVE |
 | P4-I01 | 2 | Feature flag `UseUnifiedBridge=False` -> old behavior | Regression: identical output to Phase 3 |
 | P4-I02 | 2 | Feature flag `UseUnifiedBridge=True` -> new behavior | Standard DDA output matches old behavior (same scan commands, same deconv results) |
-| P4-R01 | 3 | Regression: `UseUnifiedBridge=False` | `Flash.exe -t` output matches Phase 3 golden files |
-| P4-R02 | 3 | Standard DDA: `UseUnifiedBridge=True` | `Flash.exe -t` with `method_default.xml` + unified bridge, compare to `phase4_standard_dda.tsv` |
-| P4-R03 | 3 | Deep mode: `UseUnifiedBridge=True` | `Flash.exe -t` with `method_deep.xml`, compare to `phase4_deep_mode.tsv` |
-| P4-R04 | 3 | Inclusion list mode | `Flash.exe -t` with `method_inclusion.xml`, compare to golden |
-| P4-R05 | 3 | Exclusion list mode | `Flash.exe -t` with `method_exclusion.xml`, compare to golden |
-| P4-R06 | 3 | Tag-based targeting mode | `Flash.exe -t` with `method_tag_targeting.xml`, compare to golden |
-| P4-R07 | 3 | Isobaric quant mode | `Flash.exe -t` with `method_quant.xml`, compare to golden |
-| P4-R08 | 3 | MS3 mode 1 (fragment matching) | `Flash.exe -t` with `method_ms3_mode1.xml`, compare to golden |
-| P4-R09 | 3 | MS3 mode 2 | `Flash.exe -t` with `method_ms3_mode2.xml`, compare to golden |
-| P4-R10 | 3 | MS3 mode 3 | `Flash.exe -t` with `method_ms3_mode3.xml`, compare to golden |
+| P4-R01 | 3 | Regression: `UseUnifiedBridge=False` | `Flash.exe` output matches Phase 3 golden files |
+| P4-R02 | 3 | Standard DDA: `UseUnifiedBridge=True` | `Flash.exe` with `method_default.xml` + unified bridge, compare to `phase4_standard_dda.tsv` |
+| P4-R03 | 3 | Deep mode: `UseUnifiedBridge=True` | `Flash.exe` with `method_deep.xml`, compare to `phase4_deep_mode.tsv` |
+| P4-R04 | 3 | Inclusion list mode | `Flash.exe` with `method_inclusion.xml`, compare to golden |
+| P4-R05 | 3 | Exclusion list mode | `Flash.exe` with `method_exclusion.xml`, compare to golden |
+| P4-R06 | 3 | Tag-based targeting mode | `Flash.exe` with `method_tag_targeting.xml`, compare to golden |
+| P4-R07 | 3 | Isobaric quant mode | `Flash.exe` with `method_quant.xml`, compare to golden |
+| P4-R08 | 3 | MS3 mode 1 (fragment matching) | `Flash.exe` with `method_ms3_mode1.xml`, compare to golden |
+| P4-R09 | 3 | MS3 mode 2 | `Flash.exe` with `method_ms3_mode2.xml`, compare to golden |
+| P4-R10 | 3 | MS3 mode 3 | `Flash.exe` with `method_ms3_mode3.xml`, compare to golden |
 
 **Regression from Phases 0-3:** All P0-* through P3-* tests must pass.
 
@@ -612,8 +615,8 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P5-U02 | 1 (C#) | `IScanProcessor` interface has only `void ProcessMS(IMsScan)` | Reflection: interface has exactly 1 method with correct signature |
 | P5-U03 | 1 (C#) | No code references `QuantScanProcessor` | Compile succeeds after deletion; grep for `QuantScanProcessor` in `*.cs` returns zero hits |
 | P5-U04 | 1 (C#) | `DataPipe` propagates completion correctly | Unit test: push 5 items, complete, verify ActionBlock processed all 5 |
-| P5-R01 | 3 | All modes produce identical output to Phase 4 | `Flash.exe -t` with every mode config, compare to Phase 4 golden files |
-| P5-R02 | 3 | FAIMS mode still works (ScanScheduler still active) | `Flash.exe -t` with `method_faims_3cv.xml`, compare to golden |
+| P5-R01 | 3 | All modes produce identical output to Phase 4 | `Flash.exe` with every mode config, compare to Phase 4 golden files |
+| P5-R02 | 3 | FAIMS mode still works (ScanScheduler still active) | `Flash.exe` with `method_faims_3cv.xml`, compare to golden |
 
 **Regression from Phases 0-4:** All P0-* through P4-* tests must pass.
 
@@ -640,9 +643,9 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P6-U07 | 1 (C#) | No code references `ScanScheduler` after deletion | Grep returns zero hits (excluding test files and git history) |
 | P6-U08 | 1 (C#) | No code references `FAIMSScanProcessor` after deletion | Grep returns zero hits |
 | P6-I01 | 2 | FAIMS CV cycling through bridge | C# calls ProcessScan + GetNextScanCommand in loop, verify CV values cycle correctly |
-| P6-R01 | 3 | Non-FAIMS regression | `Flash.exe -t` with `method_default.xml`, compare to Phase 5 golden files |
-| P6-R02 | 3 | FAIMS 3-CV cycling | `Flash.exe -t` with `method_faims_3cv.xml`, compare CV transition log to golden |
-| P6-R03 | 3 | FAIMS adaptive skipping | `Flash.exe -t` with `method_faims_skip.xml`, verify skip behavior in log output |
+| P6-R01 | 3 | Non-FAIMS regression | `Flash.exe` with `method_default.xml`, compare to Phase 5 golden files |
+| P6-R02 | 3 | FAIMS 3-CV cycling | `Flash.exe` with `method_faims_3cv.xml`, compare CV transition log to golden |
+| P6-R03 | 3 | FAIMS adaptive skipping | `Flash.exe` with `method_faims_skip.xml`, verify skip behavior in log output |
 | P6-S01 | 4 | Stress: rapid scan events during CV transition | 50 rapid ProcessScan calls across 3 CVs, verify no mutex deadlock, no data corruption |
 
 **Regression from Phases 0-5:** All P0-* through P5-* tests must pass.
@@ -673,8 +676,8 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P7-U08 | 1 (C++) | Recursive depth limit | Set MaxExplorationDepth=2, attempt depth-3 exploration, verify blocked |
 | P7-U09 | 1 (C++) | OptimizationMetadata populated on exploration spectra | Complete exploration variant, verify metadata fields (group_id, variant_index, collision_energy, etc.) |
 | P7-U10 | 1 (C++) | Metadata serialized to MSSpectrum via setMetaValue | Complete exploration, call toSpectrum(), verify metavalues present |
-| P7-R01 | 3 | Exploration disabled regression | `Flash.exe -t` with `method_default.xml` (exploration off), compare to Phase 6 golden |
-| P7-R02 | 3 | Exploration enabled | `Flash.exe -t` with `method_exploration.xml`, verify variant scans in output |
+| P7-R01 | 3 | Exploration disabled regression | `Flash.exe` with `method_default.xml` (exploration off), compare to Phase 6 golden |
+| P7-R02 | 3 | Exploration enabled | `Flash.exe` with `method_exploration.xml`, verify variant scans in output |
 
 **Regression from Phases 0-6:** All P0-* through P6-* tests must pass.
 
@@ -701,12 +704,12 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P8-U04 | 1 (C++) | Legacy config parsing removed | Attempt `CreateFLASHIda("not json")`, verify it fails or returns null (no legacy fallback) |
 | P8-I01 | 2 | DLL exports: exactly 5 bridge functions | `dumpbin /exports OpenMS.dll \| grep -c` for `CreateFLASHIda`, `DisposeFLASHIda`, `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` — count = 5, no others matching `FLASH\|Ida\|PeakGroup\|Isolation` |
 | P8-I02 | 2 | C# compiles with zero warnings | MSBuild with `/warnaserror` succeeds |
-| P8-R01 | 3 | Full regression: every mode config | `Flash.exe -t` with all 12+ method configs, compare to Phase 7 golden files |
+| P8-R01 | 3 | Full regression: every mode config | `Flash.exe` with all 12+ method configs, compare to Phase 7 golden files |
 
 **Regression from Phases 0-7:** All P0-* through P7-* tests must pass.
 
 **Working Product Verification automation:**
-- WPV-1 ("Flash.exe -t final form"): Automated by P8-R01.
+- WPV-1 ("Flash.exe test mode final form"): Automated by P8-R01.
 - WPV-2 ("5 exports"): Automated by P8-I01.
 - WPV-3 ("Zero warnings"): Automated by P8-I02.
 - WPV-4 ("MethodDocGenerator"): Automated by P8-U03.
@@ -717,6 +720,8 @@ Golden files are committed to the repository. When an intentional behavioral cha
 ## 5. Cross-Project Bridge Tests
 
 The P/Invoke bridge between C# and C++ is the most failure-prone surface in the system. This section specifies dedicated tests beyond what is covered in the per-phase plan.
+
+> **Phase 0 lesson (silent zero-result failures):** Bridge functions (e.g., `GetPeakGroupSize`) return 0 for malformed input without raising an error or exception. The bridge does not distinguish "no results found" from "input data is malformed." Bridge tests must therefore validate input data characteristics (RT, peak count, m/z range) independently of the deconvolution result, and must not treat a 0 return as proof of correct behavior without verifying the input was well-formed.
 
 ### 5.1 Struct Marshaling Validation
 
@@ -832,10 +837,10 @@ In Phase 8, this is extended to verify that old exports (`GetPeakGroupSize`, `Ge
 
 ### 6.1 Golden-File Capture
 
-The regression suite uses `Flash.exe -t` as the test harness. The current test mode signature is:
+The regression suite uses `Flash.exe` in test mode as the harness. The entry point is `FLASHIdaWrapper.Main()` (not `Flash.Main()`), which accepts positional arguments without the `-t` flag:
 
 ```
-Flash.exe -t <input_spectrum_file> <output_file> <method.xml> [ms2_spectrum_file]
+Flash.exe <input_spectrum_file> <output_file> <method.xml> [ms2_spectrum_file]
 ```
 
 The CI script runs this for each configuration:
@@ -853,7 +858,7 @@ $configs = @(
 foreach ($cfg in $configs) {
     $args = @("test-data\spectra\$($cfg.ms1)", "output\$($cfg.name).tsv", "test-data\configs\$($cfg.method)")
     if ($cfg.ms2) { $args += "test-data\spectra\$($cfg.ms2)" }
-    & bin\Flash.exe -t @args
+    & bin\Flash.exe @args
 }
 ```
 
@@ -925,6 +930,8 @@ When an intentional behavioral change occurs (e.g., Phase 4 switch-over changes 
 
 The CI workflow flags any golden file mismatch as a test failure. The PR cannot merge until golden files match.
 
+> **Phase 0 lesson (golden-file capture in CI):** Capturing a new golden file requires at least 2 commits: the first commit runs CI and produces the golden artifact (downloaded from the workflow run), and the second commit includes the captured golden file. Phases with multiple golden files should batch captures into a single CI run to minimize round-trips.
+
 ---
 
 ## 7. Mode Coverage Matrix
@@ -958,10 +965,10 @@ This table tracks which acquisition modes are tested at each phase. A filled cel
 
 | File | Format | Description | Source |
 |------|--------|-------------|--------|
-| `ms1_smoke_test.txt` | TSV (mz, intensity per line) | Minimal spectrum (5-10 peaks) for Phase 0 smoke test. Must contain at least one recognizable charge envelope. | Construct synthetically or extract a single scan from existing data. |
+| `ms1_smoke_test.txt` | TSV (mz, intensity per line; multi-scan) | Multi-scan MS1 (minimum 2 scans). Must contain at least one charge envelope in the main elution region (typically thousands of peaks, not 10-200). Flash.exe's parser only processes scan N when scan N+1's header is read, so a single-scan file produces zero output. (Phase 0 lessons #6, #7.) | Extract 2+ consecutive MS1 scans from a real top-down `.mzML` file using `prepare-test-data.py`. Real measured data only — do not construct synthetically. |
 | `ms1_standard.txt` | TSV (mz, intensity per line, spectra delimited by header lines) | Representative MS1 spectra from a top-down experiment. Must contain identifiable charge envelopes for deconvolution. | Extract from an existing mzML file using pyOpenMS, convert to the tab-delimited format `FLASHIdaWrapper.Main()` expects. |
 | `ms2_hcd_fragment.txt` | TSV (mz, intensity) | Single MS2 HCD fragmentation spectrum with known fragment ions matching a known protein sequence. | Extract a good MS2 spectrum from existing test data. |
-| `ms1_faims_3cv.txt` | TSV | MS1 spectra with header annotations indicating CV values. Simulates FAIMS cycling. | Construct synthetically or extract from FAIMS experiment data. |
+| `ms1_faims_3cv.txt` | TSV | MS1 spectra with header annotations indicating CV values, from a real FAIMS experiment. | Extract from real FAIMS experiment data — do not construct synthetically. |
 | `ms1_high_density.txt` | TSV | MS1 spectrum with 50+ deconvolvable proteoforms. Used for queue saturation stress tests. | Extract from a complex top-down sample. |
 
 ### 8.2 Method Configuration Files
@@ -970,7 +977,7 @@ All method configs listed in Section 3.5 must be created. Each is a variant of t
 
 ### 8.3 Golden Output Files
 
-One `.tsv` per (spectrum, config) combination. Created by running `Flash.exe -t` with the corresponding inputs on a known-good build. Committed to the repository. Phase 0 produces `baseline_phase0.tsv` as the initial golden file.
+One `.tsv` per (spectrum, config) combination. Created by running `Flash.exe` with the corresponding inputs on a known-good build. Committed to the repository. Phase 0 produces `baseline_phase0.tsv` as the initial golden file.
 
 ### 8.4 JSON Reference Files
 
@@ -990,7 +997,7 @@ A one-time script `prepare-test-data.py` converts source mzML files to the tab-d
 
 ```python
 #!/usr/bin/env python3
-"""Convert mzML spectra to tab-delimited format for Flash.exe -t."""
+"""Convert mzML spectra to tab-delimited format for Flash.exe test mode."""
 import pyopenms as oms
 import sys
 
@@ -1001,10 +1008,12 @@ with open(sys.argv[2], 'w') as f:
     for spec in exp:
         if spec.getMSLevel() != 1:
             continue
-        rt = spec.getRT() / 60.0  # seconds to minutes
-        f.write(f"Spec {spec.getNativeID()} rt={rt:.4f}\n")
+        rt = spec.getRT()  # seconds (no conversion)
+        f.write(f"Spec {spec.getNativeID()}\t{rt:.4f}\n")
         for peak in spec:
             f.write(f"{peak.getMZ():.6f}\t{peak.getIntensity():.2f}\n")
 ```
+
+> **Phase 0 lesson #2/8:** The header line uses **tab separation** and RT in **seconds** (bare numeric, no `rt=` prefix). The C# parser (`FLASHIdaWrapper.cs`) splits on `\t` and divides by 60. See `test-file-specification.md` Section 1 for the authoritative format description.
 
 This script is run once to create the initial test data files, then the outputs are committed.

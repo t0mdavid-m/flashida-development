@@ -10,6 +10,7 @@ This directory contains per-phase implementation plans and read-only reference d
 
 - **baseline-plan.md** — Parameter optimization plan v9. Architecture design and issue specifications.
 - **testing-strategy.md** — Test tiers, CI infrastructure, and per-phase test matrices.
+- **acquisition-loop-testing-strategy.md** — Extends testing-strategy.md to cover the C# acquisition loop (DataPipe, IScanProcessor, ScanScheduler) via mock-based tests.
 - **implementation-roadmap.md** — High-level phase overview, build batching, CI environment requirements.
 - **verification-report.md** — Cross-document consistency verification results.
 

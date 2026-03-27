@@ -39,7 +39,8 @@ The following must be true before starting Phase 8:
    `FlashIDA/test-data/golden/`.
 
 2. **Build #4 C++ compilation of Phase 7 has succeeded.** The exploration engine changes are
-   compiled into `OpenMS.dll` and the DLL artifact is available in `FlashIDA/dll/`.
+   compiled into `OpenMS.dll` and the DLL artifact is committed in `FlashIDA/dll/` (OpenMS
+   DLLs are committed to the repo, not downloaded — Phase 0 lesson #5).
 
 3. **All prior regression tests pass.** Every test from P0 through P7 passes on the
    Build #4 artifact. No test regressions are open.
@@ -256,7 +257,8 @@ that wrap the 5 keeper functions (e.g., any public methods that call `ProcessSca
 After this step, the file contains exactly 5 `[DllImport(dllName)]` lines. The count is
 verifiable by test P8-U01.
 
-The 5 declarations that remain (from Issue 7 in baseline-plan.md):
+The 5 declarations that remain (from Issue 7 in baseline-plan.md). Note: `dllName` must
+resolve to `"OpenMS.dll"` (with extension), matching the actual P/Invoke constant:
 
 ```csharp
 [DllImport(dllName)] static extern IntPtr CreateFLASHIda(string jsonConfig);
@@ -409,6 +411,11 @@ findstr /C:"GetDeconvolutionQuality"        exports.txt && exit /b 1
 The full regression suite is automated by **P8-R01** in the `windows-tests` CI job. Do not
 proceed to committing until P8-R01 passes in CI for the current branch state.
 
+**Debugging note (Phase 0 lesson #14):** The C++ bridge returns 0 results silently when
+input data is malformed — there is no distinct error code for "bad input" vs "no results
+found." If a regression config unexpectedly produces an empty output file, log the input
+data characteristics (RT, peak count, first/last m/z) before investigating engine internals.
+
 The authoritative orchestration for this step is `regression-runner.ps1`
 (`FlashIDA/test-scripts/regression-runner.ps1`). Its full config array, correct golden file
 names, and per-config spectrum file assignments are specified in
@@ -422,18 +429,21 @@ truth when extending or verifying the script. Note in particular:
 - `ms1_faims_3cv.txt` (spec §1.4) is the required spectrum for `method_faims_3cv.xml` and
   `method_faims_skip.xml`.
 - All other configs use `ms1_standard.txt` (spec §1.2).
+- All spectrum files use **tab-separated** format with **RT in seconds** (Phase 0 lesson #2):
+  `Spec scan=N\t<rt_seconds>`, followed by tab-separated `m/z\tintensity` data lines.
+  Flash.exe's parser divides RT by 60 internally.
 
 Golden file canonical names follow the `phase4_*` / `faims_*` / `phase7_*` convention
 defined in spec §2.2. All 12 configurations must produce `PASS`. Any failure indicates a
 regression introduced during cleanup.
 
-For reference, the runner invokes `Flash.exe -t` and `compare_golden.py` in the pattern:
+For reference, the runner invokes `Flash.exe` and `compare_golden.py` in the pattern:
 
 ```powershell
 # Reference — runs in CI as part of P8-R01 (windows-tests job, windows-latest)
 # Canonical config array and golden file names: see test-file-specification.md §4.2
-# Four-argument form used when ms2 is non-null:
-& $FlashExe -t $ms1File $outputFile $methodFile [$ms2File]
+# Four-argument form used when ms2 is non-null (entry point is FLASHIdaWrapper.Main(), no -t flag):
+& $FlashExe $ms1File $outputFile $methodFile [$ms2File]
 python compare_golden.py "$TestDataDir\golden\$goldenFile" "$OutputDir\$name.tsv"
 ```
 
@@ -459,12 +469,27 @@ The `compare_golden.py` tolerance rules (absolute 1e-6 for |v| ≤ 1.0, relative
 No other files should require changes. If a file outside this list needs modification, that
 indicates an unresolved call site from Step 1 that must be addressed first.
 
+**`.gitattributes` note (Phase 0 lesson #4):** If any new binary file extensions are
+introduced (e.g., `.enc`, `.zip`, `.gpg`), add corresponding `*.ext binary` entries to
+`FlashIDA/.gitattributes` before committing. The existing `* text eol=crlf` rule will
+silently corrupt binary files without these entries. Phase 8 does not introduce new binary
+extensions, but this must be checked if the file list changes.
+
 ---
 
 ## Test Cases
 
 All 7 tests added in this phase. They run as part of the full cumulative suite (96 tests
 total including all prior phases).
+
+**Tier convention (Phase 0 lesson #12):** Tests that load `OpenMS.dll` (via P/Invoke or
+bridge calls) are Tier 2, not Tier 1. Pure C# tests without DLL dependencies are Tier 1.
+If any test is added that exercises bridge functions, label it Tier 2.
+
+**Multi-scan parser note (Phase 0 lesson #9):** Any new test code that loads spectrum TSV
+files must stop at the first scan boundary (`if (started) break;` on encountering a second
+`Spec` line). Failing to do so mixes peaks from multiple scans and silently produces wrong
+results (see also silent zero-result failure mode, lesson #14).
 
 ### Test Summary (Quick Reference)
 
@@ -476,7 +501,7 @@ total including all prior phases).
 | P8-U04 | Passes a non-JSON (legacy space-delimited) string to the `FLASHIda` C++ constructor and asserts that it throws `std::invalid_argument`. Confirms the `parseLegacy_` fallback was removed and invalid input is rejected rather than silently accepted. |
 | P8-I01 | Runs `dumpbin /exports` on the built `OpenMS.dll` and asserts all 5 keeper functions are present and all 13 removed functions are absent. Verifies the compiled DLL export table matches the intended final bridge API exactly. |
 | P8-I02 | Builds `Flash.sln` with `/warnaserror` and asserts the build exits with zero warnings. Confirms that removing dead declarations and methods left no dangling references or orphaned `using` directives. |
-| P8-R01 | Runs `Flash.exe -t` against all 12 method configuration files and compares each output to the corresponding Phase 7 golden file. Verifies that the cleanup phase changed no observable behaviour across every supported acquisition mode. |
+| P8-R01 | Runs `Flash.exe` against all 12 method configuration files and compares each output to the corresponding Phase 7 golden file. Verifies that the cleanup phase changed no observable behaviour across every supported acquisition mode. |
 
 ---
 
@@ -625,13 +650,14 @@ This is a separate build step from the normal debug build. If the normal build a
 **Expected outcome:** MSBuild exits 0. No warnings are emitted. If any warnings remain,
 they must be resolved before this phase is considered done.
 
-**Runner:** `windows-latest`. Requires Thermo iAPI DLLs (same as all C# build steps).
+**Runner:** `windows-latest`. Requires Thermo iAPI DLLs (decrypted via Strategy B /
+openssl from `FlashIDA/dependencies/thermo-dlls.zip.enc`, same as all C# build steps).
 
 ---
 
 ### P8-R01 — Full regression: every mode config against Phase 7 golden files (Tier 3, `windows-latest`)
 
-**Description:** Run `Flash.exe -t` with every method configuration file and compare each
+**Description:** Run `Flash.exe` with every method configuration file and compare each
 output to the corresponding Phase 7 golden file using `compare_golden.py`. This is the
 comprehensive validation that cleanup removed only dead code and changed no behavior.
 
@@ -664,12 +690,16 @@ The golden TSV column schema (15 columns) is specified in spec §2.1.
 
 **Expected outcome:** All 12 configs produce `PASS`. Any single failure is a regression.
 Golden files are the Phase 7 outputs; they are not updated in this phase unless a deliberate
-behavioral change was made (none is expected in a cleanup phase).
+behavioral change was made (none is expected in a cleanup phase). If golden files do need
+updating, remember that golden-file capture requires a 2-commit minimum: the first commit
+runs CI and produces the golden artifact, the second commit includes the captured golden
+file (Phase 0 lesson #15).
 
-**Runner:** `windows-latest`. Requires OpenMS DLL artifact (cached from Build #4 Phase 7)
-and Thermo iAPI DLLs.
+**Runner:** `windows-latest`. Requires OpenMS DLLs (committed in `FlashIDA/dll/`, no
+download needed — Phase 0 lesson #5) and Thermo iAPI DLLs (decrypted via Strategy B /
+openssl — Phase 0 lesson #3).
 
-**Timing note:** 12 `Flash.exe -t` invocations may approach the 20-min Tier 3 budget.
+**Timing note:** 12 `Flash.exe` invocations may approach the 20-min Tier 3 budget.
 If timing is tight, parallelize by splitting configs across two PowerShell jobs that run
 concurrently, or run the 4 fastest configs sequentially and batch the rest.
 
@@ -695,9 +725,17 @@ subsequent test steps regardless of warning status.
 ### 3. Add CleanupTests.cs to the NUnit test run
 
 The new test class `CleanupTests.cs` (containing P8-U01, P8-U02, P8-U03) is automatically
-picked up by `nunit3-console Flash.Tests.dll` if it is included in `Flash.Tests.csproj`.
-No changes to the CI `nunit3-console` invocation line are needed, but verify that
-`Flash.Tests.csproj` includes the new file (or uses a wildcard glob that picks it up).
+picked up by the NUnit console runner if it is included in `Flash.Tests.csproj`.
+Invoke the runner by its full NuGet packages path and set the working directory to
+`FlashIDA/bin/` so native DLLs (OpenMS.dll and dependencies) are found by the .NET
+runtime's DLL search path (Phase 0 lesson #12):
+
+```powershell
+& "packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe" Flash.Tests.dll --work=FlashIDA\bin
+```
+
+Verify that `Flash.Tests.csproj` includes the new file (or uses a wildcard glob that picks
+it up).
 
 ### 4. Add Phase 8 C++ test to the `cpp-unit-tests` job
 
@@ -720,6 +758,12 @@ are added in Phase 8 itself.
 No changes to trigger branches are needed. Phase 8 commits go to `flashida-v9-migration`,
 which is already in the trigger list.
 
+### Commit strategy — submodule batching (Phase 0 lesson #15)
+
+Phase 8 touches both C++ (Steps 2-5) and C# (Steps 6-8) code. Batch all C++ changes
+into a single OpenMS submodule commit before updating the submodule pointer, then batch
+all C# changes together. This minimizes submodule pointer update churn.
+
 ---
 
 ## Working Product Verification
@@ -729,7 +773,7 @@ by the test suite; this section maps each check to its test.
 
 | Verification | Test | CI verification method |
 |-------------|------|------------------------|
-| `Flash.exe -t` runs in final form | P8-R01 | `windows-tests` job on `windows-latest`; check run logs and artifacts for `regression-runner` step |
+| `Flash.exe` runs in final form | P8-R01 | `windows-tests` job on `windows-latest`; check run logs and artifacts for `regression-runner` step |
 | Exactly 5 DLL exports | P8-I01 | Bridge verification step in `windows-tests` on `windows-latest`; inspect the "Verify DLL exports" step output in CI run artifacts |
 | Zero C# compile warnings | P8-I02 | `windows-tests` job on `windows-latest`; "Build with warnings-as-errors" step must exit 0 |
 | MethodDocGenerator produces output | P8-U03 | Automated by P8-U03 NUnit test that asserts the generator returns a non-empty string; see `windows-tests` job NUnit results |

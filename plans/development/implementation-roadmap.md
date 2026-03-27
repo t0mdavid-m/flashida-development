@@ -45,17 +45,16 @@ This section summarizes what each test tier needs to run in GitHub Actions. See 
 | C++ unit tests (Tier 1) | `ubuntu-latest` | Not needed (tests compile against OpenMS source) | Not needed | Not needed | Pure C++ via CTest. No Thermo or Windows dependency. |
 | C# unit tests (Tier 1) | `windows-latest` | Required (in `FlashIDA/dll/`) | **Required for build** | Yes (MSBuild) | `Flash.csproj` references Thermo DLLs at compile time. Some C# unit tests (struct layout, JSON round-trip) do not call Thermo types at runtime, but the build needs them. |
 | Integration tests (Tier 2) | `windows-latest` | Required | **Required for build** | Yes | Bridge tests load `OpenMS.dll` via P/Invoke. `dumpbin` requires VS Build Tools. |
-| Regression tests (Tier 3) | `windows-latest` | Required | **Required for build and runtime** | Yes | `Flash.exe -t` loads the `FLASHIdaWrapper` class, which has method signatures referencing Thermo types. The CLR may attempt to resolve these assemblies even in test mode. Thermo DLLs must be present in the output directory or GAC. |
+| Regression tests (Tier 3) | `windows-latest` | Required | **Required for build and runtime** | Yes | `Flash.exe` loads the `FLASHIdaWrapper` class (entry point: `FLASHIdaWrapper.Main()`), which has method signatures referencing Thermo types. The CLR may attempt to resolve these assemblies even in test mode. Thermo DLLs must be present in the output directory or GAC. |
 | Stress tests (Tier 4) | `windows-latest` | Required | **Required for build and runtime** | Yes | Same as regression -- exercises the bridge under load. |
 
 ### Secrets Required
 
 | Secret | Used by | Strategy |
 |--------|---------|----------|
-| `THERMO_IAPI_DLLS_BASE64` | C# build, integration, regression, stress | Strategy A (base64 in secret). Preferred if total DLL size < GitHub secret limit. |
-| `THERMO_DLL_PASSPHRASE` | C# build, integration, regression, stress | Strategy B (encrypted 7z committed to repo, passphrase as secret). Preferred for larger DLLs. |
+| `THERMO_DLL_PASSPHRASE` | C# build, integration, regression, stress | Strategy B (openssl-encrypted zip committed to repo as `FlashIDA/dependencies/thermo-dlls.zip.enc`, passphrase as secret). Decrypted via `openssl enc -aes-256-cbc -pbkdf2 -d`. |
 
-Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.md#33-handling-proprietary-dlls) for setup instructions.
+Strategy A (base64 in secret) was ruled out in Phase 0: the 5 Thermo DLLs compress to 75 KB, and base64 encoding produces 101 KB, exceeding GitHub's 48 KB per-secret limit. See [testing-strategy.md SS 3.3](testing-strategy.md#33-handling-proprietary-dlls) for setup instructions and [Phase 0 lessons learned](Phase_0/lessons-learned.md) lesson #3 for details.
 
 ### Key Constraints
 
@@ -63,13 +62,13 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 
 2. **All C# jobs require Thermo DLLs.** `Flash.csproj` has `<Reference>` entries for 5 Thermo assemblies (`API-2.0.dll`, `Fusion.API-1.0.dll`, `Spectrum-1.0.dll`, `Thermo.TNG.Factory.dll`, `Thermo.TNG.Client.API.dll`). MSBuild fails without them. There is no way to compile `Flash.sln` or `Flash.Tests.csproj` without these DLLs present in `FlashIDA/dependencies/`.
 
-3. **`Flash.exe -t` runtime dependency.** The `FLASHIdaWrapper` class that hosts `Main()` also contains methods with Thermo type signatures (`IMsScan`, `ICentroid`). Even though test mode does not call those methods, the .NET CLR may load referenced assemblies when the class is first JIT-compiled. Thermo DLLs should be copied to the build output directory alongside `Flash.exe` to prevent `FileNotFoundException` at runtime. If this proves unnecessary after testing, the requirement can be relaxed.
+3. **`Flash.exe` runtime dependency.** The entry point is `FLASHIdaWrapper.Main()` (no `-t` flag). The `FLASHIdaWrapper` class also contains methods with Thermo type signatures (`IMsScan`, `ICentroid`). Even though test mode does not call those methods, the .NET CLR may load referenced assemblies when the class is first JIT-compiled. Thermo DLLs should be copied to the build output directory (`FlashIDA/bin/`) alongside `Flash.exe` to prevent `FileNotFoundException` at runtime. If this proves unnecessary after testing, the requirement can be relaxed.
 
-4. **No instrument hardware tests.** No test in any phase requires a physical mass spectrometer. All tests use `Flash.exe -t` (offline mode), direct P/Invoke calls with synthetic data, or pure unit tests. If any future test implies instrument access (e.g., `IFusionInstrumentAccess`), it must be mocked or skipped in CI.
+4. **No instrument hardware tests.** No test in any phase requires a physical mass spectrometer. All tests use `Flash.exe` in offline mode (invoked as `Flash.exe <input_file> <output_file> <method.xml>`), direct P/Invoke calls with synthetic data, or pure unit tests. If any future test implies instrument access (e.g., `IFusionInstrumentAccess`), it must be mocked or skipped in CI.
 
 5. **Test data is committed to the repository.** Golden files, test spectra, and method configs live under `FlashIDA/test-data/` (< 50 MB total). No external downloads needed. If files exceed reasonable Git limits, migrate to Git LFS.
 
-6. **OpenMS DLLs are cached artifacts.** The `build-openms-dll.yml` workflow produces `OpenMS.dll` and dependencies. CI caches them keyed by the OpenMS submodule commit hash. A full C++ rebuild only triggers when the submodule advances.
+6. **OpenMS DLLs are committed in `FlashIDA/dll/`.** MSBuild copies the committed DLLs to the build output directory via `CopyToOutputDirectory` in `Flash.csproj`. No CI cache or cross-workflow download is needed. If the OpenMS submodule is updated and DLLs need to be rebuilt, a `build-openms-dll.yml` workflow and cache/download steps should be reintroduced at that time.
 
 ---
 
@@ -82,18 +81,18 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 **What changes:**
 - Create NUnit test project (`Flash.Tests.csproj`).
 - Create minimal test spectrum (`ms1_smoke_test.txt`).
-- Capture golden file (`baseline_phase0.tsv`) from `Flash.exe -t` output.
+- Capture golden file (`baseline_phase0.tsv`) from `Flash.exe` output.
 - Set up CI workflow skeleton.
 
 **Test coverage (7 tests):**
 - Unit/smoke: P0-U01 through P0-U04 (build verification, test mode execution).
-- Integration: P0-I01, P0-I02 (bridge smoke: CreateFLASHIda/DisposeFLASHIda do not crash).
+- Integration: P0-I01, P0-I02 (bridge smoke: CreateFLASHIda/DisposeFLASHIda do not crash). These are Tier 2 (DLL-dependent) tests.
 - Regression: P0-R01 (golden file capture).
 - See [testing-strategy.md SS Phase 0](testing-strategy.md#phase-0-establish-baseline) for the complete test matrix.
 
 **Working product verification:**
 1. Solution builds without error.
-2. `Flash.exe -t` runs and produces valid TSV output.
+2. `Flash.exe <input_file> <output_file> <method.xml>` runs and produces valid TSV output (entry point: `FLASHIdaWrapper.Main()`, no `-t` flag).
 3. Bridge calls (Create/Dispose) complete without crash.
 4. Golden baseline captured and committed.
 
@@ -101,7 +100,7 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 
 **Dependencies:** None -- this is the starting point.
 
-**CI notes:** P0-U01 and P0-U02 (build verification) require `windows-latest` with Thermo DLLs as secrets -- MSBuild cannot compile `Flash.sln` without them. P0-U03, P0-U04, P0-R01 (`Flash.exe -t`) require OpenMS DLLs in `FlashIDA/dll/` and Thermo DLLs in the output directory. P0-I01, P0-I02 (bridge smoke) require both DLL sets. No C++ unit tests in this phase. Test data (`ms1_smoke_test.txt`) must be created and committed before this phase runs in CI.
+**CI notes:** P0-U01 and P0-U02 (build verification) require `windows-latest` with Thermo DLLs decrypted from `FlashIDA/dependencies/thermo-dlls.zip.enc` via `openssl` using `THERMO_DLL_PASSPHRASE` secret -- MSBuild cannot compile `Flash.sln` without them. P0-U03, P0-U04, P0-R01 (`Flash.exe`) require OpenMS DLLs (committed in `FlashIDA/dll/`) and Thermo DLLs in the output directory (`FlashIDA/bin/`). P0-I01, P0-I02 (bridge smoke, Tier 2) require both DLL sets. NUnit console runner is invoked by full NuGet packages path with working directory `FlashIDA/bin/` so native DLLs are found. No C++ unit tests in this phase. Test data (`ms1_smoke_test.txt`) must be created and committed before this phase runs in CI.
 
 ---
 
@@ -124,7 +123,7 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 - See [testing-strategy.md SS Phase 1](testing-strategy.md#phase-1-json-configuration) for the complete test matrix.
 
 **Working product verification:**
-1. `Flash.exe -t` runs with JSON config -- results identical to legacy.
+1. `Flash.exe` runs with JSON config -- results identical to legacy.
 2. Round-trip: `method.xml` -> `ToJSON()` -> C++ parse -> fields match.
 3. Legacy format auto-detect fallback still works.
 
@@ -132,7 +131,7 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 
 **Dependencies:** Phase 0 (baseline golden files exist for regression comparison).
 
-**CI notes:** P1-U01 through P1-U05 (C# unit tests) run on `windows-latest`; require Thermo DLLs for build only -- these tests exercise JSON serialization, not bridge calls. P1-I01 through P1-I03 (integration) require OpenMS DLLs + Thermo DLLs on `windows-latest`. P1-R01, P1-R02 (regression via `Flash.exe -t`) require both DLL sets. No C++ unit tests in this phase. JSON golden files (`config_default.json`, `config_full.json`) must be committed before regression tests run.
+**CI notes:** P1-U01 through P1-U05 (C# unit tests) run on `windows-latest`; require Thermo DLLs for build only -- these tests exercise JSON serialization, not bridge calls. P1-I01 through P1-I03 (integration, Tier 2) require OpenMS DLLs + Thermo DLLs on `windows-latest`. P1-R01, P1-R02 (regression via `Flash.exe`) require both DLL sets. No C++ unit tests in this phase. JSON golden files (`config_default.json`, `config_full.json`) must be committed before regression tests run.
 
 ---
 
@@ -153,7 +152,7 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 - See [testing-strategy.md SS Phase 2](testing-strategy.md#phase-2-optimizationmetadata) for the complete test matrix.
 
 **Working product verification:**
-1. `Flash.exe -t` runs with no behavioral change.
+1. `Flash.exe` runs with no behavioral change.
 2. C++ unit tests confirm metadata accessors work correctly.
 3. `hasOptimizationMetadata()` returns false in normal operation.
 
@@ -186,7 +185,7 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 - See [testing-strategy.md SS Phase 3](testing-strategy.md#phase-3-scancommand-struct--bridge-stubs-build-1) for the complete test matrix.
 
 **Working product verification:**
-1. `Flash.exe -t` runs with all existing behavior unchanged; shadow calls produce TRACK log entries.
+1. `Flash.exe` runs with all existing behavior unchanged; shadow calls produce TRACK log entries.
 2. ScanCommand struct marshaling verified: C# and C++ agree on layout.
 3. `GetNextScanCommand` returns MS1 (queue empty fallback).
 4. Tracking IDs: sequential base-36, no collisions across 10,000 calls.
@@ -234,7 +233,7 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 
 **Dependencies:** Phase 3 (Build #1 must be verified).
 
-**CI notes:** P4-U01 through P4-U09 (C++ unit tests) run on `ubuntu-latest` -- no Thermo dependency. These tests exercise ProcessScan logic with synthetic spectra entirely within C++. P4-I01, P4-I02 (feature flag integration) and P4-R01 through P4-R10 (per-mode regression) run on `windows-latest` with both DLL sets. This phase has the highest regression test count (10 configs). The mode-specific method configs (`method_deep.xml`, `method_inclusion.xml`, etc.) and corresponding golden files must all be committed. CI time budget: regression alone may approach the 20-min Tier 3 limit with 10+ `Flash.exe -t` invocations -- monitor and parallelize if needed.
+**CI notes:** P4-U01 through P4-U09 (C++ unit tests) run on `ubuntu-latest` -- no Thermo dependency. These tests exercise ProcessScan logic with synthetic spectra entirely within C++. P4-I01, P4-I02 (feature flag integration) and P4-R01 through P4-R10 (per-mode regression) run on `windows-latest` with both DLL sets. This phase has the highest regression test count (10 configs). The mode-specific method configs (`method_deep.xml`, `method_inclusion.xml`, etc.) and corresponding golden files must all be committed. CI time budget: regression alone may approach the 20-min Tier 3 limit with 10+ `Flash.exe` invocations -- monitor and parallelize if needed.
 
 ---
 
@@ -369,7 +368,7 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 - See [testing-strategy.md SS Phase 8](testing-strategy.md#phase-8-cleanup--documentation-build-4) for the complete test matrix.
 
 **Working product verification:**
-1. `Flash.exe -t` runs in final form.
+1. `Flash.exe` runs in final form.
 2. `dumpbin /exports` shows exactly 5 bridge functions.
 3. C# compiles with zero warnings.
 4. MethodDocGenerator produces correct output.
@@ -379,7 +378,7 @@ Only one strategy is needed. See [testing-strategy.md SS 3.3](testing-strategy.m
 
 **Dependencies:** Phase 7 (exploration engine must be complete before removing old bridge functions).
 
-**CI notes:** P8-U01 through P8-U03 (C# dead code checks) run on `windows-latest`. P8-U04 (C++ legacy config removed) runs on `ubuntu-latest`. P8-I01 (`dumpbin /exports` -- exactly 5 symbols) requires `dumpbin.exe` on `windows-latest`. P8-I02 (`/warnaserror` build) runs on `windows-latest` with Thermo DLLs. P8-R01 (full regression with all 12+ configs) is the most comprehensive regression run and may approach the 20-min Tier 3 budget -- monitor timing. After this phase, the legacy config path is removed, so the `THERMO_IAPI_DLLS` secret and OpenMS DLL artifact remain required for all future CI runs (no fallback path).
+**CI notes:** P8-U01 through P8-U03 (C# dead code checks) run on `windows-latest`. P8-U04 (C++ legacy config removed) runs on `ubuntu-latest`. P8-I01 (`dumpbin /exports` -- exactly 5 symbols) requires `dumpbin.exe` on `windows-latest`. P8-I02 (`/warnaserror` build) runs on `windows-latest` with Thermo DLLs. P8-R01 (full regression with all 12+ configs) is the most comprehensive regression run and may approach the 20-min Tier 3 budget -- monitor timing. After this phase, the legacy config path is removed, so the `THERMO_DLL_PASSPHRASE` secret and OpenMS DLLs (committed in `FlashIDA/dll/`) remain required for all future CI runs (no fallback path).
 
 ---
 

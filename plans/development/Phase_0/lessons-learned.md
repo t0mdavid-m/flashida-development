@@ -182,7 +182,7 @@ This produced a baffling failure mode: `CreateFLASHIda` succeeded, the config st
 2. **Submodule update churn:** 48% of Phase 0 commits (13 of 27) were submodule pointer updates. Batch same-side changes (all C# changes or all C++ changes) before updating the submodule pointer to reduce churn.
 3. **Thermo interface mocking iterations:** Mocking proprietary interfaces without public documentation required 9 iterative commits. Budget 2–3 extra CI round-trips per phase that touches Thermo interfaces.
 
-**Action for future phases:** Plan for these CI patterns when estimating effort. Read `FlashIDA/.github/workflows/csharp-tests.yml` for the current CI structure before modifying it.
+**Action for future phases:** Plan for these CI patterns when estimating effort. Read `.github/workflows/flashida-ci.yml` (the `windows-tests` job) for the current CI structure before modifying it.
 
 ---
 

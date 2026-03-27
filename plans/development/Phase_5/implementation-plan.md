@@ -34,11 +34,11 @@ All of the following must be verified before beginning Phase 5 work.
    - P4-R07 isobaric quant
    - P4-R08, P4-R09, P4-R10 MS3 modes 1–3
 
-2. **FAIMS regression passing.** `Flash.exe -t` with `method_faims_3cv.xml` produces correct output under `UseUnifiedBridge=True`. (FAIMS still runs through `ScanScheduler` at this point; this must be verified before that dependency is removed.)
+2. **FAIMS regression passing.** `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml` produces correct output under `UseUnifiedBridge=True`. (FAIMS still runs through `ScanScheduler` at this point; this must be verified before that dependency is removed.) Note: the entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()` — there is no `-t` flag (see Phase 0 lesson #1).
 
 3. **Phase 4 golden files committed.** The golden files produced with `UseUnifiedBridge=True` are the regression baseline for Phase 5. They must be committed to `FlashIDA/test-data/golden/` and referenced by `P5-R01` and `P5-R02`. The specific files are: `phase4_standard_dda.tsv`, `phase4_deep_mode.tsv`, `phase4_inclusion.tsv`, `phase4_exclusion.tsv`, `phase4_tag_targeting.tsv`, `phase4_quant.tsv`, `phase4_ms3_mode1.tsv`, `phase4_ms3_mode2.tsv`, `phase4_ms3_mode3.tsv`. See [test-file-specification.md §2.2](../test-file-specification.md) for the full golden file inventory.
 
-4. **Build #2 OpenMS DLL artifact available.** The cached artifact from `build-openms-dll.yml` keyed to the Phase 4 OpenMS submodule commit hash must be downloadable by CI. No new C++ build is triggered in this phase.
+4. **Build #2 OpenMS DLLs available.** The OpenMS DLLs from Build #2 (Phase 4) must be committed in `FlashIDA/dll/`. MSBuild copies them to the build output via `CopyToOutputDirectory` in `Flash.csproj` — no CI download or cache step is needed (see Phase 0 lesson #5). No new C++ build is triggered in this phase.
 
 5. **All prior phase tests green.** The CI suite for Phases 0–4 (cumulative: 58 tests) must be passing on the branch before Phase 5 work begins.
 
@@ -210,8 +210,8 @@ These checks are automated by CI test P5-U03. The CI run is the authoritative ve
 - `ScanScheduler.cs` — retained; deletion deferred to Phase 6
 - `FAIMSScanProcessor.cs` FAIMS logic — retained; `ScanScheduler.AddScan()` calls preserved
 - All C++ files — zero C++ changes in this phase
-- All test data files — reused from Phase 4 (spectrum files `ms1_standard.txt`, `ms2_hcd_fragment.txt`, and `ms1_faims_3cv.txt`; see [test-file-specification.md §1](../test-file-specification.md) for format details)
-- Golden files — Phase 4 golden files (`phase4_standard_dda.tsv` through `phase4_ms3_mode3.tsv`) are the regression baseline for P5-R01; the FAIMS golden files (`faims_3cv.tsv` and `faims_skip.tsv`) are captured during P5-R02 for use as Phase 6 regression targets; golden file changes in this phase are a red flag (see [test-file-specification.md §2.4](../test-file-specification.md))
+- All test data files — reused from Phase 4 (spectrum files `ms1_standard.txt`, `ms2_hcd_fragment.txt`, and `ms1_faims_3cv.txt`). Spectrum files use tab-separated format with RT in seconds (see Phase 0 lesson #2): `Spec scan=N\t<rt_seconds>`. Multi-scan files require parsers to stop at the first scan boundary (see Phase 0 lesson #9)
+- Golden files — Phase 4 golden files (`phase4_standard_dda.tsv` through `phase4_ms3_mode3.tsv`) are the regression baseline for P5-R01; the FAIMS golden files (`faims_3cv.tsv` and `faims_skip.tsv`) are captured during P5-R02 for use as Phase 6 regression targets; golden file changes in this phase are a red flag (see [test-file-specification.md §2.4](../test-file-specification.md)). **Note:** Golden file capture requires a 2-commit minimum — first commit runs CI and produces the golden artifact, second commit includes the captured golden file. Batch captures into a single CI run where possible (see Phase 0 lesson #15)
 
 ---
 
@@ -238,8 +238,8 @@ All 6 tests run on `windows-latest`. No C++ unit tests exist in this phase. The 
 | P5-U02 | 1 (C#) | `IScanProcessor` interface has exactly one method with the correct signature | Reflection: `typeof(IScanProcessor).GetMethods()` returns exactly 1 entry; method name is `ProcessMS`; parameter type is `IMsScan`; return type is `void` | `InterfaceShapeTests.cs` NUnit test using `System.Reflection` |
 | P5-U03 | 1 (C#) | No production code references `QuantScanProcessor` | Static search over `FlashIDA/src/**/*.cs` excluding the test file itself returns zero matches for the string `QuantScanProcessor` | `DeadCodeTests.cs` NUnit test using `System.IO.Directory.GetFiles` + `File.ReadAllText`; fails if any hit found |
 | P5-U04 | 1 (C#) | `DataPipe` propagates completion from `BufferBlock` to `ActionBlock` | Post 5 synthetic `IMsScan` mocks, call `DataPipe.Complete()`, await `DataPipe.WaitForCompletion()` with a 5-second timeout; assert all 5 items were processed and no timeout occurred | `DataPipeTests.cs` NUnit test with `Moq` or a hand-rolled `IMsScan` stub |
-| P5-R01 | 3 | All acquisition modes produce output identical to Phase 4 golden files | `Flash.exe -t` with each of the following configs matches the corresponding Phase 4 golden file: `method_default.xml`, `method_deep.xml`, `method_inclusion.xml`, `method_exclusion.xml`, `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`, `method_ms3_mode2.xml`, `method_ms3_mode3.xml` — spectrum inputs are `ms1_standard.txt` (all modes) and `ms2_hcd_fragment.txt` (tag-targeting, quant, MS3 modes); comparison via `compare_golden.py` with default tolerances (see [test-file-specification.md §1.2](../test-file-specification.md), [§1.3](../test-file-specification.md), [§2.2](../test-file-specification.md), [§4.1](../test-file-specification.md)) | `regression-runner.ps1` invoked from CI `windows-tests` job |
-| P5-R02 | 3 | FAIMS mode still works via `ScanScheduler`, and FAIMS golden files are captured for Phase 6 | `Flash.exe -t` with `method_faims_3cv.xml` and `ms1_faims_3cv.txt` matches the existing Phase 4 FAIMS golden output; additionally, the CI capture step writes `faims_3cv.tsv` and `faims_skip.tsv` (using `method_faims_skip.xml`) as the Phase 6 regression baselines; CV transition log entries present; no crash or missing output rows (see [test-file-specification.md §1.4](../test-file-specification.md), [§2.2](../test-file-specification.md), [§3.2](../test-file-specification.md) for `ms1_faims_3cv.txt`, `method_faims_3cv.xml`, `method_faims_skip.xml` format requirements and CV value constraints) | `regression-runner.ps1` FAIMS config entries |
+| P5-R01 | 3 | All acquisition modes produce output identical to Phase 4 golden files | `Flash.exe <input> <output> <method.xml>` with each of the following configs matches the corresponding Phase 4 golden file: `method_default.xml`, `method_deep.xml`, `method_inclusion.xml`, `method_exclusion.xml`, `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`, `method_ms3_mode2.xml`, `method_ms3_mode3.xml` — spectrum inputs are `ms1_standard.txt` (all modes) and `ms2_hcd_fragment.txt` (tag-targeting, quant, MS3 modes); comparison via `compare_golden.py` with default tolerances (see [test-file-specification.md §1.2](../test-file-specification.md), [§1.3](../test-file-specification.md), [§2.2](../test-file-specification.md), [§4.1](../test-file-specification.md)) | `regression-runner.ps1` invoked from CI `windows-tests` job |
+| P5-R02 | 3 | FAIMS mode still works via `ScanScheduler`, and FAIMS golden files are captured for Phase 6 | `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml` matches the existing Phase 4 FAIMS golden output; additionally, the CI capture step writes `faims_3cv.tsv` and `faims_skip.tsv` (using `method_faims_skip.xml`) as the Phase 6 regression baselines; CV transition log entries present; no crash or missing output rows (see [test-file-specification.md §1.4](../test-file-specification.md), [§2.2](../test-file-specification.md), [§3.2](../test-file-specification.md) for `ms1_faims_3cv.txt`, `method_faims_3cv.xml`, `method_faims_skip.xml` format requirements and CV value constraints) | `regression-runner.ps1` FAIMS config entries |
 
 **Regression inherited from Phases 0–4:** All P0-* through P4-* tests (58 tests) must continue to pass. P5 adds 6 tests for a cumulative total of 64.
 
@@ -269,10 +269,10 @@ Phase 5 touches only `*.cs`, `*.csproj`, and `method.xml` files, so this job wil
 ### `windows-tests` job — no structural changes needed
 
 The `windows-tests` job already:
-- Restores Thermo iAPI DLLs from secrets
-- Downloads the OpenMS DLL artifact (cached by submodule hash)
+- Restores Thermo iAPI DLLs from secrets (Strategy B: openssl-encrypted zip, `THERMO_DLL_PASSPHRASE` secret — see Phase 0 lesson #3)
+- OpenMS DLLs are committed in `FlashIDA/dll/` and copied by MSBuild — no download step needed (see Phase 0 lesson #5)
 - Runs `msbuild Flash.sln`
-- Runs `nunit3-console Flash.Tests.dll`
+- Runs NUnit console runner by full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.X.X/tools/nunit3-console.exe`) with working directory `FlashIDA/bin/` so native DLLs are found (see Phase 0 lesson #12)
 - Runs `regression-runner.ps1`
 - Runs `compare_golden.py` for each mode config
 
@@ -301,7 +301,7 @@ Alternatively, implement a minimal hand-rolled `IMsScan` stub to avoid the depen
 
 ### No new secrets required
 
-Phase 5 uses the same `THERMO_IAPI_DLLS_BASE64` (or `THERMO_DLL_PASSPHRASE`) and OpenMS DLL artifact cache that were established in earlier phases. No new secrets or caches are needed.
+Phase 5 uses the same `THERMO_DLL_PASSPHRASE` secret (Strategy B, openssl — see Phase 0 lesson #3). OpenMS DLLs are committed in `FlashIDA/dll/` (no artifact cache — see Phase 0 lesson #5). No new secrets or caches are needed.
 
 ### Branch trigger
 
@@ -318,11 +318,11 @@ Verify the following in CI. After pushing Phase 5 changes, confirm the `windows-
    Expected: MSBuild exit code 0. No `CS0618` (obsolete) or `CS0168` (unused variable) warnings from deleted code paths.
 
 2. **Test mode runs end-to-end.**
-   CI step: `regression-runner.ps1` invokes `Flash.exe -t` with `ms1_standard.txt` and `method_default.xml` and compares output against `phase4_standard_dda.tsv` via `compare_golden.py` (tolerance rules: [test-file-specification.md §4.1](../test-file-specification.md)).
+   CI step: `regression-runner.ps1` invokes `Flash.exe ms1_standard.txt output.tsv method_default.xml` and compares output against `phase4_standard_dda.tsv` via `compare_golden.py` (tolerance rules: [test-file-specification.md §4.1](../test-file-specification.md)). Entry point is `FLASHIdaWrapper.Main()` — no `-t` flag (see Phase 0 lesson #1).
    Expected: Exit code 0, output matches Phase 4 golden file.
 
 3. **FAIMS mode runs end-to-end.**
-   CI step: `regression-runner.ps1` invokes `Flash.exe -t` with `ms1_faims_3cv.txt` and `method_faims_3cv.xml`; compares output against the existing Phase 4 FAIMS golden and also captures `faims_3cv.tsv` and `faims_skip.tsv` for Phase 6 (spectrum and config format: [test-file-specification.md §1.4](../test-file-specification.md), [§3.2](../test-file-specification.md)).
+   CI step: `regression-runner.ps1` invokes `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml`; compares output against the existing Phase 4 FAIMS golden and also captures `faims_3cv.tsv` and `faims_skip.tsv` for Phase 6 (spectrum and config format: [test-file-specification.md §1.4](../test-file-specification.md), [§3.2](../test-file-specification.md)). Entry point is `FLASHIdaWrapper.Main()` — no `-t` flag (see Phase 0 lesson #1).
    Expected: Exit code 0, CV transition log entries present in output, output matches FAIMS golden file.
 
 4. **DataPipe completion is clean.**
@@ -334,8 +334,35 @@ Verify the following in CI. After pushing Phase 5 changes, confirm the `windows-
    Expected: Zero hits in production code for each pattern.
 
 6. **NUnit suite passes.**
-   CI step: `nunit3-console Flash.Tests.dll` run by the `windows-tests` job.
+   CI step: NUnit console runner invoked by full NuGet packages path from working directory `FlashIDA/bin/` (see Phase 0 lesson #12). Run by the `windows-tests` job.
    Expected: 64 tests pass, 0 failures, 0 errors.
+
+---
+
+## Phase 0 Lessons Applied
+
+The following Phase 0 lessons are relevant to Phase 5 implementation. Cross-references are to `Phase_0/lessons-learned.md`.
+
+| Lesson | Summary | Where applied in this plan |
+|--------|---------|---------------------------|
+| #1 | No `-t` flag; entry point is `FLASHIdaWrapper.Main()` | Prerequisites §2, P5-R01/R02 test descriptions, Working Product Verification §2/§3 |
+| #2 | Spectrum files: tab-separated, RT in seconds | "Not changed" notes on test data files |
+| #3 | Thermo DLL Strategy B (openssl, `THERMO_DLL_PASSPHRASE`) | CI Configuration §No new secrets |
+| #4 | `.gitattributes` binary entries for new extensions | Note below |
+| #5 | OpenMS DLLs committed in `FlashIDA/dll/`, no download step | Prerequisites §4, CI Configuration §windows-tests |
+| #9 | Multi-scan parsers must stop at first scan boundary | "Not changed" notes on test data files |
+| #10 | Use `Console.WriteLine()` for CI-visible diagnostics | General guidance for any new test code |
+| #12 | NUnit runner: full NuGet packages path, working directory `FlashIDA/bin/` | CI Configuration §windows-tests, Working Product Verification §6 |
+| #14 | Silent zero-result P/Invoke failures — log input data characteristics | Note below |
+| #15 | Golden-file capture: 2-commit minimum; batch same-side changes | "Not changed" golden files note; general commit strategy |
+
+**`.gitattributes` (lesson #4):** If any new binary file extensions are introduced in Phase 5 (unlikely, since no new test data is created), add corresponding `*.ext binary` entries to `FlashIDA/.gitattributes` before committing.
+
+**Silent P/Invoke failures (lesson #14):** The C++ deconvolution engine returns 0 results without error when input data is malformed. If any new code calls bridge functions (e.g., `UnifiedScanProcessor.ProcessMS` calling `ProcessScan`) and receives 0 results unexpectedly, log the input data characteristics (RT, peak count, first/last m/z) before investigating engine internals. The bridge functions in `OpenMS.dll` do not distinguish "no results found" from "input data is malformed."
+
+**Submodule batching (lesson #15):** Phase 5 has no C++ changes, but if any submodule pointer updates are needed (e.g., to pick up Phase 4 DLL changes), batch all C#-side changes before updating the submodule pointer to minimize churn.
+
+**Test tier convention (lesson #12 addendum):** P5-U01 through P5-U04 are Tier 1 (pure C# unit tests with mocks). If any test in this phase loads `OpenMS.dll` or calls bridge functions, it must be classified as Tier 2, matching the convention established in Phase 0 for DLL-dependent tests.
 
 ---
 

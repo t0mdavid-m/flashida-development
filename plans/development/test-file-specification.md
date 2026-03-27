@@ -38,6 +38,8 @@ Spec <native_id>\t<rt_seconds>
 
 The C++ engine's `@param rt` documents "Retention time in seconds." This double-conversion exists because the C# side historically worked in minutes while the C++ engine works in seconds.
 
+**Backwards compatibility note:** The tab-separated header format with RT in bare seconds (no `rt=` prefix) is kept intentionally. The production `FLASHIdaWrapper.cs` parser, all existing test data, and regression golden files depend on this format. Do not change the parser to match an alternative spec — update the spec to match the parser instead. (See Phase 0 lessons learned #8.)
+
 **Single-scan files** contain exactly one header line followed by all peaks for that scan.
 
 **Multi-scan files** contain multiple scan blocks in sequence. Each scan block begins with a header line followed by zero or more peak lines. Scan blocks are separated by the next header line (no blank-line separator is required, but a blank line between scan blocks is permitted).
@@ -52,31 +54,32 @@ Spec <native_id>\t<rt_seconds>
 ...
 ```
 
+**Parser requirement for multi-scan files:** Any code that loads a spectrum from a multi-scan file for single-scan use (e.g., unit tests, mock scan loaders) must stop reading at the first scan boundary — i.e., break when a second `Spec` header line is encountered. Failing to do so mixes peaks from multiple scans and overwrites the RT value, causing silent deconvolution failures (0 results with no error). Flash.exe's own parser handles multi-scan correctly (it processes scan N when scan N+1's header is read), but test-side parsers (`LoadSpectrum`, `FromTsv`, etc.) must explicitly implement this stop-at-boundary logic. (See Phase 0 lessons learned #9.)
+
 ---
 
 ### 1.1 `ms1_smoke_test.txt`
 
-**Purpose:** Minimal single-scan MS1 spectrum for Phase 0 smoke testing. Must be small enough that `Flash.exe` processes it in under 60 seconds and produces at least one row of output.
+**Purpose:** Minimal multi-scan MS1 spectrum for Phase 0 smoke testing. Must be small enough that `Flash.exe` processes it in under 60 seconds and produces at least one row of output.
 
-**Format:** Single-scan. See [Spectrum File Format](#spectrum-file-format) above.
+**Format:** Multi-scan (minimum 2 scans). See [Spectrum File Format](#spectrum-file-format) above. The file must contain at least 2 scans because Flash.exe's parser only processes a scan's accumulated data when the *next* `Spec` header line is encountered; the last scan in the file is never processed. A single-scan file produces zero output rows. (See Phase 0 lessons learned #7.)
 
 **Content requirements:**
 
-- 10–200 peaks total. Fewer than 10 peaks is unlikely to yield a deconvolution result. More than 200 peaks slows the smoke test beyond its intended role.
-- Must contain at least one identifiable charge envelope (consecutive isotope peaks with a recognizable m/z spacing pattern), so that FLASHDeconv produces at least 1 deconvolved proteoform and `Flash.exe` writes at least one data row to the output TSV.
+- The primary scan (scan 1) must contain enough peaks with at least one identifiable charge envelope (consecutive isotope peaks with a recognizable m/z spacing pattern), so that FLASHDeconv produces at least 1 deconvolved proteoform and `Flash.exe` writes at least one data row to the output TSV. In practice this requires a scan from the main elution region of a top-down experiment; scans in the 10-200 peak range typically lack protein charge envelopes detectable by the engine. The actual file uses a scan with ~6,588 peaks (scan 2 has ~21 peaks as a trigger). (See Phase 0 lessons learned #6.)
 - Data must be real measured peaks extracted from a top-down proteomics `.mzML` file using `prepare-test-data.py`. Synthetically constructed peak arrays are not acceptable.
 
 **Size constraints:**
 
-- Target: < 20 KB on disk.
-- Peak count upper limit for CI: 200 peaks (keeps smoke test fast).
+- Target: < 500 KB on disk (the primary scan may have thousands of peaks).
+- The file must remain small enough for the smoke test to complete in under 60 seconds on a `windows-latest` GitHub Actions runner.
 
-**Source:** Extract a single MS1 scan from an existing top-down `.mzML` file:
+**Source:** Extract 2 consecutive MS1 scans from an existing top-down `.mzML` file, where the first scan is from the main elution region:
 
 ```bash
 python FlashIDA/test-scripts/prepare-test-data.py source.mzML \
     FlashIDA/test-data/spectra/ms1_smoke_test.txt \
-    --scan-index 0 --max-scans 1
+    --scan-index <N> --max-scans 2
 ```
 
 Verify that `Flash.exe ms1_smoke_test.txt output.tsv method_default.xml` exits with code 0 and `output.tsv` has at least two lines (header + one data row).
@@ -323,7 +326,7 @@ All golden files are **tab-separated values (TSV)** with the following propertie
 
 ### 2.3 How golden files are generated
 
-1. Push the implementation branch to GitHub. The CI `csharp-tests` job runs `Flash.exe` for each configuration in capture mode.
+1. Push the implementation branch to GitHub. The CI `windows-tests` job runs `Flash.exe` for each configuration in capture mode.
 2. In the GitHub Actions run summary, download the `golden-capture` artifact (uploaded by the `capture-golden` step in the CI workflow).
 3. Inspect each `.tsv` file: verify the header row matches the 15-column format, verify row count is non-zero, verify float values are in plausible ranges for the given experiment.
 4. Copy the reviewed files into `FlashIDA/test-data/golden/` and commit them alongside the code change that necessitated the new golden file.
@@ -367,7 +370,8 @@ File size: all config files are expected to be < 5 KB each.
 | File | Introduced | Purpose | Key parameters |
 |------|-----------|---------|----------------|
 | `method_default.xml` | Phase 0 | Standard DDA, no special modes. Regression anchor. | `UseUnifiedBridge=False` (added Phase 4, removed Phase 5). Standard HCD, 5 top precursors. |
-| `method_deep.xml` | Phase 4 | Deep mode: more precursors per MS1 cycle, lower score threshold. | Higher `MaxMassCount`, lower `ScoreThreshold`. |
+| `method_default_topn5.xml` | Phase 0 | Standard DDA with `MaxMs2CountPerMs1=5` (TopN=5). Used by CT08 (TopN ordering) and CT12 (deep vs standard comparison) where TopN=1 would make assertions trivially true. | Same as `method_default.xml` except `MaxMs2CountPerMs1=5`. (See Phase 0 lessons learned #12.) |
+| `method_deep.xml` | Phase 4 | Deep mode: more precursors per MS1 cycle, lower score threshold. | Higher `MaxMassCount`, lower `ScoreThreshold`. Also used by CT12 for deep-vs-standard comparison against `method_default_topn5.xml`. |
 | `method_inclusion.xml` | Phase 4 | Inclusion list mode: only listed masses targeted. | `TargetMode` set to inclusion. Inclusion list contains the precursor mass from `ms2_hcd_fragment.txt`. |
 | `method_exclusion.xml` | Phase 4 | Exclusion list mode: listed masses suppressed. | `TargetMode` set to exclusion. Exclusion list contains a mass present in `ms1_standard.txt`. |
 | `method_tag_targeting.xml` | Phase 4 | Tag-based targeting via MS2 fragment matching. | `TagBasedTargeting=True`. Points to inclusion list expanded at runtime. |
@@ -441,13 +445,13 @@ python compare_golden.py <golden_file.tsv> <actual_file.tsv>
 
 **Location:** `FlashIDA/test-scripts/regression-runner.ps1`
 
-**Purpose:** Orchestrates all `Flash.exe` invocations and calls `compare_golden.py` for each output. Used both in CI (via the `csharp-tests` job) and locally by developers.
+**Purpose:** Orchestrates all `Flash.exe` invocations and calls `compare_golden.py` for each output. Used both in CI (via the `windows-tests` job) and locally by developers.
 
 **Usage:**
 
 ```powershell
 powershell FlashIDA/test-scripts/regression-runner.ps1 `
-    -FlashExe FlashIDA\src\Flash\bin\Debug\Flash.exe `
+    -FlashExe FlashIDA\bin\Flash.exe `
     -TestDataDir FlashIDA\test-data `
     -OutputDir FlashIDA\test-output `
     [-captureMode]  # Write output without comparing (for golden file capture)
@@ -457,7 +461,7 @@ powershell FlashIDA/test-scripts/regression-runner.ps1 `
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `-FlashExe` | `FlashIDA\src\Flash\bin\Debug\Flash.exe` | Path to `Flash.exe` |
+| `-FlashExe` | `FlashIDA\bin\Flash.exe` | Path to `Flash.exe` |
 | `-TestDataDir` | `FlashIDA\test-data` | Root of the test data directory |
 | `-OutputDir` | `FlashIDA\test-output` | Directory for generated output TSV files |
 | `-captureMode` | (absent) | If present, write output files without running golden comparison. Used to capture new golden files. |
@@ -582,8 +586,11 @@ msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU"
 
 **Run command (CI):**
 
-```
-nunit3-console FlashIDA\src\Flash.Tests\bin\Debug\Flash.Tests.dll --result=TestResults.xml
+```powershell
+# Run from FlashIDA\bin\ so native DLLs are found by .NET runtime
+# NUnit runner invoked by full path from NuGet packages directory
+cd FlashIDA\bin
+..\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll --result=TestResults.xml
 ```
 
 **Introduced in:** Phase 0, Step 2.
@@ -597,7 +604,7 @@ The complete expected directory tree for `FlashIDA/test-data/` as of Phase 8 (al
 ```
 FlashIDA/test-data/
 ├── spectra/
-│   ├── ms1_smoke_test.txt          # Phase 0: minimal MS1 scan, 10–200 peaks
+│   ├── ms1_smoke_test.txt          # Phase 0: minimal MS1, 2 scans (~6,588+21 peaks)
 │   ├── ms1_standard.txt            # Phase 4: representative MS1 scans, 5+ envelopes
 │   ├── ms2_hcd_fragment.txt        # Phase 4: single MS2 HCD scan, known protein
 │   ├── ms1_faims_3cv.txt           # Phase 5/6: FAIMS MS1 scans, 3+ CV values
@@ -605,7 +612,8 @@ FlashIDA/test-data/
 │
 ├── configs/
 │   ├── method_default.xml          # Phase 0: standard DDA, regression anchor
-│   ├── method_deep.xml             # Phase 4: deep mode
+│   ├── method_default_topn5.xml    # Phase 0: standard DDA with TopN=5 (CT08, CT12)
+│   ├── method_deep.xml             # Phase 4: deep mode (also CT12 deep-vs-standard)
 │   ├── method_inclusion.xml        # Phase 4: inclusion list mode
 │   ├── method_exclusion.xml        # Phase 4: exclusion list mode
 │   ├── method_tag_targeting.xml    # Phase 4: tag-based targeting
