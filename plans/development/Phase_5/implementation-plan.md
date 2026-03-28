@@ -40,7 +40,7 @@ Phase 4 is complete. All Phase 4 work (unified bridge switch-over, `UseUnifiedBr
 
 4. **Build #2 OpenMS DLLs available.** The OpenMS DLLs from Build #2 (Phase 4) are committed in `FlashIDA/dll/`. MSBuild copies them to the build output via `CopyToOutputDirectory` in `Flash.csproj` — no CI download or cache step is needed (see Phase 0 lesson #5). No new C++ build is triggered in this phase.
 
-5. **All prior phase tests green.** The CI suite for Phases 0–4 (cumulative: 60 tests) must be passing on the branch before Phase 5 work begins. Confirm the parent repo submodule pointer is up to date with the merged Phase 4 commit (see Phase 1 lesson #1).
+5. **All prior phase tests green.** The CI suite for Phases 0–4 must be passing on the branch before Phase 5 work begins. Phase 2 completed with 59 cumulative tests (53 from Phase 0/1, 6 from Phase 2); Phases 3 and 4 add additional tests per the testing-strategy. Confirm the parent repo submodule pointer is up to date with the merged Phase 4 commit (see Phase 1 lesson #1).
 
 ### User-Provided Inputs
 
@@ -241,7 +241,7 @@ All 6 tests run on `windows-latest`. No C++ unit tests exist in this phase. The 
 | P5-R01 | 3 | All acquisition modes produce output identical to Phase 4 golden files | `Flash.exe <input> <output> <method.xml>` with each of the following configs matches the corresponding Phase 4 golden file: `method_default.xml`, `method_deep.xml`, `method_inclusion.xml`, `method_exclusion.xml`, `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`, `method_ms3_mode2.xml`, `method_ms3_mode3.xml` — spectrum inputs are `ms1_standard.txt` (all modes) and `ms2_hcd_fragment.txt` (tag-targeting, quant, MS3 modes); comparison via `compare_golden.py` with default tolerances (see [test-file-specification.md §1.2](../test-file-specification.md), [§1.3](../test-file-specification.md), [§2.2](../test-file-specification.md), [§4.1](../test-file-specification.md)) | `regression-runner.ps1` invoked from CI `windows-tests` job |
 | P5-R02 | 3 | FAIMS mode still works via `ScanScheduler`, and FAIMS golden files are captured for Phase 6 | `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml` matches the existing Phase 4 FAIMS golden output; additionally, the CI capture step writes `faims_3cv.tsv` and `faims_skip.tsv` (using `method_faims_skip.xml`) as the Phase 6 regression baselines; CV transition log entries present; no crash or missing output rows (see [test-file-specification.md §1.4](../test-file-specification.md), [§2.2](../test-file-specification.md), [§3.2](../test-file-specification.md) for `ms1_faims_3cv.txt`, `method_faims_3cv.xml`, `method_faims_skip.xml` format requirements and CV value constraints) | `regression-runner.ps1` FAIMS config entries |
 
-**Regression inherited from Phases 0–4:** All P0-* through P4-* tests (60 tests) must continue to pass. P5 adds 6 tests for a cumulative total of 66.
+**Regression inherited from Phases 0–4:** All P0-* through P4-* tests must continue to pass. Phase 2 ended at 59 cumulative; Phases 3 and 4 add their own tests (see testing-strategy.md §4). P5 adds 6 tests on top of the Phase 4 total.
 
 ---
 
@@ -265,6 +265,8 @@ cpp-unit-tests:
 ```
 
 Phase 5 touches only `*.cs`, `*.csproj`, and `method.xml` files, so this job will be skipped automatically if the condition above is already in place. If the condition does not yet exist, it must be added to avoid unnecessary C++ build attempts.
+
+**Note (Phase 2 established configuration):** The `cpp-unit-tests` job was activated in Phase 2 with the following configuration: CMake flags `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`, ccache key based on `hashFiles('OpenMS/CMakeLists.txt')`, CTest invocation using `-R ClassName` pattern (not `-R FLASH`), and the full apt dependency list documented in `environment-and-workflows.md` Section 1. These settings carry forward unchanged into Phase 5.
 
 ### `windows-tests` job — no structural changes needed
 
@@ -336,13 +338,13 @@ Verify the following in CI. After pushing Phase 5 changes, confirm the `windows-
 
 6. **NUnit suite passes.**
    CI step: NUnit console runner invoked by full NuGet packages path from working directory `FlashIDA/bin/` with `--agents=1 --timeout=300000` and `OPENMS_DATA_PATH` set (see Phase 0 lesson #12, Phase 1 lessons #5 and #8). Run by the `windows-tests` job.
-   Expected: 66 tests pass, 0 failures, 0 errors.
+   Expected: All prior-phase tests plus 6 Phase 5 tests pass, 0 failures, 0 errors. (Phase 2 ended at 59 cumulative; final count depends on Phases 3-4.)
 
 ---
 
-## Phase 0-1 Lessons Applied
+## Phase 0-2 Lessons Applied
 
-The following lessons from Phase 0 and Phase 1 are relevant to Phase 5 implementation. Cross-references are to `Phase_0/lessons-learned.md` and `Phase_1/lessons-learned.md`.
+The following lessons from Phase 0, Phase 1, and Phase 2 are relevant to Phase 5 implementation. Cross-references are to `Phase_0/lessons-learned.md`, `Phase_1/lessons-learned.md`, and Phase 2 implementation notes.
 
 ### Phase 0 Lessons
 
@@ -370,6 +372,20 @@ The following lessons from Phase 0 and Phase 1 are relevant to Phase 5 implement
 | #8 | NUnit: `--agents=1 --timeout=300000` to handle `calculateAveragine` cold cache | CI Configuration §windows-tests, Working Product Verification §6 |
 | #10 | DLL build takes ~40 min; batch all C++ changes before pushing | Not applicable (no DLL build this phase); note retained for cross-phase awareness |
 | #11 | Both `FLASHIdaWrapper` constructors exist; prefer `FLASHIdaWrapper(MethodParameters)` | Note below |
+
+### Phase 2 Lessons
+
+| Lesson | Summary | Where applied in this plan |
+|--------|---------|---------------------------|
+| `toSpectrum()` return-value API | `DeconvolvedSpectrum::toSpectrum()` returns `MSSpectrum` by value, not void with out-param. Signature: `MSSpectrum toSpectrum(int to_charge, double tol = 10.0, bool retain_undeconvolved = false)` | Not directly applicable (no C++ tests in Phase 5), but relevant if future phases reference Phase 5 as a baseline |
+| `DeconvolvedSpectrum` constructor takes `scan_number` | Constructor is `explicit DeconvolvedSpectrum(int scan_number)`, not `ms_level` | Not directly applicable (no C++ tests in Phase 5) |
+| PeakGroup prerequisite for `toSpectrum()` | `toSpectrum()` unconditionally accesses `peak_groups_[0]` — any test calling `toSpectrum()` must push a `PeakGroup` first | Not directly applicable (no C++ tests in Phase 5) |
+| CTest naming convention | Use `ctest -R ClassName` (e.g., `-R DeconvolvedSpectrum_OptimizationMetadata`), not `ctest -R FLASH` | CI Configuration — `cpp-unit-tests` job (Phase 5 does not add C++ tests, but existing tests continue running with this convention) |
+| CI apt dependencies (ubuntu) | Full list: `build-essential ccache ninja-build qt6-base-dev libeigen3-dev libboost-random-dev libboost-regex-dev libboost-iostreams-dev libboost-date-time-dev libboost-math-dev libxerces-c-dev zlib1g-dev libsvm-dev libbz2-dev liblzma-dev libzstd-dev coinor-libcoinmp-dev` | CI Configuration — `cpp-unit-tests` job (already established, no changes needed) |
+| CMake flags | `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja` | CI Configuration — `cpp-unit-tests` job |
+| ccache key | Uses `hashFiles('OpenMS/CMakeLists.txt')`, not `executables.cmake` | CI Configuration — `cpp-unit-tests` job cache key |
+| MSVC `/WX` compliance | Use `(void)var;` to suppress unused variable warnings in C++ test code | Not directly applicable (no C++ tests in Phase 5); relevant for Phase 6+ |
+| Phase 2 deliverables | `OptimizationMetadata` struct (18 fields, `std::optional`), `GetConfigInt`/`GetConfigDouble` bridge functions, 5 C++ unit tests, `cpp-unit-tests` CI job active. Cumulative: 59 tests | Prerequisites §5 |
 
 **`.gitattributes` (lesson #4):** If any new binary file extensions are introduced in Phase 5 (unlikely, since no new test data is created), add corresponding `*.ext binary` entries to `FlashIDA/.gitattributes` before committing.
 
@@ -403,7 +419,7 @@ The following lessons from Phase 0 and Phase 1 are relevant to Phase 5 implement
 - [ ] `method.xml` no longer contains `<UseUnifiedBridge>` element
 - [ ] `ScanScheduler.cs` is still present and still used by `FAIMSScanProcessor`
 - [ ] All 6 Phase 5 tests pass in CI: P5-U01, P5-U02, P5-U03, P5-U04, P5-R01, P5-R02
-- [ ] All 60 prior-phase tests (P0-* through P4-*) continue to pass in CI
+- [ ] All prior-phase tests (P0-* through P4-*) continue to pass in CI (Phase 2 ended at 59 cumulative; final count includes Phase 3-4 additions)
 - [ ] CI `windows-tests` job green on `windows-latest` with Build #2 DLL artifact
 - [ ] `msbuild /warnaserror` succeeds with zero warnings
 - [ ] No process hang on `DataPipe.WaitForCompletion()` in test mode

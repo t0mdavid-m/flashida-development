@@ -681,6 +681,30 @@ $env:OPENMS_DATA_PATH = "..\OpenMS\share\OpenMS"
 
 ---
 
+### 4.7 C++ Unit Test Files (OpenMS submodule)
+
+C++ unit tests live in the OpenMS submodule under `OpenMS/src/tests/class_tests/openms/source/` and follow the OpenMS `ClassName_test.cpp` naming convention. They are registered in `OpenMS/src/tests/class_tests/openms/executables.cmake`.
+
+**Phase 2 test file:**
+
+| File | Introduced | Contents |
+|------|-----------|---------|
+| `DeconvolvedSpectrum_OptimizationMetadata_test.cpp` | Phase 2 | P2-U01 through P2-U05 (OptimizationMetadata struct tests) |
+
+**CTest invocation:** Use `-R ClassName` pattern for specific tests (e.g., `ctest -R DeconvolvedSpectrum_OptimizationMetadata`), not `-R FLASH`. Test names follow the OpenMS `ClassName_test.cpp` convention.
+
+> **Phase 2 Implementation Notes (critical for C++ test authoring):**
+>
+> 1. **`toSpectrum()` returns `MSSpectrum` by value:** The actual signature is `MSSpectrum toSpectrum(int to_charge, double tol = 10.0, bool retain_undeconvolved = false)`. Use the return-value pattern: `MSSpectrum out = ds.toSpectrum(1);` — not void with an out parameter.
+>
+> 2. **PeakGroup prerequisite for `toSpectrum()`:** `toSpectrum()` unconditionally accesses `peak_groups_[0].isPositive()`. Any test calling `toSpectrum()` must push a default `PeakGroup` into the `DeconvolvedSpectrum` first to avoid undefined behavior. This is mandatory for P2-U04, P2-U05, and any future test exercising `toSpectrum()`.
+>
+> 3. **`DeconvolvedSpectrum` constructor takes `scan_number`:** `explicit DeconvolvedSpectrum(int scan_number)`, not `ms_level`.
+>
+> 4. **`(void)var;` for MSVC `/WX` compliance:** Use `(void)var;` after `TEST_EQUAL` assertions on variables not otherwise referenced, to suppress unused-variable warnings under MSVC `/WX` (e.g., `(void)meta;` in P2-U02).
+
+---
+
 ## 5. Directory Layout
 
 The complete expected directory tree for `FlashIDA/test-data/` as of Phase 8 (all files present):

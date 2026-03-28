@@ -23,6 +23,13 @@ The outcome is Build #3: a fully working application where C++ owns the entire s
 
 The following must be in place before starting Phase 6 work. Phase 5 is complete and its CI run is green before any Phase 6 code is written.
 
+**Phase 2 actual deliverables (completed):**
+- `OptimizationMetadata` struct (18 fields, `std::optional` on `DeconvolvedSpectrum`).
+- `GetConfigInt`/`GetConfigDouble` bridge functions for diagnostic config readback.
+- 5 C++ unit tests (P2-U01 through P2-U05) passing in the `cpp-unit-tests` CI job.
+- `cpp-unit-tests` CI job active on `ubuntu-latest` with full apt dependency list, CMake flags `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`, and ccache keyed on `hashFiles('OpenMS/CMakeLists.txt')`.
+- Cumulative test count at Phase 2 completion: 59.
+
 **Phase 5 is complete — all Phase 5 tests pass in CI:**
 - `UnifiedScanProcessor.cs` is the only scan processor.
 - `IScanProcessor` has exactly one method: `void ProcessMS(IMsScan)`.
@@ -415,6 +422,8 @@ Write the six C++ unit tests (P6-U01 through P6-U06) as described in the test pl
 
 The tests must be runnable via CTest on `ubuntu-latest` with no Thermo or Windows dependency.
 
+**MSVC `/WX` compliance (Phase 2 lesson #8):** When a variable is used only in a `TEST_EQUAL` assertion but not otherwise referenced, MSVC will warn about unused variables under `/WX`. Use `(void)var;` after the assertion to suppress the warning. This applies to any test variable that is checked once and not used again.
+
 Add the test binary to `OpenMS/src/tests/class_tests/openms/executables.cmake` (uncomment the existing entry or add a new one). The test binary name must follow the OpenMS convention: `FLASHIdaFAIMS_test`.
 
 ---
@@ -494,11 +503,11 @@ After all code changes are committed:
 
 **Submodule pointer update required after every push (Phase 1 lesson #1):** After pushing to `flashida-v9-bridge` or `flashida-v9-migration`, always `git add FlashIDA OpenMS` in the parent repo and push. The CI workflow checks out submodules at the pointer commit, not at the branch HEAD. Forgetting to update the pointer causes CI to silently compile the old code — new files are invisible and the new test count does not appear, making the failure very hard to diagnose.
 
-**Batch all C++ changes before triggering a DLL build (Phase 1 lesson #10):** Each `build-openms-dll.yml` run costs ~40 minutes with no ccache hit. Before triggering a build, ensure all C++ edits (Steps 2–4, 6, 10 in this plan) are committed and pushed. Verify the C++ code has no obvious MSVC issues: MSVC's `/WX` flag treats warnings as errors, so unused variables (`C4189`), unused parameters (`C4100`), and similar common warnings will block the build. Check these locally or in a test compile before pushing.
+**Batch all C++ changes before triggering a DLL build (Phase 1 lesson #10):** Each `build-openms-dll.yml` run costs ~40 minutes with no ccache hit. Before triggering a build, ensure all C++ edits (Steps 2–4, 6, 10 in this plan) are committed and pushed. Verify the C++ code has no obvious MSVC issues: MSVC's `/WX` flag treats warnings as errors, so unused variables (`C4189`), unused parameters (`C4100`), and similar common warnings will block the build. Use `(void)var;` to suppress unused variable warnings in test code (Phase 2 lesson #8). Check these locally or in a test compile before pushing.
 
 1. Advance the OpenMS submodule pointer in the FlashIDA repository to the commit containing the Phase 6 C++ changes.
 2. Trigger `build-openms-dll.yml` manually to produce the Phase 6 `OpenMS.dll` artifact.
-3. Wait for the build to complete (~40 min with no ccache hit; Phase 1 lesson #10). The ccache key includes the branch name — the first build on `phase-6-faims-absorption` has no cache and takes the full ~40 min. Subsequent builds on the same branch are faster.
+3. Wait for the build to complete (~40 min with no ccache hit; Phase 1 lesson #10). The ccache key uses `hashFiles('OpenMS/CMakeLists.txt')` for cache invalidation (Phase 2 lesson), not `executables.cmake` or branch name. The first build after a `CMakeLists.txt` change has no cache and takes the full ~40 min. Subsequent builds with the same `CMakeLists.txt` hash are faster.
 4. Trigger `flashida-ci.yml` and verify:
    - `cpp-unit-tests` job (ubuntu-latest): P6-U01 through P6-U06 all pass.
    - `windows-tests` job (windows-latest): P6-U07, P6-U08 pass; all prior-phase C# tests pass.
@@ -794,9 +803,9 @@ Phase 6 requires one new stress test step in `windows-tests` if it was not alrea
 
 #### Additions to `cpp-unit-tests` job (ubuntu-latest)
 
-The existing `ctest -R FLASH` command will automatically pick up `FLASHIdaFAIMS_test` once it is added to `executables.cmake`. No workflow YAML change required beyond ensuring the cmake cache is valid.
+The `cpp-unit-tests` job runs `ctest -R ClassName --output-on-failure` (Phase 2 lesson #4). It will automatically pick up `FLASHIdaFAIMS_test` once it is added to `executables.cmake`, using `ctest -R FLASHIdaFAIMS`. No workflow YAML change required beyond ensuring the cmake cache is valid.
 
-If the Phase 6 C++ test binary is in a new file (`FLASHIdaFAIMS_test.cpp`), verify the CMakeLists includes it. The cmake filter `ctest -R FLASH` should match if the test name contains "FLASH" — confirm the test is registered with a name matching this pattern. If not, update the filter to `ctest -R "FLASH|FAIMS"`.
+If the Phase 6 C++ test binary is in a new file (`FLASHIdaFAIMS_test.cpp`), verify the CMakeLists includes it. Test names follow the OpenMS `ClassName_test.cpp` convention — use `ctest -R FLASHIdaFAIMS` (not `ctest -R FLASH`) to target only the Phase 6 FAIMS tests.
 
 #### Additions to `windows-tests` job (windows-latest)
 
@@ -897,7 +906,7 @@ P6-S01 runs as the stress test step in `windows-tests`. If P6-S01 reports a dead
 
 ### 7. Full prior-phase regression
 
-Confirmed by the full CI run. All 66 prior-phase tests must still pass (cumulative count before Phase 6: 66). (Automated: all P0-P5 test IDs in the full CI run.)
+Confirmed by the full CI run. All prior-phase tests must still pass (the cumulative count before Phase 6 depends on Phases 3-5 deliverables; Phase 2 ended at 59 cumulative tests). (Automated: all P0-P5 test IDs in the full CI run.)
 
 ### Debugging guide
 
@@ -936,7 +945,7 @@ All of the following must be true before Phase 6 is considered complete:
 - [ ] `FAIMSScanProcessor.cs` is deleted (`git rm`), removed from `Flash.csproj`, with zero remaining references in C# source files.
 - [ ] `ScanScheduler.cs` is deleted (`git rm`), removed from `Flash.csproj`, with zero remaining references in C# source files.
 - [ ] All 13 Phase 6 tests pass in CI: P6-U01 through P6-U08, P6-I01, P6-R01 through P6-R03, P6-S01.
-- [ ] All 66 prior-phase tests (P0 through P5) still pass in CI without modification.
+- [ ] All prior-phase tests (P0 through P5) still pass in CI without modification. (The cumulative count before Phase 6 depends on Phases 3-5 deliverables; Phase 2 ended at 59.)
 - [ ] P6-R02 CI run: `Flash.exe ms1_faims_3cv.txt <output_file> method_faims_3cv.xml` produces CV transition log entries matching the Phase 5 golden file exactly.
 - [ ] P6-R03 CI run: `Flash.exe ms1_faims_3cv.txt <output_file> method_faims_skip.xml` produces skip event log entries matching the Phase 5 golden file exactly.
 - [ ] P6-R01 CI run: `Flash.exe <input_file> <output_file> method_default.xml` (non-FAIMS) produces output matching the Phase 5 standard DDA golden file exactly.
@@ -947,9 +956,9 @@ All of the following must be true before Phase 6 is considered complete:
 
 ---
 
-## Phase 0-1 Lessons Applied
+## Phase 0-2 Lessons Applied
 
-This section records which Phase 0 and Phase 1 lessons were incorporated into this plan and where.
+This section records which Phase 0, Phase 1, and Phase 2 lessons were incorporated into this plan and where.
 
 | Lesson | Source | Applied In |
 |--------|--------|------------|
@@ -974,3 +983,12 @@ This section records which Phase 0 and Phase 1 lessons were incorporated into th
 | NUnit: `--agents=1 --timeout=300000` to handle `calculateAveragine` cold cache (~3.5 min) | Phase 1 #8 | CI YAML NUnit steps; NUnit runner paragraph |
 | DLL build takes ~40 min with no ccache hit; batch all C++ changes per build | Phase 1 #10 | Step 13 DLL build time estimate; batch changes paragraph |
 | Both constructors exist; use `FLASHIdaWrapper(MethodParameters)` for JSON/FAIMS fields | Phase 1 #11 | P6-I01 description constructor note |
+| `toSpectrum()` returns `MSSpectrum` by value, not void with out-param | Phase 2 #1 | Not directly applicable to Phase 6 (no `toSpectrum()` calls), but recorded for completeness |
+| `DeconvolvedSpectrum` constructor takes `scan_number`, not `ms_level` | Phase 2 #2 | Not directly applicable to Phase 6, but recorded for completeness |
+| `toSpectrum()` requires at least one PeakGroup pushed before calling | Phase 2 #3 | Not directly applicable to Phase 6, but recorded for completeness |
+| CTest naming: use `-R ClassName` pattern, not `-R FLASH` | Phase 2 #4 | CI Configuration (cpp-unit-tests section); updated to `ctest -R FLASHIdaFAIMS` |
+| CI apt dependencies: full list established for ubuntu-latest | Phase 2 #5 | Implicit in CI configuration (references `environment-and-workflows.md` Section 1) |
+| CMake flags: `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja` | Phase 2 #6 | Implicit in CI configuration (cpp-unit-tests build step) |
+| ccache key: uses `hashFiles('OpenMS/CMakeLists.txt')`, not `executables.cmake` | Phase 2 #7 | Step 13 ccache key reference updated |
+| MSVC `/WX`: use `(void)var;` to suppress unused variable warnings in test code | Phase 2 #8 | Step 10 MSVC compliance note for C++ tests |
+| Phase 2 delivered: `OptimizationMetadata` struct, `GetConfigInt`/`GetConfigDouble`, 5 C++ unit tests, `cpp-unit-tests` CI job active, 59 cumulative tests | Phase 2 #9 | Prerequisites section (Phase 2 status acknowledged) |

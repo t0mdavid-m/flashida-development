@@ -24,7 +24,10 @@ The following must be complete and verified before starting Phase 7:
 
 1. **Phase 6 delivered and all tests passing.** C++ fully owns the scan queue including FAIMS CV cycling. `ScanScheduler.cs` and `FAIMSScanProcessor.cs` have been deleted. `GetNextScanCommand` is the sole source of all scan commands including CV injection.
 
-2. **`OptimizationMetadata` struct exists** (delivered in Phase 2, Build #1). `OptimizationMetadata.h` is already present in the OpenMS source tree. `DeconvolvedSpectrum` already carries `std::optional<OptimizationMetadata> opt_metadata_` and the accessor methods `getOrCreateOptimizationMetadata()`, `getOptimizationMetadata()`, `hasOptimizationMetadata()`. The `toSpectrum()` method already serializes metadata fields via `setMetaValue()` when present.
+2. **`OptimizationMetadata` struct exists** (delivered in Phase 2, Build #1). `OptimizationMetadata.h` is already present in the OpenMS source tree with 18 fields. `DeconvolvedSpectrum` already carries `std::optional<OptimizationMetadata> opt_metadata_` and the accessor methods `getOrCreateOptimizationMetadata()`, `getOptimizationMetadata()`, `hasOptimizationMetadata()`. The `toSpectrum()` method already serializes metadata fields via `setMetaValue()` when present. Phase 2 also delivered `GetConfigInt`/`GetConfigDouble` bridge functions and 5 C++ unit tests (cumulative: 59 tests after Phase 2). Key Phase 2 API details that Phase 7 must respect:
+   - **`toSpectrum()` returns `MSSpectrum` by value** (`MSSpectrum toSpectrum(int to_charge, double tol = 10.0, bool retain_undeconvolved = false)`), NOT void with an out-parameter. All code must use `MSSpectrum out = ds.toSpectrum(1);`.
+   - **`DeconvolvedSpectrum` constructor takes `scan_number`** (`explicit DeconvolvedSpectrum(int scan_number)`), NOT `ms_level`.
+   - **`toSpectrum()` requires at least one PeakGroup** — it unconditionally accesses `peak_groups_[0].isPositive()`. Any test calling `toSpectrum()` must push a default `PeakGroup` first to avoid undefined behavior.
 
 3. **Priority queue infrastructure in place** (Phase 3). `FLASHIda` already has `std::deque<ScanCommand> queues_[4]`, `queue_mutex_`, `pending_scan_map_`, and `cleanupExpiredCommands_()`. Priority 0 is already reserved for exploration (defined in Phase 3 / Phase 4 comments) but was never populated.
 
@@ -42,9 +45,9 @@ No new user-provided spectrum data is required for Phase 7 (reuses `ms1_standard
 
 ---
 
-## Phase 0–1 Lessons Learned — Cross-References
+## Phase 0–2 Lessons Learned — Cross-References
 
-The following lessons from [../Phase_0/lessons-learned.md](../Phase_0/lessons-learned.md) and [../Phase_1/lessons-learned.md](../Phase_1/lessons-learned.md) apply to Phase 7. Read these before implementation.
+The following lessons from [../Phase_0/lessons-learned.md](../Phase_0/lessons-learned.md), [../Phase_1/lessons-learned.md](../Phase_1/lessons-learned.md), and Phase 2 apply to Phase 7. Read these before implementation.
 
 1. **Flash.exe entry point (lesson #1):** The entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()`. There is no `-t` flag. Correct invocation: `Flash.exe <input_file> <output_file> <method.xml> [ms2_file]`.
 
@@ -91,6 +94,26 @@ The following lessons from [../Phase_1/lessons-learned.md](../Phase_1/lessons-le
 21. **Constructor preference: `FLASHIdaWrapper(MethodParameters)` (Phase 1 lesson #11):** Both `FLASHIdaWrapper(IDAParameters)` and `FLASHIdaWrapper(MethodParameters)` constructors exist. The `MethodParameters` overload uses `ToJSON()` (full JSON config including exploration fields). Prefer this constructor in Phase 7 test code. The `IDAParameters` overload remains for backward compatibility with bridge tests and legacy paths.
 
 22. **ms3 array parsing deferred from Phase 1 (Phase 1 lesson, deferred work):** Phase 1's JSON config parsing parsed the `ms["ms2"]` array into `ms2_configs_` but did not implement the corresponding ms3 array parsing. The comment in the pseudocode (`// ms2 and ms3 arrays are parsed into vectors for later use`) acknowledged ms3 parsing as pending. Phase 7 is the appropriate phase to implement ms3 array parsing in the JSON config path, since `buildMS3Command_()` (Step 8) needs ms3 activation and CE settings from the config.
+
+The following lessons from Phase 2 also apply:
+
+23. **`toSpectrum()` returns `MSSpectrum` by value (Phase 2 lesson #1):** The API is `MSSpectrum toSpectrum(int to_charge, double tol = 10.0, bool retain_undeconvolved = false)`. It does NOT use an out-parameter. All Phase 7 code and tests that call `toSpectrum()` must use the return-value pattern: `MSSpectrum out = ds.toSpectrum(1);`. This is directly relevant to P7-U10 and any code that serializes `OptimizationMetadata`.
+
+24. **`DeconvolvedSpectrum` constructor takes `scan_number` (Phase 2 lesson #2):** The constructor signature is `explicit DeconvolvedSpectrum(int scan_number)`, NOT `ms_level`. Phase 7 test code creating `DeconvolvedSpectrum` instances must use `scan_number` as the parameter name and semantics.
+
+25. **PeakGroup prerequisite for `toSpectrum()` (Phase 2 lesson #3):** `toSpectrum()` unconditionally accesses `peak_groups_[0].isPositive()`. Any test calling `toSpectrum()` must push a default `PeakGroup` into the `DeconvolvedSpectrum` first to avoid undefined behavior. This applies to P7-U10 and any Phase 7 test that exercises metadata serialization via `toSpectrum()`.
+
+26. **CTest naming convention (Phase 2 lesson #4):** Use `-R ClassName` pattern (e.g., `-R FLASHIda_exploration`) for specific tests, not `-R FLASH`. Test binaries follow the OpenMS `ClassName_test.cpp` convention.
+
+27. **CI apt dependencies (Phase 2 lesson #5):** The full apt list for `cpp-unit-tests` on `ubuntu-latest` is: `build-essential ccache ninja-build qt6-base-dev libeigen3-dev libboost-random-dev libboost-regex-dev libboost-iostreams-dev libboost-date-time-dev libboost-math-dev libxerces-c-dev zlib1g-dev libsvm-dev libbz2-dev liblzma-dev libzstd-dev coinor-libcoinmp-dev`.
+
+28. **CMake flags for test-only builds (Phase 2 lesson #6):** Use `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`. These flags skip GUI and Python bindings.
+
+29. **ccache key uses `hashFiles('OpenMS/CMakeLists.txt')` (Phase 2 lesson #7):** The ccache key hashes `OpenMS/CMakeLists.txt` for cache invalidation, not `executables.cmake`.
+
+30. **`(void)var;` for MSVC `/WX` compliance in test code (Phase 2 lesson #8):** When a variable is used only in a `TEST_EQUAL` assertion but not otherwise referenced, MSVC will warn about unused variables under `/WX`. Use `(void)var;` after the assertion to suppress the warning. This applies to all Phase 7 C++ unit tests (P7-U01 through P7-U10). Example: `(void)meta;` after asserting on metadata fields.
+
+31. **Phase 2 cumulative test count (Phase 2 lesson #9):** After Phase 2, there are 59 cumulative tests. Phase 7 adds 12 tests (P7-U01 through P7-U10 + P7-R01, P7-R02), bringing the cumulative total to 91 (after Phases 3-6 add their tests).
 
 ---
 
@@ -726,6 +749,14 @@ The regression golden file for `P7-R01` (exploration disabled) is the existing `
 
 All 12 tests for Phase 7 are listed below with full descriptions, expected outcomes, and the CI job that runs them. Tests P7-U01 through P7-U10 are C++ unit tests (Tier 1); P7-R01 and P7-R02 are regression tests (Tier 3). Note: any C# tests that load `OpenMS.dll` via P/Invoke (AL-CT / bridge tests) are Tier 2, not Tier 1, per Phase 0 lesson #9 — the tier convention is that DLL-dependent tests are Tier 2.
 
+> **Phase 2 lessons applicable to all C++ unit tests (P7-U01 through P7-U10):**
+>
+> - **`(void)var;` for MSVC `/WX` (lesson #8):** Use `(void)var;` after assertions on variables that are not otherwise referenced, to suppress C4189 warnings under MSVC `/WX`.
+> - **PeakGroup prerequisite for `toSpectrum()` (lesson #3):** Any test calling `toSpectrum()` (specifically P7-U10) must push a default `PeakGroup` into the `DeconvolvedSpectrum` first. `toSpectrum()` unconditionally accesses `peak_groups_[0].isPositive()`.
+> - **`toSpectrum()` returns `MSSpectrum` by value (lesson #1):** Use `MSSpectrum out = ds.toSpectrum(1);`, not an out-parameter.
+> - **`DeconvolvedSpectrum` constructor takes `scan_number` (lesson #2):** Use `DeconvolvedSpectrum ds(1);` (scan number), not `ms_level`.
+> - **CTest invocation (lesson #4):** Run with `ctest -R FLASHIda_exploration --output-on-failure`, not `ctest -R FLASH`.
+
 ### Test Summary (Quick Reference)
 
 | Test ID | What it verifies and why |
@@ -739,7 +770,7 @@ All 12 tests for Phase 7 are listed below with full descriptions, expected outco
 | P7-U07 | After an MS2 winner is selected, `initiateMS3Exploration_()` creates one child `ExplorationGroup` per top-N fragment ion (up to `MaxFragmentsToExplore`). Verifies the MS3 recursive branch is triggered correctly and child groups carry the right depth and parent reference. |
 | P7-U08 | When an exploration group's `depth` already equals `MaxExplorationDepth`, `initiateMS3Exploration_()` returns immediately without creating further child groups. Enforces the hard recursion cap. |
 | P7-U09 | `OptimizationMetadata` is populated on a variant's `DeconvolvedSpectrum` as soon as `feedExplorationResult_()` processes it — even before the group is complete. Validates all expected metadata fields (group_id, variant_index, collision_energy, activation_type, scores, timestamps). |
-| P7-U10 | `toSpectrum()` serializes `OptimizationMetadata` fields as named metavalues on the resulting `MSSpectrum`. Ensures downstream consumers (mzML writer, test comparator) can read optimization results from the standard spectrum object. |
+| P7-U10 | `toSpectrum()` serializes `OptimizationMetadata` fields as named metavalues on the resulting `MSSpectrum` (return-value API, not out-param). Test must push a default `PeakGroup` before calling `toSpectrum()` (Phase 2 lesson #3). Ensures downstream consumers can read optimization results from the standard spectrum object. |
 | P7-R01 | With exploration disabled (`method_default.xml`), output is byte-for-byte identical to the Phase 4 standard DDA golden file. Guards against any regression introduced by the new exploration code paths when they are inactive. |
 | P7-R02 | With exploration enabled (`method_exploration.xml`, CE 20-40 step 5), output matches the committed `phase7_exploration.tsv` golden file, including exploration variant rows, `EXPL-WINNER` log entries, and `OptimizationMetadata` metavalue columns. End-to-end validation of the full exploration pipeline. |
 
@@ -810,7 +841,7 @@ All 12 tests for Phase 7 are listed below with full descriptions, expected outco
 
 **Tier:** 1 (C++ unit test)
 **CI runner:** `ubuntu-latest`, `cpp-unit-tests` job
-**Description:** Starting from P7-U09's spectrum (which has `OptimizationMetadata` set), call `toSpectrum()` and inspect the resulting `MSSpectrum`.
+**Description:** Starting from P7-U09's spectrum (which has `OptimizationMetadata` set), call `toSpectrum()` and inspect the resulting `MSSpectrum`. **IMPORTANT:** `toSpectrum()` returns `MSSpectrum` by value (Phase 2 lesson #1) — use `MSSpectrum out = ds.toSpectrum(1);`, NOT an out-parameter. **CRITICAL:** `toSpectrum()` unconditionally accesses `peak_groups_[0]` (Phase 2 lesson #3) — the test must push a default `PeakGroup` into the `DeconvolvedSpectrum` before calling `toSpectrum()`. Use `(void)var;` to suppress any unused variable warnings under MSVC `/WX` (Phase 2 lesson #8).
 **Expected outcome:** `out_spec.getMetaValue("optimization_group_id")` returns the correct integer. `out_spec.getMetaValue("optimization_collision_energy")` returns 20.0. `out_spec.getMetaValue("optimization_is_best_variant")` returns `"false"`. `out_spec.getMetaValue("optimization_quality_score")` returns the computed score. `out_spec.getMetaValue("optimization_precursor_mass")` returns the precursor mass.
 
 ### P7-R01 — Exploration disabled regression
@@ -835,12 +866,14 @@ All 12 tests for Phase 7 are listed below with full descriptions, expected outco
 
 #### 1. CTest filter for exploration tests
 
-In the `cpp-unit-tests` job, the CTest invocation currently filters `ctest -R FLASH`. This already matches any test binary containing "FLASH" in its name. If the new test binary is named `FLASHIda_exploration_test`, it is automatically included. No pattern change is needed, but verify the test binary name matches the filter. If the binary is named `ExplorationEngine_test` or similar (without "FLASH"), either rename it or add it to the filter:
+In the `cpp-unit-tests` job, the CTest invocation uses `-R ClassName` patterns (not `-R FLASH`; see Phase 2 lesson #4). The new test binary `FLASHIda_exploration_test` must be added to the CTest filter. Use a pattern that matches all FLASH-related test class names:
 
 ```yaml
-- name: Run C++ unit tests (FLASH)
-  run: ctest -R "FLASH|Exploration" --output-on-failure
+- name: Run C++ unit tests
+  run: ctest -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIda_exploration" --output-on-failure
 ```
+
+Alternatively, list each test class individually using `ctest -R FLASHIda_exploration` to run only the Phase 7 tests during development, then use the combined pattern for the final CI filter.
 
 #### 2. Regression runner: add exploration config
 
@@ -867,7 +900,7 @@ Also note that `method_exploration_overflow.xml` and `method_exploration_ms3.xml
 
 Phase 7 adds only C++ unit tests (existing `cpp-unit-tests` job, `ubuntu-latest`) and one new regression config (existing `windows-tests` job, `windows-latest`). No new runner, no new job, no new secrets. The existing Build #4 artifact cache key (OpenMS submodule hash) automatically handles the DLL rebuild when the C++ source advances.
 
-#### 5. CI infrastructure reminders (Phase 0–1 lessons)
+#### 5. CI infrastructure reminders (Phase 0–2 lessons)
 
 - **Thermo DLLs (Phase 0 lesson #3):** Use Strategy B — decrypt `FlashIDA/dependencies/thermo-dlls.zip.enc` with `openssl enc -d -aes-256-cbc -pbkdf2` using `THERMO_DLL_PASSPHRASE` secret. Do not use base64 or GPG.
 - **OpenMS DLLs (Phase 0 lesson #5):** Already committed in `FlashIDA/dll/`. Do not add cache/download steps. MSBuild copies them via `CopyToOutputDirectory`.
@@ -881,6 +914,10 @@ Phase 7 adds only C++ unit tests (existing `cpp-unit-tests` job, `ubuntu-latest`
 - **DLL build time (Phase 1 lesson #10):** ~40 min per push with no ccache hit. Batch all C++ changes and verify for MSVC `/WX` issues before pushing.
 - **`ModificationsDB::getInstance()` (Phase 1 lesson #4):** Never remove or comment out OpenMS singleton initializer calls. Use `(void)` cast if the return value is unused.
 - **`.gitattributes` (Phase 0 lesson #4):** If any new binary file extensions are introduced, add them to `FlashIDA/.gitattributes` as `binary` before committing.
+- **CTest naming (Phase 2 lesson #4):** Use `ctest -R ClassName` pattern (e.g., `-R FLASHIda_exploration`), not `-R FLASH`.
+- **ccache key (Phase 2 lesson #7):** Uses `hashFiles('OpenMS/CMakeLists.txt')` for cache invalidation, not `executables.cmake`.
+- **CMake flags (Phase 2 lesson #6):** `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`.
+- **`(void)var;` for MSVC `/WX` (Phase 2 lesson #8):** Use `(void)var;` in C++ test code to suppress unused variable warnings under MSVC `/WX`.
 
 ---
 
@@ -940,9 +977,9 @@ This is also verified structurally by P7-U07 and P7-U08 in the `cpp-unit-tests` 
 
 ---
 
-## Phase 0–1 Lessons Applied
+## Phase 0–2 Lessons Applied
 
-This section records which Phase 0 and Phase 1 lessons are directly reflected in this implementation plan, so future plan reviews can verify coverage.
+This section records which Phase 0, Phase 1, and Phase 2 lessons are directly reflected in this implementation plan, so future plan reviews can verify coverage.
 
 | Lesson | Source | Where Applied in This Plan |
 |--------|--------|---------------------------|
@@ -968,3 +1005,12 @@ This section records which Phase 0 and Phase 1 lessons are directly reflected in
 | `ModificationsDB::getInstance()` side effects | Phase 1 #4 | Cross-References item 20; CI reminders §5 |
 | Prefer `FLASHIdaWrapper(MethodParameters)` | Phase 1 #11 | Cross-References item 21 |
 | ms3 array parsing deferred from Phase 1 | Phase 1 (deferred) | Prerequisites item 6; Cross-References item 22 |
+| `toSpectrum()` returns `MSSpectrum` by value | Phase 2 #1 | Cross-References item 23; Prerequisites item 2; P7-U10 description; Test Cases preamble |
+| `DeconvolvedSpectrum` constructor takes `scan_number` | Phase 2 #2 | Cross-References item 24; Prerequisites item 2; Test Cases preamble |
+| PeakGroup prerequisite for `toSpectrum()` | Phase 2 #3 | Cross-References item 25; Prerequisites item 2; P7-U10 description; Test Cases preamble |
+| CTest `-R ClassName` naming convention | Phase 2 #4 | Cross-References item 26; CI Configuration §1; Test Cases preamble |
+| CI apt dependencies (full list) | Phase 2 #5 | Cross-References item 27 |
+| CMake flags for test-only builds | Phase 2 #6 | Cross-References item 28 |
+| ccache key uses `hashFiles('OpenMS/CMakeLists.txt')` | Phase 2 #7 | Cross-References item 29 |
+| `(void)var;` for MSVC `/WX` in test code | Phase 2 #8 | Cross-References item 30; P7-U10 description; Test Cases preamble |
+| Phase 2 cumulative: 59 tests | Phase 2 #9 | Cross-References item 31 |

@@ -26,7 +26,7 @@ The following must be complete and passing before starting Phase 2 implementatio
 1. **Phase 0 done:** `Flash.Tests.csproj` exists. `baseline_phase0.tsv` is committed to `FlashIDA/test-data/golden/`. The `flashida-ci.yml` workflow skeleton exists and the `windows-tests` job is active.
 2. **Phase 1 done:** JSON config parsing is complete and CI is green (53 tests passing as of 2026-03-28). Phase 1 delivered: `MethodParameters.ToJSON()`, the new `FLASHIdaWrapper(MethodParameters)` constructor, `parseJSONConfig_()` on the C++ side, golden JSON files (`config_default.json`, `config_full.json`), and P/Invoke stubs for `GetConfigInt`/`GetConfigDouble` (C++ implementation deferred to Phase 2 — see Step 3 below). The legacy `FLASHIdaWrapper(IDAParameters)` constructor is still present for backward compatibility. Phase 2's DLL rebuild must include the `GetConfigInt`/`GetConfigDouble` C++ implementations so that the P1-I03 diagnostic bridge stubs auto-activate.
 3. **C++ unit test infrastructure active:** The `cpp-unit-tests` CI job in `flashida-ci.yml` must be active and capable of building and running OpenMS class tests on `ubuntu-latest`. This is the first phase that introduces C++ unit tests; see the CI configuration section below.
-4. **`executables.cmake` FLASH entries uncommented:** The FLASH test entries in `OpenMS/src/tests/class_tests/openms/executables.cmake` are currently commented out. They must be uncommented (or new entries added for the Phase 2 test binary) before `ctest -R FLASH` can discover and run the tests.
+4. **`executables.cmake` FLASH entries uncommented:** The FLASH test entries in `OpenMS/src/tests/class_tests/openms/executables.cmake` are currently commented out. They must be uncommented (or new entries added for the Phase 2 test binary) before `ctest -R DeconvolvedSpectrum_OptimizationMetadata` can discover and run the Phase 2 test. (Note: the actual `-R` pattern depends on the test name registered in `executables.cmake`.)
 5. **Golden file baseline available:** `FlashIDA/test-data/golden/baseline_phase0.tsv` (from Phase 0) and the Phase 1 golden files (`config_default.json`, `config_full.json`, the `Flash.exe` regressions) are committed, so P2-R01 has a baseline to compare against.
 6. **`ms1_smoke_test.txt` and `baseline_phase0.tsv` are committed (from Phase 0).** `ms1_standard.txt` is not required by Phase 2 — it is first needed in Phase 4.
 
@@ -260,7 +260,7 @@ START_TEST(DeconvolvedSpectrum_OptimizationMetadata, "$Id$")
 
 START_SECTION(hasOptimizationMetadata_default_false)
 {
-  DeconvolvedSpectrum ds(1); // ms_level = 1
+  DeconvolvedSpectrum ds(1); // scan_number = 1
   TEST_EQUAL(ds.hasOptimizationMetadata(), false)
 }
 END_SECTION
@@ -300,7 +300,7 @@ END_SECTION
 
 START_SECTION(toSpectrum_serializes_metadata_via_setMetaValue)
 {
-  DeconvolvedSpectrum ds(2); // ms_level = 2
+  DeconvolvedSpectrum ds(2); // scan_number = 2
   OptimizationMetadata& meta = ds.getOrCreateOptimizationMetadata();
   meta.group_id = 42;
   meta.collision_energy = 25.0;
@@ -308,9 +308,7 @@ START_SECTION(toSpectrum_serializes_metadata_via_setMetaValue)
   meta.fragmentation_quality_score = 0.87;
   meta.precursor_mass = 15432.5;
 
-  MSSpectrum out_spec;
-  ds.toSpectrum(out_spec, 1, false); // or whatever the existing toSpectrum signature is
-  // Adjust the call signature to match the actual DeconvolvedSpectrum::toSpectrum() API.
+  MSSpectrum out_spec = ds.toSpectrum(1);
 
   TEST_EQUAL((int)out_spec.getMetaValue("optimization_group_id"), 42)
   TEST_REAL_SIMILAR((double)out_spec.getMetaValue("optimization_collision_energy"), 25.0)
@@ -326,8 +324,7 @@ START_SECTION(toSpectrum_without_metadata_sets_no_optimization_metavalues)
   // Do NOT call getOrCreateOptimizationMetadata()
   TEST_EQUAL(ds.hasOptimizationMetadata(), false)
 
-  MSSpectrum out_spec;
-  ds.toSpectrum(out_spec, 1, false);
+  MSSpectrum out_spec = ds.toSpectrum(1);
 
   // None of the optimization metakeys should be present
   TEST_EQUAL(out_spec.metaValueExists("optimization_group_id"), false)
@@ -504,7 +501,7 @@ The job runs on `ubuntu-latest`. It must:
 2. Restore the CMake/ccache cache (keyed on the OpenMS submodule commit hash and the OS).
 3. Configure CMake for the OpenMS test-only build target (does not build the full library — only the class test binaries listed in `executables.cmake`).
 4. Build the `DeconvolvedSpectrum_OptimizationMetadata_test` binary (and any other FLASH test binaries newly uncommented in `executables.cmake`).
-5. Run `ctest -R FLASH` (or `ctest -R DeconvolvedSpectrum_OptimizationMetadata_test` if the `-R FLASH` pattern does not match without further cmake configuration).
+5. Run `ctest -R DeconvolvedSpectrum_OptimizationMetadata` to execute the Phase 2 test. (Note: if running all FLASH-related tests generically, the actual `-R` pattern depends on the test names registered in `executables.cmake`.)
 6. Fail the job if any test exits non-zero.
 
 The job does NOT require Windows, .NET, Thermo DLLs, or OpenMS DLLs. It is a pure C++ build-and-run on Linux.
@@ -536,7 +533,7 @@ The C++ unit test build should use ccache to avoid rebuilding unchanged translat
   uses: actions/cache@v4
   with:
     path: ~/.ccache
-    key: ccache-ubuntu-${{ steps.openms-hash.outputs.hash }}-${{ hashFiles('OpenMS/src/tests/class_tests/openms/executables.cmake') }}
+    key: ccache-ubuntu-${{ steps.openms-hash.outputs.hash }}-${{ hashFiles('OpenMS/CMakeLists.txt') }}
     restore-keys: |
       ccache-ubuntu-${{ steps.openms-hash.outputs.hash }}-
       ccache-ubuntu-
@@ -597,23 +594,23 @@ Any C# test code introduced in Phase 2 that loads test data must use `Path.Combi
 
 The following checklist must be satisfied before Phase 2 is considered complete and before Build #1 is assembled (which also includes Phase 1 and Phase 3):
 
-- [ ] `OptimizationMetadata.h` created at `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/OptimizationMetadata.h` with all 18 fields and correct default values.
-- [ ] `DeconvolvedSpectrum.h` updated: `<optional>` included, `OptimizationMetadata.h` included, `opt_metadata_` private member added, three accessor declarations present.
-- [ ] `DeconvolvedSpectrum.cpp` updated: three accessor methods implemented, `if (opt_metadata_)` serialization block added to `toSpectrum()` with the five specified metavalue keys.
-- [ ] `DeconvolvedSpectrum_OptimizationMetadata_test.cpp` created with five test sections matching P2-U01 through P2-U05.
-- [ ] `executables.cmake` modified to include `DeconvolvedSpectrum_OptimizationMetadata_test` (and FLASH entries uncommented as appropriate).
-- [ ] P2-U01 passes: `hasOptimizationMetadata()` returns `false` on default construction.
-- [ ] P2-U02 passes: `getOrCreateOptimizationMetadata()` transitions `hasOptimizationMetadata()` to `true`.
-- [ ] P2-U03 passes: all 15 checked fields have correct defaults.
-- [ ] P2-U04 passes: `toSpectrum()` sets all five `optimization_*` metavalues correctly when metadata is present.
-- [ ] P2-U05 passes: `toSpectrum()` sets none of the five `optimization_*` metavalues when metadata is absent.
-- [ ] P2-R01 passes: `Flash.exe` with `ms1_smoke_test.txt` and `method_default.xml` produces output matching `baseline_phase0.tsv` exactly (within tolerance).
-- [ ] All Phase 0 tests (P0-U01 through P0-R01) continue to pass.
-- [ ] All Phase 1 tests (P1-U01 through P1-R02) continue to pass.
-- [ ] `GetConfigInt` and `GetConfigDouble` C++ bridge exports implemented in `FLASHIdaBridgeFunctions.cpp` (deferred from Phase 1). P1-I03 diagnostic assertions auto-activate (no longer caught by `EntryPointNotFoundException`).
-- [ ] `cpp-unit-tests` CI job dry-run passes (job activated with `if: false` removed, no Phase 2 code yet) before C++ code is added.
-- [ ] `cpp-unit-tests` CI job is active and passes on `ubuntu-latest` with no Thermo or Windows dependency.
-- [ ] CI `cpp-unit-tests` job passes with zero warnings.
+- [x] `OptimizationMetadata.h` created at `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/OptimizationMetadata.h` with all 18 fields and correct default values.
+- [x] `DeconvolvedSpectrum.h` updated: `<optional>` included, `OptimizationMetadata.h` included, `opt_metadata_` private member added, three accessor declarations present.
+- [x] `DeconvolvedSpectrum.cpp` updated: three accessor methods implemented, `if (opt_metadata_)` serialization block added to `toSpectrum()` with the five specified metavalue keys.
+- [x] `DeconvolvedSpectrum_OptimizationMetadata_test.cpp` created with five test sections matching P2-U01 through P2-U05.
+- [x] `executables.cmake` modified to include `DeconvolvedSpectrum_OptimizationMetadata_test` (and FLASH entries uncommented as appropriate).
+- [x] P2-U01 passes: `hasOptimizationMetadata()` returns `false` on default construction.
+- [x] P2-U02 passes: `getOrCreateOptimizationMetadata()` transitions `hasOptimizationMetadata()` to `true`.
+- [x] P2-U03 passes: all 15 checked fields have correct defaults.
+- [x] P2-U04 passes: `toSpectrum()` sets all five `optimization_*` metavalues correctly when metadata is present.
+- [x] P2-U05 passes: `toSpectrum()` sets none of the five `optimization_*` metavalues when metadata is absent.
+- [x] P2-R01 passes: `Flash.exe` with `ms1_smoke_test.txt` and `method_default.xml` produces output matching `baseline_phase0.tsv` exactly (within tolerance).
+- [x] All Phase 0 tests (P0-U01 through P0-R01) continue to pass.
+- [x] All Phase 1 tests (P1-U01 through P1-R02) continue to pass.
+- [x] `GetConfigInt` and `GetConfigDouble` C++ bridge exports implemented in `FLASHIdaBridgeFunctions.cpp` (deferred from Phase 1). P1-I03 diagnostic assertions auto-activate (no longer caught by `EntryPointNotFoundException`).
+- [x] `cpp-unit-tests` CI job dry-run passes (job activated with `if: false` removed, no Phase 2 code yet) before C++ code is added.
+- [x] `cpp-unit-tests` CI job is active and passes on `ubuntu-latest` with no Thermo or Windows dependency.
+- [x] CI `cpp-unit-tests` job passes with zero warnings.
 - [ ] Code review: a second developer has confirmed the `toSpectrum()` insertion point is correct and does not break any existing `MSSpectrum` field assignments above it.
 
 ---

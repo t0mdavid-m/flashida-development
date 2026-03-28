@@ -547,6 +547,14 @@ for label, ces in results.items():
 
 **Files:** NEW `OptimizationMetadata.h`, `DeconvolvedSpectrum.h/.cpp`
 
+> **Phase 2 Implementation Notes:**
+>
+> 1. **`toSpectrum()` is return-value, not out-param:** `DeconvolvedSpectrum::toSpectrum()` returns `MSSpectrum` by value (`MSSpectrum toSpectrum(int to_charge, double tol = 10.0, bool retain_undeconvolved = false)`), not void with an out parameter. The serialization block above is inserted before the `return out_spec;` statement inside the existing `toSpectrum()` method.
+>
+> 2. **`DeconvolvedSpectrum` constructor takes `scan_number`, not `ms_level`:** The constructor signature is `explicit DeconvolvedSpectrum(int scan_number)`. Plans and tests should use the correct parameter name.
+>
+> 3. **`toSpectrum()` requires at least one PeakGroup (critical for testing):** `toSpectrum()` unconditionally accesses `peak_groups_[0].isPositive()` (line 42 of `DeconvolvedSpectrum.cpp`). Any test calling `toSpectrum()` must push a default `PeakGroup` into the `DeconvolvedSpectrum` first to avoid undefined behavior. This is a mandatory prerequisite for all test code that exercises `toSpectrum()`.
+
 ---
 
 ## Backwards Compatibility
@@ -580,7 +588,7 @@ for label, ces in results.items():
 |-------|--------|-------|
 | Phase 0 | COMPLETE | Baseline captured. 53 tests passing. See Phase 0 compliance report. |
 | Phase 1 | COMPLETE | JSON config fully compliant. 53 tests passing. See Phase 1 compliance report. |
-| Phase 2 | Not started | `GetConfigInt`/`GetConfigDouble` C++ implementation deferred from Phase 1 to here (batched with OptimizationMetadata DLL rebuild). |
+| Phase 2 | COMPLETE | OptimizationMetadata + GetConfigInt/GetConfigDouble. 6 new tests (cumulative: 59). See Phase 2 compliance report. |
 | Phase 3 | Not started | `ScanSchedulingConfig`/`ParameterOptimizationConfig` deferred from Phase 1 to here. |
 | Phase 4 | Not started | — |
 | Phase 5 | Not started | — |

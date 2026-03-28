@@ -27,13 +27,13 @@ This phase completes Issues 1 (Unified ProcessScan Bridge) and 5 (Scoring in Uni
 The following must be in place before beginning Phase 4 implementation:
 
 1. **Build #1 is complete and verified.** Phases 1, 2, and 3 are merged and all their tests pass:
-   - P0-* through P3-* tests all pass in CI.
+   - P0-* through P3-* tests all pass in CI (59 cumulative tests from Phases 0-2, plus Phase 3 tests).
    - `Flash.exe` runs with shadow validation (entry point is `FLASHIdaWrapper.Main()`, no `-t` flag — see Phase 0 lesson #1), producing TRACK log entries. Correct invocation: `Flash.exe <input_file> <output_file> <method.xml> [ms2_file]`.
+   - **Phase 2 specifically delivered:** `OptimizationMetadata` struct (18 fields, stored as `std::optional` on `DeconvolvedSpectrum`) with accessors (`hasOptimizationMetadata()`, `getOrCreateOptimizationMetadata()`, `getOptimizationMetadata()`); `GetConfigInt`/`GetConfigDouble` bridge functions exported from `OpenMS.dll`; 5 C++ unit tests passing via `ctest -R DeconvolvedSpectrum_OptimizationMetadata`; `cpp-unit-tests` CI job active on `ubuntu-latest` (no longer gated by `if: false`).
    - **Phase 3 specifically delivers:** the `ProcessScan` and `GetNextScanCommand` bridge functions exported from `OpenMS.dll`; the `ScanCommand` struct with all fields; the `ScanFactory.BuildFromCommand()` stub in C#; the shadow validation wiring in scan processors; `GetNextScanCommand` returning MS1 when queue is empty; the priority queue data structure (`queues_[4]`) and `queue_mutex_`; the `pending_scan_map_` and tracking ID counter; and the Phase 3 golden file (`baseline_phase3.tsv`) committed to `test-data/golden/`.
    - `GetNextScanCommand` returns MS1 when queue is empty (stub behavior).
    - `ScanCommand` struct marshaling is verified (C# and C++ agree on layout, size, and field offsets).
    - JSON configuration is parsed by C++ and legacy auto-detect fallback works.
-   - `OptimizationMetadata` struct exists on `DeconvolvedSpectrum`.
 
 2. **Phase 3 golden files exist.** `baseline_phase3.tsv` (or equivalent per-mode golden files from Phase 3) is committed to `FlashIDA/test-data/golden/`. These are the regression baseline for P4-R01.
 
@@ -575,6 +575,10 @@ These tests run entirely within C++ using the OpenMS ClassTest framework. They r
 
 **Real peak value requirement:** All peak arrays in `FLASHIda_ProcessScan_test.cpp` must use real measured values extracted from characterized experimental data — not arbitrary or simulated values. A provenance comment block must appear at the top of `FLASHIda_ProcessScan_test.cpp` documenting the source of every embedded peak array (e.g., "MS1 array — extracted from `ms1_standard.txt` scan 42 using `prepare-test-data.py`"). This ensures that score ranking differences observed across branches and mode comparisons reflect genuine instrument behavior, not artificial distributions.
 
+**MSVC `/WX` compliance (Phase 2 lesson #8):** Any variable in test code that is used only in a `TEST_EQUAL` assertion but not otherwise referenced will trigger MSVC unused-variable warning `C4189`, which is an error under `/WX`. Suppress with `(void)var;` after the assertion. Example: `auto result = obj.processScan(...); TEST_EQUAL(result > 0, true); (void)result;`.
+
+**PeakGroup prerequisite for `toSpectrum()` (Phase 2 lesson #3):** Phase 4 tests primarily call `processScan()` on `FLASHIda` rather than `toSpectrum()` on `DeconvolvedSpectrum`. However, if any Phase 4 test code needs to call `toSpectrum()` (e.g., to inspect deconvolution output), it must first push a default `PeakGroup` into the `DeconvolvedSpectrum` — `toSpectrum()` unconditionally accesses `peak_groups_[0]`.
+
 | Test ID | Description | Expected Outcome |
 |---------|-------------|------------------|
 | P4-U01 | ProcessScan MS1 path: deconvolve + score + push commands | Feed a real MS1 peak array (hard-coded from characterized experimental data) containing 3 charge envelopes with known m/z and charge. Call `processScan` with `ms_level=1`. Verify return value > 0 (commands pushed). Verify `getNextScanCommand` returns MS2 commands with `msn_level=2` and `precursor_mz` matching the known envelope masses. This test also directly validates that `ProcessScan` returns an atomic count — the race condition with the old `GetPeakGroupSize` / `GetIsolationWindows` pattern is structurally eliminated. |
@@ -642,7 +646,7 @@ target_link_libraries(FLASHIda_ProcessScan_test OpenMS)
 add_test(NAME FLASHIda_ProcessScan_test COMMAND FLASHIda_ProcessScan_test)
 ```
 
-The `cpp-unit-tests` CI job already runs `ctest -R FLASH` on `ubuntu-latest`. This entry is picked up automatically once added.
+The `cpp-unit-tests` CI job runs `ctest -R ClassName --output-on-failure` on `ubuntu-latest` (e.g., `ctest -R FLASHIda_ProcessScan`). Test names follow the OpenMS `ClassName_test.cpp` convention — use `-R ClassName`, not `-R FLASH`. This entry is picked up automatically once added.
 
 #### 2. Update Regression Runner with Phase 4 Configs
 
@@ -697,6 +701,8 @@ windows-tests:
 #### 5. Cache Key Unchanged
 
 The OpenMS DLL cache key is the submodule commit hash. Since Phase 4 advances the OpenMS submodule (new C++ changes in `FLASHIda.cpp`), the cache will miss on the first Phase 4 build and trigger a full rebuild via `build-openms-dll.yml`. This is expected and correct.
+
+**ccache key (Phase 2 lesson #7):** The `cpp-unit-tests` CI job uses `hashFiles('OpenMS/CMakeLists.txt')` for ccache invalidation — not `executables.cmake`. This means adding new test entries to `executables.cmake` does not invalidate the ccache. The cache is only invalidated when `CMakeLists.txt` changes (e.g., when the OpenMS submodule is advanced with new source files).
 
 #### 6. DLL Availability Notes
 
@@ -772,7 +778,7 @@ The following checklist must be fully satisfied before Phase 4 is considered com
 
 ### CI
 
-- [ ] `FLASHIda_ProcessScan_test` is registered in `executables.cmake` and runs under `ctest -R FLASH`.
+- [ ] `FLASHIda_ProcessScan_test` is registered in `executables.cmake` and runs under `ctest -R FLASHIda_ProcessScan` (use `-R ClassName` pattern, not `-R FLASH`).
 - [ ] `regression-runner.ps1` includes all 10 Phase 4 configs.
 - [ ] CI total wall time for `windows-tests` + regression jobs stays within budget (investigate parallelization if > 20 min).
 - [ ] `flashida-ci.yml` triggers on `phase-4` branch and `flashida-v9-migration` branch.
@@ -790,9 +796,11 @@ The following checklist must be fully satisfied before Phase 4 is considered com
 
 ---
 
-## Phase 0-1 Lessons Applied
+## Phase 0-2 Lessons Applied
 
-This section records which Phase 0 and Phase 1 lessons were applied during the writing of this plan and where each appears.
+This section records which Phase 0, Phase 1, and Phase 2 lessons were applied during the writing of this plan and where each appears.
+
+### Phase 0 Lessons
 
 | Lesson | Source | Where Applied in This Plan |
 |--------|--------|---------------------------|
@@ -804,6 +812,12 @@ This section records which Phase 0 and Phase 1 lessons were applied during the w
 | L0-12: Build output `FlashIDA/bin/`; DLL name `"OpenMS.dll"` with extension; NUnit full path; working dir `bin/` | Phase 0 #12 | CI Configuration §4 (build output note); Files to Modify table (FLASHIdaWrapper.cs row); integration test NUnit runner note |
 | L0-14: Silent zero-result P/Invoke failures | Phase 0 #14 | Step 4 (bridge return value) — "Silent zero-result failures" callout |
 | L0-15: 2-commit minimum for golden capture; submodule pointer batching | Phase 0 #15 | Step 8 golden capture workflow; submodule batching note |
+| L0 compliance L-2: `compare_golden.py` column classification for new columns | Phase 0 audit | Step 8 — "`compare_golden.py` column classification" callout |
+
+### Phase 1 Lessons
+
+| Lesson | Source | Where Applied in This Plan |
+|--------|--------|---------------------------|
 | L1-1: Submodule pointer must be updated after every sub-repo push | Phase 1 #1 | Step 8 — "Submodule batching and pointer updates" callout |
 | L1-2: Test data path is `Path.Combine(TestDirectory, "..", "test-data")` (one level up from `bin/`) | Phase 1 #2 | Integration test NUnit runner note |
 | L1-3: Check for pre-existing MSVC `/WX` errors before DLL build | Phase 1 #3 | Step 8 — "DLL build cost" callout |
@@ -812,4 +826,17 @@ This section records which Phase 0 and Phase 1 lessons were applied during the w
 | L1-8: NUnit `--agents=1 --timeout=300000` | Phase 1 #8 | Integration test NUnit runner note |
 | L1-10: DLL build ~40 min; batch C++ changes | Phase 1 #10 | Step 8 — "DLL build cost" callout |
 | L1-11: Prefer `FLASHIdaWrapper(MethodParameters)` constructor; keep old overload | Phase 1 #11 | Integration test section — "Constructor selection" note |
-| L0 compliance L-2: `compare_golden.py` column classification for new columns | Phase 0 audit | Step 8 — "`compare_golden.py` column classification" callout |
+
+### Phase 2 Lessons
+
+| Lesson | Source | Where Applied in This Plan |
+|--------|--------|---------------------------|
+| L2-1: `toSpectrum()` returns `MSSpectrum` by value, not void with out-param | Phase 2 | Not directly used in Phase 4 tests (Phase 4 does not call `toSpectrum()` in test code). Noted here for awareness; any future Phase 4 test that calls `toSpectrum()` must use the return-value pattern: `MSSpectrum out = ds.toSpectrum(1);` |
+| L2-2: `DeconvolvedSpectrum` constructor takes `scan_number`, not `ms_level` | Phase 2 | Not directly used in Phase 4 C++ tests (Phase 4 tests call `processScan()` on `FLASHIda`, not construct `DeconvolvedSpectrum` directly). Noted here; if any Phase 4 test constructs a `DeconvolvedSpectrum`, use `DeconvolvedSpectrum(scan_number)`. |
+| L2-3: `toSpectrum()` requires at least one PeakGroup (accesses `peak_groups_[0]`) | Phase 2 | Not directly used in Phase 4 tests. Noted here; any Phase 4 test calling `toSpectrum()` must push a default `PeakGroup` first to avoid undefined behavior. |
+| L2-4: CTest naming uses `-R ClassName` pattern, not `-R FLASH` | Phase 2 | CI Configuration §1 (ctest invocation); Definition of Done (test registration check). All ctest invocations use `-R FLASHIda_ProcessScan`, not `-R FLASH`. |
+| L2-5: CI apt dependencies (ubuntu) — full list required | Phase 2 | CI references point to `environment-and-workflows.md` Section 1 for the authoritative apt list: `build-essential ccache ninja-build qt6-base-dev libeigen3-dev libboost-random-dev libboost-regex-dev libboost-iostreams-dev libboost-date-time-dev libboost-math-dev libxerces-c-dev zlib1g-dev libsvm-dev libbz2-dev liblzma-dev libzstd-dev coinor-libcoinmp-dev` |
+| L2-6: CMake flags for test-only builds | Phase 2 | CI uses `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja` for the `cpp-unit-tests` job |
+| L2-7: ccache key uses `hashFiles('OpenMS/CMakeLists.txt')`, not `executables.cmake` | Phase 2 | CI Configuration §5 (cache key unchanged note) |
+| L2-8: MSVC `/WX` — use `(void)var;` to suppress unused variable warnings in test code | Phase 2 | Step 8 "DLL build cost" callout (applies to all C++ test code); C++ unit test section — any variable used only in `TEST_EQUAL` assertions must have `(void)var;` after the assertion to suppress MSVC `C4189` |
+| L2-9: Phase 2 delivered `OptimizationMetadata` struct, `GetConfigInt`/`GetConfigDouble` bridge functions, 5 C++ unit tests, `cpp-unit-tests` CI job active | Phase 2 | Prerequisites §1 (Phase 2 deliverables listed explicitly) |

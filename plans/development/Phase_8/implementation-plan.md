@@ -45,8 +45,9 @@ The following must be true before starting Phase 8:
    changes; each failed DLL build wastes ~40 minutes (Phase 1 lesson #10). Batch all
    Phase 8 C++ edits (Steps 2–5) into a single push to minimise rebuild cycles.
 
-3. **All prior regression tests pass.** Every test from P0 through P7 (91 tests total)
-   passes on the Build #4 artifact. No test regressions are open.
+3. **All prior regression tests pass.** Every test from P0 through P7 passes on the
+   Build #4 artifact. No test regressions are open. (Phase 2 delivered 59 cumulative
+   tests; the count grows through subsequent phases.)
 
 4. **No callers of the old bridge functions remain.** Phase 4 (ProcessScan full routing),
    Phase 5 (C# simplification), and Phase 6 (FAIMS absorption) must have removed all C#-side
@@ -487,8 +488,9 @@ extensions, but this must be checked if the file list changes.
 
 ## Test Cases
 
-All 7 tests added in this phase. They run as part of the full cumulative suite (98 tests
-total including all prior phases).
+All 7 tests added in this phase. They run as part of the full cumulative suite (including
+all prior phases; 59 cumulative tests were delivered through Phase 2, with subsequent phases
+adding more).
 
 **Tier convention (Phase 0 lesson #12):** Tests that load `OpenMS.dll` (via P/Invoke or
 bridge calls) are Tier 2, not Tier 1. Pure C# tests without DLL dependencies are Tier 1.
@@ -622,7 +624,12 @@ returning -1 immediately).
 **Expected outcome:** Constructor throws `std::invalid_argument` (or equivalent failure
 mode). The legacy input is not silently accepted.
 
-**Runner:** `ubuntu-latest` via CTest. No Thermo DLL dependency.
+**Runner:** `ubuntu-latest` via CTest (`ctest -R ClassName --output-on-failure`). No Thermo
+DLL dependency.
+
+**MSVC `/WX` note (Phase 2 lesson #8):** If variables in the test (e.g., `obj`, `threw`)
+are used only in `TEST_EQUAL` assertions, MSVC may warn about unused variables. Use
+`(void)var;` after the assertion to suppress the warning.
 
 ---
 
@@ -765,8 +772,10 @@ it up).
 
 The test for P8-U04 (legacy config rejection) runs on `ubuntu-latest`. It must be registered
 in `OpenMS/src/tests/class_tests/openms/executables.cmake`. Add an entry for the test binary
-alongside the other FLASH test entries that were uncommented in Phase 2. The `ctest -R FLASH`
-invocation in the `cpp-unit-tests` job will pick it up automatically.
+alongside the other FLASH test entries that were uncommented in Phase 2. Use `ctest -R ClassName`
+(e.g., `ctest -R FLASHIda_LegacyConfig` or the chosen test class name) in the `cpp-unit-tests`
+job to run it. Test names follow the OpenMS `ClassName_test.cpp` convention, not a `FLASH`
+prefix (Phase 2 lesson #4).
 
 ### 5. Regression suite covers all 12+ configs
 
@@ -809,7 +818,7 @@ by the test suite; this section maps each check to its test.
 | MethodDocGenerator produces output | P8-U03 | Automated by P8-U03 NUnit test that asserts the generator returns a non-empty string; see `windows-tests` job NUnit results |
 | No legacy P/Invoke declarations | P8-U01 | `windows-tests` job NUnit results for `CleanupTests.P8_U01` |
 | ToFLASHDeconvInput absent | P8-U02 | `windows-tests` job NUnit results for `CleanupTests.P8_U02` |
-| Legacy config rejected by C++ | P8-U04 | `cpp-unit-tests` job on `ubuntu-latest`; `ctest -R FLASH` output |
+| Legacy config rejected by C++ | P8-U04 | `cpp-unit-tests` job on `ubuntu-latest`; `ctest -R ClassName` output (Phase 2 lesson #4) |
 | Full regression passes | P8-R01 | Automated by P8-R01 in the `windows-tests` CI job. All 12 regression configs pass in CI. |
 
 ---
@@ -853,7 +862,7 @@ Phase 8 is complete when all of the following are true:
 - [ ] P8-R01 passes: all 12+ method configuration variants produce output matching Phase 7
       golden files.
 
-- [ ] All prior tests P0 through P7 (91 tests) continue to pass. No regressions introduced.
+- [ ] All prior tests P0 through P7 continue to pass. No regressions introduced.
 
 - [ ] The `flashida-ci.yml` CI workflow changes (DLL export verification extension, zero-
       warnings build step, Phase 8 C++ test registration) are committed and passing in CI.
@@ -863,10 +872,10 @@ Phase 8 is complete when all of the following are true:
 
 ---
 
-## Phase 0–1 Lessons Applied
+## Phase 0–2 Lessons Applied
 
-The following lessons from Phases 0 and 1 were applied when authoring or revising this plan.
-Each entry identifies where the lesson is reflected.
+The following lessons from Phases 0, 1, and 2 were applied when authoring or revising this
+plan. Each entry identifies where the lesson is reflected.
 
 | Lesson | Source | Applied in Phase 8 plan |
 |--------|--------|-------------------------|
@@ -885,3 +894,12 @@ Each entry identifies where the lesson is reflected.
 | Multi-scan spectrum parsers must stop at the first scan boundary | Phase 0 #9 | Test cases preamble: "Multi-scan parser note" |
 | Silent zero-result failure mode from malformed input | Phase 0 #14 | Step 11 debugging note |
 | Golden-file capture requires 2 commits minimum | Phase 0 #15 | P8-R01 golden file update note at end of description |
+| `toSpectrum()` returns `MSSpectrum` by value, not void with out-param | Phase 2 #1 | No direct `toSpectrum()` call in Phase 8 tests, but noted for consistency if P8-U04 test code evolves to inspect spectra |
+| `DeconvolvedSpectrum` constructor takes `scan_number`, not `ms_level` | Phase 2 #2 | No direct `DeconvolvedSpectrum` construction in Phase 8, but noted for consistency |
+| `toSpectrum()` requires at least one PeakGroup pushed first | Phase 2 #3 | No direct `toSpectrum()` call in Phase 8 tests, but noted for any future test that exercises `toSpectrum()` |
+| CTest naming: use `-R ClassName`, not `-R FLASH` | Phase 2 #4 | CI section §4 and P8-U04 runner note updated to use `-R ClassName` pattern |
+| CI apt dependencies: full list established for ubuntu-latest | Phase 2 #5 | Implicit in CI configuration (references `environment-and-workflows.md` Section 1) |
+| CMake flags: `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja` | Phase 2 #6 | No CMake invocation in Phase 8 plan, but noted for consistency with `cpp-unit-tests` job |
+| ccache key uses `hashFiles('OpenMS/CMakeLists.txt')`, not `executables.cmake` | Phase 2 #7 | No direct ccache key reference in Phase 8, but noted for consistency with `cpp-unit-tests` job |
+| `(void)var;` suppresses MSVC unused variable warnings under `/WX` | Phase 2 #8 | P8-U04 test section includes MSVC `/WX` note about `(void)var;` usage |
+| Phase 2 cumulative: 59 tests (OptimizationMetadata, GetConfigInt/GetConfigDouble, 5 C++ unit tests) | Phase 2 #9 | Prerequisites §3 updated to reflect Phase 2 actual deliverables |

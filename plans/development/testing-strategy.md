@@ -226,7 +226,7 @@ jobs:
   cpp-unit-tests:
     runs-on: ubuntu-latest          # C++ unit tests only, no Windows needed
     if: # only when C++ files changed (if: false in Phase 0)
-    steps: [checkout, restore-cmake-cache, build-tests-only, ctest -R FLASH]
+    steps: [checkout, restore-cmake-cache, build-tests-only, ctest -R ClassName]
 
   windows-tests:
     runs-on: windows-latest         # .NET 4.8 + OpenMS.dll
@@ -535,8 +535,8 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P2-U01 | 1 (C++) | `DeconvolvedSpectrum` default has no metadata | `hasOptimizationMetadata()` returns false |
 | P2-U02 | 1 (C++) | `getOrCreateOptimizationMetadata()` creates metadata | `hasOptimizationMetadata()` returns true after call |
 | P2-U03 | 1 (C++) | Metadata fields have correct defaults | `group_id == 0`, `variant_index == -1`, `fragmentation_quality_score == -1`, etc. |
-| P2-U04 | 1 (C++) | `toSpectrum()` serializes metadata via `setMetaValue()` | Create spectrum with metadata, call `toSpectrum()`, verify `getMetaValue("optimization_group_id")` returns correct value |
-| P2-U05 | 1 (C++) | `toSpectrum()` without metadata does not set metavalues | Verify `getMetaValue` throws or returns empty for optimization keys |
+| P2-U04 | 1 (C++) | `toSpectrum()` serializes metadata via `setMetaValue()` | Create spectrum with metadata, push a default `PeakGroup` (required — see note below), call `toSpectrum(1)` (return-value API), verify `getMetaValue("optimization_group_id")` returns correct value |
+| P2-U05 | 1 (C++) | `toSpectrum()` without metadata does not set metavalues | Push a default `PeakGroup`, call `toSpectrum(1)` (return-value API), verify `getMetaValue` throws or returns empty for optimization keys |
 | P2-R01 | 3 | `Flash.exe` test mode unchanged behavior | Output matches Phase 0/1 golden files exactly (no metadata populated yet) |
 
 **Regression from Phases 0-1:** All P0-* and P1-* tests must pass.
@@ -545,6 +545,18 @@ Golden files are committed to the repository. When an intentional behavioral cha
 - WPV-1 ("Flash.exe test mode runs"): Automated by P2-R01.
 - WPV-2 ("OpenMS unit test for metadata"): Automated by P2-U01 through P2-U05.
 - WPV-3 ("hasOptimizationMetadata() returns false"): Automated by P2-U01.
+
+> **Phase 2 Implementation Notes:**
+>
+> 1. **`toSpectrum()` API:** `DeconvolvedSpectrum::toSpectrum()` returns `MSSpectrum` by value (`MSSpectrum toSpectrum(int to_charge, double tol = 10.0, bool retain_undeconvolved = false)`), not void with an out parameter. All test code must use the return-value pattern: `MSSpectrum out = ds.toSpectrum(1);`.
+>
+> 2. **PeakGroup prerequisite for `toSpectrum()` tests:** `toSpectrum()` unconditionally accesses `peak_groups_[0].isPositive()`. Any test calling `toSpectrum()` must push a default `PeakGroup` into the `DeconvolvedSpectrum` first to avoid undefined behavior. This applies to P2-U04, P2-U05, and any future test that exercises `toSpectrum()`.
+>
+> 3. **`DeconvolvedSpectrum` constructor takes `scan_number`:** The constructor is `explicit DeconvolvedSpectrum(int scan_number)`, not `ms_level`.
+>
+> 4. **CTest naming convention:** Test binaries follow the OpenMS `ClassName_test.cpp` convention. Use `-R ClassName` (e.g., `-R DeconvolvedSpectrum_OptimizationMetadata`) for specific tests, not `-R FLASH`.
+>
+> 5. **`(void)var;` for MSVC `/WX` compliance:** When a variable is used only in a `TEST_EQUAL` assertion but not otherwise referenced, MSVC will warn about unused variables under `/WX`. Use `(void)var;` after the assertion to suppress the warning (e.g., `(void)meta;` in P2-U02).
 
 ---
 

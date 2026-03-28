@@ -482,6 +482,8 @@ Phase 0 creates the test project (`Flash.Tests.csproj`) and the two prerequisite
 
 JSON configuration and OptimizationMetadata changes do not affect the C# acquisition loop. All 28 continuity tests pass.
 
+> **Phase 2 Implementation Note:** Phase 2 C++ unit tests (P2-U01 through P2-U05) exercise `DeconvolvedSpectrum::toSpectrum()`, which returns `MSSpectrum` by value and requires at least one `PeakGroup` to be pushed before calling. These concerns are specific to C++ test authoring and do not affect acquisition loop continuity tests, which operate at the C# mock layer. See `testing-strategy.md` Phase 2 notes for details.
+
 ### Phase 3: Shadow validation — mock update + stress tests
 
 Phase 3 adds shadow calls inside the processors, but the `ProcessMS` input/output contract is unchanged — same mock inputs produce the same scan commands. All continuity tests pass.

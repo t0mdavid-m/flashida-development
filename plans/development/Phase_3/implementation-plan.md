@@ -27,12 +27,12 @@ The following must exist and be green before Phase 3 work begins:
 
 1. Phase 0 complete: `Flash.Tests.csproj` exists, `baseline_phase0.tsv` committed, CI skeleton active.
 2. Phase 1 complete: `Parameter.ToJSON()` implemented, `MethodConfig.cs` exists, C++ JSON parsing branch in `FLASHIda` constructor active, Build #1 DLL artifact available (or Phase 3 is batched alongside Phases 1 and 2 in the same Build #1 — see batching note below). Both `FLASHIdaWrapper(MethodParameters)` and `FLASHIdaWrapper(IDAParameters)` constructors exist; C++ auto-detects JSON vs legacy format via `arg[0] == '{'` (Phase 1 lesson #11).
-3. Phase 2 complete: `OptimizationMetadata.h` and `DeconvolvedSpectrum` accessors implemented; `GetConfigInt`/`GetConfigDouble` C++ exports live in the Phase 2 DLL rebuild; `ScanSchedulingConfig` and `ParameterOptimizationConfig` XML classes deferred from Phase 1 land in Phase 3 (see Step 6a).
-4. All Phase 0, 1, and 2 tests pass (53 cumulative tests from Phase 0+1; Phase 2 adds its own tests; CI must be green before Phase 3 work begins).
+3. Phase 2 complete: `OptimizationMetadata` struct (18 fields, stored as `std::optional` on `DeconvolvedSpectrum`) implemented in `OptimizationMetadata.h`; `DeconvolvedSpectrum` accessors (`hasOptimizationMetadata()`, `getOrCreateOptimizationMetadata()`, `getOptimizationMetadata()`) implemented; `GetConfigInt`/`GetConfigDouble` bridge functions exported; `cpp-unit-tests` CI job active on `ubuntu-latest` (no longer gated by `if: false`); 5 C++ unit tests passing via `ctest -R DeconvolvedSpectrum_OptimizationMetadata`; `ScanSchedulingConfig` and `ParameterOptimizationConfig` XML classes deferred from Phase 1 land in Phase 3 (see Step 10a).
+4. All Phase 0, 1, and 2 tests pass (59 cumulative tests: 53 from Phase 0+1 + 6 new Phase 2 tests; CI must be green on both `ubuntu-latest` and `windows-latest` before Phase 3 work begins).
 5. The OpenMS submodule is on branch `flashida-v9-bridge` and the FlashIDA repo is on branch `flashida-v9-migration`.
 6. `FlashIDA/dll/OpenMS.dll` is committed in the repo (Phase 0 lesson #5 — no download needed). MSBuild copies it to `FlashIDA/bin/` via `CopyToOutputDirectory`. It will be replaced by the Build #1 artifact that includes Phase 3 changes.
 
-**Build batching note (Phase 1 lesson #10):** Phases 1, 2, and 3 are batched into a single C++ build (Build #1). Each failed DLL build on CI costs ~40 minutes with no ccache hit on a new branch. In practice this means all C++ changes for all three phases are developed together and compiled once. Before pushing C++ changes, verify locally for obvious MSVC issues (unused variables, unreferenced parameters — MSVC `/WX` treats these as errors; see Phase 1 lesson #3). When working in this batch, treat the Build #1 OpenMS artifact as the combined output of all three phases. The phase separation exists for clarity of scope, not for separate compilation runs.
+**Build batching note (Phase 1 lesson #10):** Phases 1, 2, and 3 are batched into a single C++ build (Build #1). Each failed DLL build on CI costs ~40 minutes with no ccache hit on a new branch. In practice this means all C++ changes for all three phases are developed together and compiled once. Before pushing C++ changes, verify locally for obvious MSVC issues (unused variables, unreferenced parameters — MSVC `/WX` treats these as errors; use `(void)var;` to suppress warnings in test code — see Phase 1 lesson #3 and Phase 2 lesson #8). When working in this batch, treat the Build #1 OpenMS artifact as the combined output of all three phases. The phase separation exists for clarity of scope, not for separate compilation runs.
 
 **Submodule workflow note (Phase 1 lesson #1):** After pushing to any submodule branch, always `git add FlashIDA OpenMS` in the parent repo and push immediately. CI checks out submodules at the pointer commit, not at the branch HEAD — new files and code changes are invisible to CI until the pointer is updated. 48% of Phase 0 commits were submodule pointer updates. Batch same-side changes (all C# changes or all C++ changes) before updating the submodule pointer to reduce churn. For Phase 3, complete all C++ changes (Steps 1-5, 11, 13) before committing the submodule update in the FlashIDA repo, then do all C# changes (Steps 6-10, 12, 14) in a batch.
 
@@ -1094,6 +1094,8 @@ ScanCommandLayout_test  # layout query binary, not registered with add_test
 
 **Testability note:** P3-U08 and P3-U09 require pushing commands directly into the priority queue. This can be done via a `protected` test-access method `pushCommandForTest_(ScanCommand cmd, int priority)`, added to `FLASHIda.h` in a `#ifdef OPENMS_TESTING` guard, or by using a friend class `FLASHIdaTest`. For Phase 3, it is acceptable to implement these tests as stubs (using `ABORT_IF(true)`) and flesh them out in Phase 4 when `processScan_` actually pushes commands. The queue priority logic is still tested indirectly by the empty-queue MS1 fallback test (P3-U07).
 
+**MSVC `/WX` note (Phase 2 lesson #8):** When a variable is used only in a `TEST_EQUAL` assertion and not otherwise referenced, MSVC may warn about unused variables. Use `(void)var;` after the assertion to suppress (e.g., `(void)result;` after `TEST_EQUAL(result, 1)`). This pattern was required in Phase 2 tests and applies equally to Phase 3 C++ test code.
+
 ### Step 14: Add Integration Tests
 
 **File:** `FlashIDA/src/Flash.Tests/BridgePhase3Tests.cs`
@@ -1238,7 +1240,7 @@ namespace Flash.Tests
 
 | File | Action | Description |
 |------|--------|-------------|
-| `.github/workflows/flashida-ci.yml` | Modify | Activate `cpp-unit-tests` job (already added in Phase 2); add Phase 3 test discovery for `FLASHIdaQueueTracking_test`; add "Verify DLL exports" step for 3 new functions inside `windows-tests` job; add cross-job artifact upload for `ScanCommandLayout_test` output (optional — see CI section) |
+| `.github/workflows/flashida-ci.yml` | Modify | The `cpp-unit-tests` job is already active (Phase 2 activated it with apt deps, CMake flags `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`, and ccache key `hashFiles('OpenMS/CMakeLists.txt')`); add Phase 3 test discovery for `FLASHIdaQueueTracking_test` via `ctest -R FLASHIdaQueueTracking`; add "Verify DLL exports" step for 3 new functions inside `windows-tests` job; add cross-job artifact upload for `ScanCommandLayout_test` output (optional — see CI section) |
 
 ### Test Data
 
@@ -1494,7 +1496,7 @@ Add the following to the regression test step in the `windows-tests` job. The sp
 
 ### Summary of CI Workflow Changes
 
-1. Ensure the `cpp-unit-tests` job (added in Phase 2) builds and runs `FLASHIdaQueueTracking_test`.
+1. Ensure the `cpp-unit-tests` job (activated in Phase 2; uses apt deps from environment-and-workflows.md Section 1, CMake flags `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`, ccache key `hashFiles('OpenMS/CMakeLists.txt')`) builds and runs `FLASHIdaQueueTracking_test` via `ctest -R FLASHIdaQueueTracking`.
 2. Add `ScanCommandLayout_test` to the cmake build and run it in the `cpp-unit-tests` job; upload output as artifact `cpp-layout-output`.
 3. Add the "Verify DLL exports" step for 3 new functions inside the `windows-tests` job.
 4. Extend the regression step in `windows-tests` to capture stdout and scan for `[TRACK-CREATE]` lines.
@@ -1552,6 +1554,7 @@ All of the following must be true before Phase 3 is considered complete and Buil
 - [ ] CT31 (1000 scans sequential) and CT32 (concurrent processing) stress tests implemented and passing (deferred from Phase 0 lesson #13).
 - [ ] No existing C# code references to old bridge functions are broken (existing 18 P/Invoke declarations unchanged).
 - [ ] Code formatted to project standards: C++ clang-format (LLVM, 150 col, 2-space indent, Allman braces); C# standard conventions.
+- [ ] C++ test code uses `(void)var;` to suppress MSVC `/WX` unused variable warnings where needed (Phase 2 lesson #8).
 - [ ] `ScanCommandLayout_test` binary builds and its output matches hard-coded C# expected values (verified in CI job `cpp-unit-tests`).
 - [ ] Phase 3 changes committed to `flashida-v9-migration` (C#) and `flashida-v9-bridge` (C++) branches.
 - [ ] Build #1 CI run (Phases 1 + 2 + 3 combined) is green on both `ubuntu-latest` and `windows-latest`.
@@ -1564,9 +1567,9 @@ All of the following must be true before Phase 3 is considered complete and Buil
 
 ---
 
-## Phase 0-1 Lessons Applied
+## Phase 0-2 Lessons Applied
 
-This section summarizes corrections made to the Phase 3 implementation plan based on lessons learned from Phase 0 and Phase 1.
+This section summarizes corrections made to the Phase 3 implementation plan based on lessons learned from Phases 0, 1, and 2.
 
 | # | Source | Correction Applied |
 |---|--------|--------------------|
@@ -1588,3 +1591,12 @@ This section summarizes corrections made to the Phase 3 implementation plan base
 | 16 | Phase 0 lesson #12 item 2 | DLL name is `"OpenMS.dll"` with extension in P/Invoke `dllName`. Already correct in plan at Step 7 note; reinforced. |
 | 17 | Phase 1 lesson #11 | Both `FLASHIdaWrapper(MethodParameters)` and `FLASHIdaWrapper(IDAParameters)` constructors exist. Added to Prerequisites and fixed BridgePhase3Tests SetUp to use `FLASHIdaWrapper(MethodParameters)`. |
 | 18 | Phase 1 compliance deferrals | Phase 2 explicitly listed as prerequisite with what it delivers (GetConfigInt/GetConfigDouble C++ exports, ScanSchedulingConfig/ParameterOptimizationConfig deferred XML classes). Updated prerequisite #3. |
+| 19 | Phase 2 lesson #1 | `toSpectrum()` returns `MSSpectrum` by value, not void with out-param. Signature: `MSSpectrum toSpectrum(int to_charge, double tol = 10.0, bool retain_undeconvolved = false)`. Phase 3 does not call `toSpectrum()` directly, but this is relevant context for any Phase 3 test code that exercises `DeconvolvedSpectrum` interactions. |
+| 20 | Phase 2 lesson #2 | `DeconvolvedSpectrum` constructor takes `scan_number`, not `ms_level`: `explicit DeconvolvedSpectrum(int scan_number)`. Phase 3 C++ test code that creates `DeconvolvedSpectrum` instances (if any) must use the correct parameter name. |
+| 21 | Phase 2 lesson #3 | `toSpectrum()` unconditionally accesses `peak_groups_[0]` — any test calling `toSpectrum()` must push a `PeakGroup` first to avoid undefined behavior. Phase 3 does not call `toSpectrum()`, but downstream phases referencing Phase 3 test patterns should note this prerequisite. |
+| 22 | Phase 2 lesson #4 | CTest naming: use `-R ClassName` pattern (e.g., `-R DeconvolvedSpectrum_OptimizationMetadata`, `-R FLASHIdaQueueTracking`), not `-R FLASH`. Phase 3 CI diagram already uses the correct pattern. |
+| 23 | Phase 2 lesson #5 | CI apt dependencies for `cpp-unit-tests`: full list is `build-essential ccache ninja-build qt6-base-dev libeigen3-dev libboost-random-dev libboost-regex-dev libboost-iostreams-dev libboost-date-time-dev libboost-math-dev libxerces-c-dev zlib1g-dev libsvm-dev libbz2-dev liblzma-dev libzstd-dev coinor-libcoinmp-dev`. Already configured in Phase 2; no change needed for Phase 3. |
+| 24 | Phase 2 lesson #6 | CMake flags for test-only builds: `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`. Already configured in Phase 2 `cpp-unit-tests` job. |
+| 25 | Phase 2 lesson #7 | ccache key uses `hashFiles('OpenMS/CMakeLists.txt')`, not `executables.cmake`. Already configured in Phase 2. |
+| 26 | Phase 2 lesson #8 | MSVC `/WX` compliance: use `(void)var;` to suppress unused variable warnings in test code. Applied to Build batching note; Phase 3 C++ tests must follow this pattern for variables used only in `TEST_EQUAL` assertions. |
+| 27 | Phase 2 lesson #9 | Phase 2 delivered: `OptimizationMetadata` struct (18 fields, `std::optional`), `GetConfigInt`/`GetConfigDouble` bridge functions, 5 C++ unit tests, `cpp-unit-tests` CI job active. Updated prerequisite #3 with full delivery details. |

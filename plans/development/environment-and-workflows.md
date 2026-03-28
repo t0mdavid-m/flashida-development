@@ -35,6 +35,7 @@ The two runner types are independent and execute in parallel whenever both have 
 - CMake 3.20+
 - ccache (for incremental C++ builds)
 - Python 3.8+
+- **Required apt packages for `cpp-unit-tests` (Phase 2+):** `build-essential ccache ninja-build qt6-base-dev libeigen3-dev libboost-random-dev libboost-regex-dev libboost-iostreams-dev libboost-date-time-dev libboost-math-dev libxerces-c-dev zlib1g-dev libsvm-dev libbz2-dev liblzma-dev libzstd-dev coinor-libcoinmp-dev`. This full list was discovered iteratively during Phase 2 (XercesC initially missing, then liblzma missing).
 
 ---
 
@@ -84,7 +85,7 @@ cpp-unit-tests  (ubuntu-latest)       windows-tests  (windows-latest)
         |            [parallel]                |
         |                                      |
    C++ unit tests                     Steps (sequential):
-   (ctest -R FLASH)                    1. Build (MSBuild)
+   (ctest -R ClassName)                1. Build (MSBuild)
                                        2. NUnit tests (Tiers 1+2)
                                        3. Bridge verification (if: always())
                                        4. Regression suite (Tier 3)
@@ -92,8 +93,11 @@ cpp-unit-tests  (ubuntu-latest)       windows-tests  (windows-latest)
 ```
 
 **`cpp-unit-tests`** (Tier 1, ubuntu-latest):
+- Installs apt dependencies (see Section 1 for the full list).
 - Restores ccache; builds only the FLASH test binaries (not the full OpenMS library).
-- Runs `ctest -R FLASH --output-on-failure`.
+- CMake flags for test-only builds: `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`. These flags produce an efficient build that skips the GUI and Python bindings.
+- ccache key uses `hashFiles('OpenMS/CMakeLists.txt')` for cache invalidation (not `executables.cmake`).
+- Runs `ctest -R ClassName --output-on-failure` (e.g., `ctest -R DeconvolvedSpectrum_OptimizationMetadata`). Test names follow the OpenMS `ClassName_test.cpp` convention, not a `FLASH` prefix.
 - No Thermo or .NET dependency.
 - Active starting Phase 2 (first C++ tests); disabled with `if: false` in Phase 0.
 
@@ -274,7 +278,7 @@ Detailed requirements for each file are in the corresponding phase plan.
 |-------|-------|-------------------------|-------------------|------------------|---------------------------|
 | 0 | None | No (`if: false`) | No (`if: false`) | `baseline_phase0.tsv` | First CI run; golden capture artifact needed before second push |
 | 1 | Build #1 (batched) | No | No | `config_default.json`, `config_full.json` | Build #1 DLL must be available before `windows-tests` can run |
-| 2 | Build #1 (batched) | Yes (first activation) | No | None | FLASH test entries in `executables.cmake` must be uncommented |
+| 2 | Build #1 (batched) | Yes (first activation) | No | None | New test entry added to `executables.cmake`; apt deps include XercesC, liblzma; CMake flags: `-DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`; ccache key hashes `CMakeLists.txt` |
 | 3 | Build #1 | Yes | Yes (first activation) | None | `dumpbin /exports` check added to `windows-tests`; `ScanCommandLayoutTest` cross-artifact from ubuntu to windows |
 | 4 | Build #2 | Yes | Yes | 9 new mode-specific golden files (`phase4_*.tsv`); P4-R01 reuses `baseline_phase0.tsv` | Regression may approach 20-min budget; monitor and parallelize if needed |
 | 5 | None (reuse Build #2) | Yes (no new C++ tests; existing tests run against Build #2 DLLs) | Yes | `faims_3cv.tsv`, `faims_skip.tsv` | P5-R02 captures FAIMS baselines while `ScanScheduler.cs` is still active; these become Phase 6 regression targets |
@@ -282,6 +286,6 @@ Detailed requirements for each file are in the corresponding phase plan.
 | 7 | Build #4 (batched) | Yes | Yes | Exploration golden file | Phase with most C++ tests (10); `method_exploration.xml` must be committed |
 | 8 | Build #4 | Yes | Yes | None (reuses Phase 7 files) | Full regression (12+ configs); `dumpbin` must show exactly 5 exports; `/warnaserror` build |
 
-**`cpp-unit-tests` activation:** Remove `if: false` from the job in `flashida-ci.yml` when Phase 2 begins. Once active, the job runs on every push for all subsequent phases.
+**`cpp-unit-tests` activation:** Remove `if: false` from the job in `flashida-ci.yml` when Phase 2 begins. Once active, the job runs on every push for all subsequent phases. Phase 2 requires the full apt dependency list (see Section 1) and CMake flags `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja` for efficient test-only builds.
 
 **Stress test step activation:** Remove `if: false` from the stress test step inside `windows-tests` when Phase 3 begins. Once active, it runs on every push for all subsequent phases.
