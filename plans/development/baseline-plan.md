@@ -342,7 +342,7 @@ scanProcessor = new ActionBlock<IMsScan>(processor.ProcessMS);
 inputScans.LinkTo(scanProcessor, new DataflowLinkOptions { PropagateCompletion = true });
 ```
 
-**Deleted:** `ScanScheduler.cs`, `FAIMSScanProcessor.cs`, `QuantScanProcessor.cs`, `OutputMS` method.
+**Deleted:** `ScanScheduler.cs`, `FAIMSScanProcessor.cs`, `IDAScanProcessor.cs`, `QuantScanProcessor.cs`, `OutputMS` method.
 
 **Files:** `IScanProcessor.cs`, `DataPipe.cs`, `Flash.cs`, NEW `UnifiedScanProcessor.cs`
 
@@ -448,6 +448,14 @@ C# uses `JavaScriptSerializer`. C++ uses bundled `nlohmann_json`.
 **Auto-doc:** `[Description]` attributes + NEW `MethodDocGenerator.cs` (~30 lines reflection utility).
 
 **Files:** `Parameter.cs`, `FLASHIda.h/.cpp`, `FLASHIdaWrapper.cs`, `MethodConfig.cs`
+
+> **Phase 1 implementation notes:**
+>
+> **Extra `tagging` section (Phase 1 lesson #15):** The actual JSON produced by `Parameter.ToJSON()` contains a `tagging` top-level section that is not in the Issue 8 schema above. This section is required by the C++ parser (`FLASHIda.cpp` reads tag-based targeting parameters from it). The `config_default.json` and `config_full.json` golden files (committed in Phase 1) are the authoritative reference for the actual JSON shape. Do not remove the `tagging` section to match this spec — update the spec to match the code. (See backwards compatibility policy in `CLAUDE.md`.)
+>
+> **Scheduling structure deviation (Phase 1 lesson #14):** The `scheduling` section in the spec uses a flat structure with `_seconds` suffix keys (e.g., `cycle_time_seconds`). The actual implementation uses nested objects with `value_ms` keys (e.g., `{"cycle_time": {"active": false, "value_ms": 60000}}`). The `config_default.json` golden file is the authoritative source for the actual structure.
+>
+> **Constructor overloading strategy (Phase 1 lesson #11):** When adding new JSON parsing parameters to the C++ constructor while preserving backward compatibility, prefer adding a new overloaded constructor rather than modifying the existing one. The existing constructor signature (`CreateFLASHIda(string legacyOrJson)`) is unchanged; new C++-side initialization logic is in a separate method called from the JSON branch only.
 
 ---
 
@@ -566,6 +574,20 @@ for label, ces in results.items():
 - FAIMS absorption is the highest-risk migration step and gets its own isolated phase with dedicated testing.
 - Old bridge functions are removed as soon as their callers are deleted, not kept around as a "just in case" parallel API.
 
+**Implementation status (as of 2026-03-28):**
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 0 | COMPLETE | Baseline captured. 53 tests passing. See Phase 0 compliance report. |
+| Phase 1 | COMPLETE | JSON config fully compliant. 53 tests passing. See Phase 1 compliance report. |
+| Phase 2 | Not started | `GetConfigInt`/`GetConfigDouble` C++ implementation deferred from Phase 1 to here (batched with OptimizationMetadata DLL rebuild). |
+| Phase 3 | Not started | `ScanSchedulingConfig`/`ParameterOptimizationConfig` deferred from Phase 1 to here. |
+| Phase 4 | Not started | — |
+| Phase 5 | Not started | — |
+| Phase 6 | Not started | — |
+| Phase 7 | Not started | `ms3` array in JSON deferred from Phase 1 to here. |
+| Phase 8 | Not started | — |
+
 ---
 
 ### Phase 1: JSON Configuration (no C++ build required)
@@ -593,6 +615,12 @@ for label, ces in results.items():
 3. Legacy format still works (auto-detect fallback).
 
 **Scope:** S
+
+> **Phase 1 completion notes:**
+> - Phase 1 is FULLY COMPLIANT. 53 tests passing. See `Phase_1/compliance-report.md`.
+> - Deferrals from Phase 1: `GetConfigInt`/`GetConfigDouble` bridge helpers → Phase 2. `ScanSchedulingConfig`/`ParameterOptimizationConfig` typed C# classes → Phase 3. `ms3` array in JSON → Phase 7.
+> - The actual JSON schema deviates from the spec: there is an extra `tagging` top-level section, and `scheduling` uses nested objects with `value_ms` rather than flat `_seconds` keys. The `config_default.json` and `config_full.json` files in `FlashIDA/test-data/json/` are the authoritative schema reference for Phases 2+.
+> - `ModificationsDB::getInstance()` in the C++ constructor has a critical side effect: it initializes the OpenMS singleton. Never remove or comment out this call in `FLASHIda.cpp` — doing so causes all P/Invoke calls to crash. (Phase 1 lesson #4.)
 
 ---
 
@@ -709,6 +737,7 @@ for label, ces in results.items():
 - `IScanProcessor.cs` — simplified interface
 - `DataPipe.cs` — 2-stage pipeline
 - `Flash.cs` — processor selection removed
+- DELETE `IDAScanProcessor.cs`
 - DELETE `QuantScanProcessor.cs`
 
 **C++ build required:** No.

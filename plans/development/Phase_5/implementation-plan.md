@@ -23,9 +23,9 @@ No C++ code is touched. The Build #2 artifact (`OpenMS.dll`) from Phase 4 is reu
 
 ## Prerequisites
 
-All of the following must be verified before beginning Phase 5 work.
+Phase 4 is complete. All Phase 4 work (unified bridge switch-over, `UseUnifiedBridge=True` passing all modes, Build #2 DLL committed) has been verified and merged. The following must be confirmed before beginning Phase 5 work.
 
-1. **Phase 4 switch-over confirmed for all modes.** `UseUnifiedBridge=True` must pass all Phase 4 regression tests:
+1. **Phase 4 switch-over confirmed for all modes.** `UseUnifiedBridge=True` passed all Phase 4 regression tests (already verified during Phase 4):
    - P4-R02 standard DDA
    - P4-R03 deep mode
    - P4-R04 inclusion list
@@ -38,9 +38,9 @@ All of the following must be verified before beginning Phase 5 work.
 
 3. **Phase 4 golden files committed.** The golden files produced with `UseUnifiedBridge=True` are the regression baseline for Phase 5. They must be committed to `FlashIDA/test-data/golden/` and referenced by `P5-R01` and `P5-R02`. The specific files are: `phase4_standard_dda.tsv`, `phase4_deep_mode.tsv`, `phase4_inclusion.tsv`, `phase4_exclusion.tsv`, `phase4_tag_targeting.tsv`, `phase4_quant.tsv`, `phase4_ms3_mode1.tsv`, `phase4_ms3_mode2.tsv`, `phase4_ms3_mode3.tsv`. See [test-file-specification.md §2.2](../test-file-specification.md) for the full golden file inventory.
 
-4. **Build #2 OpenMS DLLs available.** The OpenMS DLLs from Build #2 (Phase 4) must be committed in `FlashIDA/dll/`. MSBuild copies them to the build output via `CopyToOutputDirectory` in `Flash.csproj` — no CI download or cache step is needed (see Phase 0 lesson #5). No new C++ build is triggered in this phase.
+4. **Build #2 OpenMS DLLs available.** The OpenMS DLLs from Build #2 (Phase 4) are committed in `FlashIDA/dll/`. MSBuild copies them to the build output via `CopyToOutputDirectory` in `Flash.csproj` — no CI download or cache step is needed (see Phase 0 lesson #5). No new C++ build is triggered in this phase.
 
-5. **All prior phase tests green.** The CI suite for Phases 0–4 (cumulative: 58 tests) must be passing on the branch before Phase 5 work begins.
+5. **All prior phase tests green.** The CI suite for Phases 0–4 (cumulative: 60 tests) must be passing on the branch before Phase 5 work begins. Confirm the parent repo submodule pointer is up to date with the merged Phase 4 commit (see Phase 1 lesson #1).
 
 ### User-Provided Inputs
 
@@ -241,7 +241,7 @@ All 6 tests run on `windows-latest`. No C++ unit tests exist in this phase. The 
 | P5-R01 | 3 | All acquisition modes produce output identical to Phase 4 golden files | `Flash.exe <input> <output> <method.xml>` with each of the following configs matches the corresponding Phase 4 golden file: `method_default.xml`, `method_deep.xml`, `method_inclusion.xml`, `method_exclusion.xml`, `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`, `method_ms3_mode2.xml`, `method_ms3_mode3.xml` — spectrum inputs are `ms1_standard.txt` (all modes) and `ms2_hcd_fragment.txt` (tag-targeting, quant, MS3 modes); comparison via `compare_golden.py` with default tolerances (see [test-file-specification.md §1.2](../test-file-specification.md), [§1.3](../test-file-specification.md), [§2.2](../test-file-specification.md), [§4.1](../test-file-specification.md)) | `regression-runner.ps1` invoked from CI `windows-tests` job |
 | P5-R02 | 3 | FAIMS mode still works via `ScanScheduler`, and FAIMS golden files are captured for Phase 6 | `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml` matches the existing Phase 4 FAIMS golden output; additionally, the CI capture step writes `faims_3cv.tsv` and `faims_skip.tsv` (using `method_faims_skip.xml`) as the Phase 6 regression baselines; CV transition log entries present; no crash or missing output rows (see [test-file-specification.md §1.4](../test-file-specification.md), [§2.2](../test-file-specification.md), [§3.2](../test-file-specification.md) for `ms1_faims_3cv.txt`, `method_faims_3cv.xml`, `method_faims_skip.xml` format requirements and CV value constraints) | `regression-runner.ps1` FAIMS config entries |
 
-**Regression inherited from Phases 0–4:** All P0-* through P4-* tests (58 tests) must continue to pass. P5 adds 6 tests for a cumulative total of 64.
+**Regression inherited from Phases 0–4:** All P0-* through P4-* tests (60 tests) must continue to pass. P5 adds 6 tests for a cumulative total of 66.
 
 ---
 
@@ -272,7 +272,8 @@ The `windows-tests` job already:
 - Restores Thermo iAPI DLLs from secrets (Strategy B: openssl-encrypted zip, `THERMO_DLL_PASSPHRASE` secret — see Phase 0 lesson #3)
 - OpenMS DLLs are committed in `FlashIDA/dll/` and copied by MSBuild — no download step needed (see Phase 0 lesson #5)
 - Runs `msbuild Flash.sln`
-- Runs NUnit console runner by full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.X.X/tools/nunit3-console.exe`) with working directory `FlashIDA/bin/` so native DLLs are found (see Phase 0 lesson #12)
+- Runs NUnit console runner by full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.X.X/tools/nunit3-console.exe`) with `--agents=1 --timeout=300000` and working directory `FlashIDA/bin/` so native DLLs are found (see Phase 0 lesson #12, Phase 1 lesson #8)
+- Sets `OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS` in the NUnit test step environment (see Phase 1 lesson #5)
 - Runs `regression-runner.ps1`
 - Runs `compare_golden.py` for each mode config
 
@@ -334,14 +335,16 @@ Verify the following in CI. After pushing Phase 5 changes, confirm the `windows-
    Expected: Zero hits in production code for each pattern.
 
 6. **NUnit suite passes.**
-   CI step: NUnit console runner invoked by full NuGet packages path from working directory `FlashIDA/bin/` (see Phase 0 lesson #12). Run by the `windows-tests` job.
-   Expected: 64 tests pass, 0 failures, 0 errors.
+   CI step: NUnit console runner invoked by full NuGet packages path from working directory `FlashIDA/bin/` with `--agents=1 --timeout=300000` and `OPENMS_DATA_PATH` set (see Phase 0 lesson #12, Phase 1 lessons #5 and #8). Run by the `windows-tests` job.
+   Expected: 66 tests pass, 0 failures, 0 errors.
 
 ---
 
-## Phase 0 Lessons Applied
+## Phase 0-1 Lessons Applied
 
-The following Phase 0 lessons are relevant to Phase 5 implementation. Cross-references are to `Phase_0/lessons-learned.md`.
+The following lessons from Phase 0 and Phase 1 are relevant to Phase 5 implementation. Cross-references are to `Phase_0/lessons-learned.md` and `Phase_1/lessons-learned.md`.
+
+### Phase 0 Lessons
 
 | Lesson | Summary | Where applied in this plan |
 |--------|---------|---------------------------|
@@ -356,13 +359,35 @@ The following Phase 0 lessons are relevant to Phase 5 implementation. Cross-refe
 | #14 | Silent zero-result P/Invoke failures — log input data characteristics | Note below |
 | #15 | Golden-file capture: 2-commit minimum; batch same-side changes | "Not changed" golden files note; general commit strategy |
 
+### Phase 1 Lessons
+
+| Lesson | Summary | Where applied in this plan |
+|--------|---------|---------------------------|
+| #1 | Submodule pointer must be updated after every submodule push | Submodule pointer updates note above |
+| #2 | Test data path: `Path.Combine(TestDirectory, "..", "test-data")` — one level up from `bin/` | Note below; applies to all new test classes |
+| #4 | Never remove `ModificationsDB::getInstance()` calls — initialization side effect | Note below (no C++ changes this phase, but relevant if debugging DLL crashes) |
+| #5 | `OPENMS_DATA_PATH` must be set in every CI step that invokes OpenMS | CI Configuration §windows-tests, Working Product Verification §6 |
+| #8 | NUnit: `--agents=1 --timeout=300000` to handle `calculateAveragine` cold cache | CI Configuration §windows-tests, Working Product Verification §6 |
+| #10 | DLL build takes ~40 min; batch all C++ changes before pushing | Not applicable (no DLL build this phase); note retained for cross-phase awareness |
+| #11 | Both `FLASHIdaWrapper` constructors exist; prefer `FLASHIdaWrapper(MethodParameters)` | Note below |
+
 **`.gitattributes` (lesson #4):** If any new binary file extensions are introduced in Phase 5 (unlikely, since no new test data is created), add corresponding `*.ext binary` entries to `FlashIDA/.gitattributes` before committing.
 
 **Silent P/Invoke failures (lesson #14):** The C++ deconvolution engine returns 0 results without error when input data is malformed. If any new code calls bridge functions (e.g., `UnifiedScanProcessor.ProcessMS` calling `ProcessScan`) and receives 0 results unexpectedly, log the input data characteristics (RT, peak count, first/last m/z) before investigating engine internals. The bridge functions in `OpenMS.dll` do not distinguish "no results found" from "input data is malformed."
 
-**Submodule batching (lesson #15):** Phase 5 has no C++ changes, but if any submodule pointer updates are needed (e.g., to pick up Phase 4 DLL changes), batch all C#-side changes before updating the submodule pointer to minimize churn.
+**Submodule pointer updates (Phase 1 lesson #1):** After pushing to any submodule branch, always `git add FlashIDA OpenMS` in the parent repo and push the pointer update. CI checks out submodules at the pointer commit, not at branch HEAD — new files are silently invisible to CI until the pointer is updated.
 
-**Test tier convention (lesson #12 addendum):** P5-U01 through P5-U04 are Tier 1 (pure C# unit tests with mocks). If any test in this phase loads `OpenMS.dll` or calls bridge functions, it must be classified as Tier 2, matching the convention established in Phase 0 for DLL-dependent tests.
+**Submodule batching (Phase 0 lesson #15):** Phase 5 has no C++ changes, but if any submodule pointer updates are needed (e.g., to pick up Phase 4 DLL changes), batch all C#-side changes before updating the submodule pointer to minimize churn.
+
+**Test tier convention (Phase 0 lesson #12 addendum):** P5-U01 through P5-U04 are Tier 1 (pure C# unit tests with mocks). If any test in this phase loads `OpenMS.dll` or calls bridge functions, it must be classified as Tier 2, matching the convention established in Phase 0 for DLL-dependent tests.
+
+**Test data path (Phase 1 lesson #2):** `TestContext.CurrentContext.TestDirectory` resolves to `FlashIDA/bin/`. All new test classes (`ProcessorTests.cs`, `InterfaceShapeTests.cs`, `DeadCodeTests.cs`, `DataPipeTests.cs`) that load files from `FlashIDA/test-data/` must use `Path.Combine(TestDirectory, "..", "test-data")` — one level up from `bin/`. Using `"..\..\test-data"` navigates to the parent repo root, not `FlashIDA/`.
+
+**ModificationsDB singleton (Phase 1 lesson #4):** No C++ changes occur in this phase, so `ModificationsDB::getInstance()` is not touched. If any unexpected DLL crash occurs with `Cannot find shared data!`, do not comment out or remove any OpenMS singleton initializer call — use a `(void)` cast instead. The call has an initialization side effect even when the return value is unused.
+
+**Constructor preference (Phase 1 lesson #11):** Both `FLASHIdaWrapper(MethodParameters)` and `FLASHIdaWrapper(IDAParameters)` constructors exist. New test code in this phase that constructs `FLASHIdaWrapper` (e.g., the mock in P5-U01) must use `FLASHIdaWrapper(MethodParameters)` — the new overload that uses JSON config. The legacy `FLASHIdaWrapper(IDAParameters)` constructor is preserved for backward compatibility only.
+
+**DLL name in P/Invoke (Phase 0 lesson #12):** The P/Invoke `[DllImport]` attribute must use `"OpenMS.dll"` with the extension, not `"OpenMS"`. This is the form already in `FLASHIdaWrapper.cs` and must not be changed when adding any new P/Invoke declarations.
 
 ---
 
@@ -378,7 +403,7 @@ The following Phase 0 lessons are relevant to Phase 5 implementation. Cross-refe
 - [ ] `method.xml` no longer contains `<UseUnifiedBridge>` element
 - [ ] `ScanScheduler.cs` is still present and still used by `FAIMSScanProcessor`
 - [ ] All 6 Phase 5 tests pass in CI: P5-U01, P5-U02, P5-U03, P5-U04, P5-R01, P5-R02
-- [ ] All 58 prior-phase tests (P0-* through P4-*) continue to pass in CI
+- [ ] All 60 prior-phase tests (P0-* through P4-*) continue to pass in CI
 - [ ] CI `windows-tests` job green on `windows-latest` with Build #2 DLL artifact
 - [ ] `msbuild /warnaserror` succeeds with zero warnings
 - [ ] No process hang on `DataPipe.WaitForCompletion()` in test mode

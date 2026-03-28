@@ -53,12 +53,14 @@ The entire C# acquisition loop is rewritten in Phases 5-6. Continuity tests veri
 
 ## 2. Design Principles
 
-- **Assert behavioral output, not internal architecture.** Tests observe the scan commands the system produces for given inputs, using `ScanCommandRecord` (Section 4.5) to normalize across the legacy and unified architectures. The same assertions run from Phase 0 through Phase 8.
+- **Assert behavioral output, not internal architecture.** Tests observe the scan commands the system produces for given inputs, using `ScanCommandRecord` (Section 4.4) to normalize across the legacy and unified architectures. The same assertions run from Phase 0 through Phase 8.
 - **Mock the instrument, not the logic.** Thermo iAPI interfaces (`IMsScan`, `IFusionCustomScan`, `IFusionScans`) are replaced by lightweight test doubles. All decision logic runs as-is.
 - **Test the pipeline end-to-end.** From `DataPipe.Push(mockScan)` through `IScanProcessor.ProcessMS` to captured scan commands — verifying the full async chain regardless of whether the `DataPipe` is 3-stage (legacy) or 2-stage (Phase 5+).
 - **Inject timing, don't assume it.** Tests that verify deadline behavior use controlled delays and `TaskCompletionSource`, not `Thread.Sleep`.
 - **Reuse existing spectrum data.** The same TSV files from `FlashIDA/test-data/spectra/` feed mock `IMsScan` objects, avoiding duplicate test data.
-- **No new test tier.** These tests fit within the existing Tier 2 (DLL-dependent) and Tier 4 (stress) framework. They use NUnit in `Flash.Tests.csproj`. *(Phase 0 lesson: AL-CT tests are Tier 2, not Tier 1, because they load OpenMS.dll via P/Invoke.)*
+- **No new test tier.** These tests fit within the existing Tier 2 (DLL-dependent) and Tier 4 (stress) framework. They use NUnit in `Flash.Tests.csproj`. *(Phase 0 lesson: AL-CT tests are Tier 2, not Tier 1, because they load OpenMS.dll via P/Invoke. The spec says Tier 1 but the implementation correctly labels them Tier 2.)*
+
+> **Phase 0 implementation note — assertion quality:** Several continuity tests as initially implemented have weak or tautological assertions. Known PROBLEMATIC tests (assertions are trivially true or assert on symptoms rather than behavior): CT13, CT14, CT17, CT22, CT27. Known WEAK tests (overly lenient pass conditions): CT01, CT08, CT09, CT10, CT18. These should be strengthened in a future phase when test infrastructure matures. Do not mistake passing of these tests for behavioral correctness.
 
 ---
 
@@ -498,7 +500,7 @@ Phase 4 adds `UseUnifiedBridge` flag. When `False` (default for tests), behavior
 
 Phase 5 deletes `IDAScanProcessor`, `QuantScanProcessor`, collapses `DataPipe`, and creates `UnifiedScanProcessor`.
 
-**Continuity tests AL-CT01–CT28 unchanged.** The `ContinuityTestHarness` constructor is updated to use `UnifiedScanProcessor` instead of the legacy processors. **All 10 behavioral reference tests (CT06, CT15, CT16, CT19, CT21, CT24-26, CT28) are the critical migration gates** — each compares the new architecture's mode-specific output against its Phase 0 reference. If any fails, the rewrite changed that mode's behavior.
+**Continuity tests AL-CT01–CT28 unchanged.** The `ContinuityTestHarness` constructor is updated to use `UnifiedScanProcessor` instead of the legacy processors. **All 9 behavioral reference tests (CT06, CT15, CT16, CT19, CT21, CT24-26, CT28) are the critical migration gates** — each compares the new architecture's mode-specific output against its Phase 0 reference. If any fails, the rewrite changed that mode's behavior.
 
 ### Phase 6: ScanScheduler removed from harness
 
@@ -553,6 +555,14 @@ All tests are NUnit 3, running within `Flash.Tests.csproj`. They require `OpenMS
 > **NUnit working directory (Phase 0 lesson #12):** NUnit must be run from `FlashIDA/bin/` so that native DLLs (`OpenMS.dll` and dependencies) are found by the .NET runtime's DLL search path. Relative paths in tests (e.g., `..\\test-data\\`) depend on this specific working directory. CI runners and local test invocations must set `--work` accordingly.
 
 > **Diagnostic output (Phase 0 lesson #10):** Use `Console.WriteLine()` for diagnostic output that must be visible in CI artifacts (NUnit XML `<output>` element). `TestContext.Error.WriteLine()` output does NOT appear in the XML results file.
+
+> **NUnit runner flags (Phase 1 lessons #8, #9):** Pass `--agents=1 --timeout=300000` to the NUnit console runner. `--agents=1` prevents parallel worker processes from triggering simultaneous cold `calculateAveragine` cache initialization; `--timeout=300000` (5 min) allows that initialization to complete. If an NUnit agent crashes with an ambiguous error, add `--inprocess` temporarily to diagnose; remove it once the root cause is identified.
+
+> **OPENMS_DATA_PATH (Phase 1 lesson #5):** Set `OPENMS_DATA_PATH` to `<workspace>/OpenMS/share/OpenMS` as an environment variable on every CI step that calls OpenMS P/Invoke functions. Without it the DLL cannot locate chemistry data files and crashes. This is required for all continuity tests — a DLL rebuild can silently change data path resolution. Do not rely on implicit resolution.
+
+> **Continuity golden comparison (Phase 0 lesson #23):** The `ContinuityTestHarness.CollectResults()` behavioral reference tests (AL-CT06, CT15, CT16, CT19, CT21, CT24–CT26, CT28, CT30) use exact string equality on the serialized JSON, not tolerance-based field comparison. If a DLL rebuild changes floating-point output even within tolerance, the continuity golden files must be recaptured. This is intentional: exact comparison catches regressions that tolerance-based comparison would mask.
+
+> **ContinuityTestHarness bypasses DataPipe (Phase 0 lesson #22):** The `ContinuityTestHarness` injects mock scans directly into the scan processor without going through the async `DataPipe` pipeline. This means AL-CT01–CT30 do not cover DataPipe backpressure, completion signal propagation, or task scheduling. DataPipe coverage is provided separately by P5-U04 (`DataPipe` unit test) and the fact that `Flash.exe` regression tests do use the full pipeline.
 
 ---
 

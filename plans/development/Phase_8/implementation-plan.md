@@ -35,15 +35,18 @@ After this phase:
 The following must be true before starting Phase 8:
 
 1. **Phase 7 is complete and verified.** The exploration engine is implemented, all Phase 7
-   working product verification criteria pass, and Phase 7 golden files are committed to
-   `FlashIDA/test-data/golden/`.
+   working product verification criteria pass, Phase 7 golden files are committed to
+   `FlashIDA/test-data/golden/`, and the Phase 7 implementation plan is marked done.
 
 2. **Build #4 C++ compilation of Phase 7 has succeeded.** The exploration engine changes are
    compiled into `OpenMS.dll` and the DLL artifact is committed in `FlashIDA/dll/` (OpenMS
-   DLLs are committed to the repo, not downloaded — Phase 0 lesson #5).
+   DLLs are committed to the repo, not downloaded — Phase 0 lesson #5). Verify
+   `build_dlls.yml` passed on the `flashida-v9-bridge` branch before starting Phase 8 C++
+   changes; each failed DLL build wastes ~40 minutes (Phase 1 lesson #10). Batch all
+   Phase 8 C++ edits (Steps 2–5) into a single push to minimise rebuild cycles.
 
-3. **All prior regression tests pass.** Every test from P0 through P7 passes on the
-   Build #4 artifact. No test regressions are open.
+3. **All prior regression tests pass.** Every test from P0 through P7 (91 tests total)
+   passes on the Build #4 artifact. No test regressions are open.
 
 4. **No callers of the old bridge functions remain.** Phase 4 (ProcessScan full routing),
    Phase 5 (C# simplification), and Phase 6 (FAIMS absorption) must have removed all C#-side
@@ -353,7 +356,12 @@ cmake --build <build-dir> --config Release
 ```
 
 The build must succeed with zero errors. No warnings about undefined symbols or missing
-exports are acceptable.
+exports are acceptable. MSVC's `/WX` flag (warnings-as-errors, already enabled in the
+OpenMS build) will surface unused parameters (`C4100`) and unused variables (`C4189`)
+introduced by the removals — fix these before pushing (Phase 1 lesson #3). In
+particular, never comment out a call to an OpenMS singleton initializer
+(`ModificationsDB::getInstance()`, `ResidueDB::getInstance()`, etc.) to silence a
+C4189 warning; use a `(void)` cast instead (Phase 1 lesson #4).
 
 **C# (CI `windows-latest` — `windows-tests` job):**
 
@@ -479,7 +487,7 @@ extensions, but this must be checked if the file list changes.
 
 ## Test Cases
 
-All 7 tests added in this phase. They run as part of the full cumulative suite (96 tests
+All 7 tests added in this phase. They run as part of the full cumulative suite (98 tests
 total including all prior phases).
 
 **Tier convention (Phase 0 lesson #12):** Tests that load `OpenMS.dll` (via P/Invoke or
@@ -513,6 +521,11 @@ reflection or text scan. Verify the count equals exactly 5.
 **Implementation:** NUnit test in `Flash.Tests/CleanupTests.cs`. Read `FLASHIdaWrapper.cs`
 as text and count lines matching `[DllImport`; or use reflection to count methods on
 `FLASHIdaWrapper` decorated with `DllImportAttribute`.
+
+If `CleanupTests.cs` needs to reference any file on disk (e.g., source files for text
+scanning), locate them via `Path.Combine(TestContext.CurrentContext.TestDirectory, "..",
+"test-data")` — one level up from `FlashIDA/bin/` (Phase 1 lesson #2). Do not use
+`"..\\..\\test-data"` which resolves to the parent repo root.
 
 **Expected outcome:** Count equals 5. Any count other than 5 fails the test.
 
@@ -728,10 +741,21 @@ The new test class `CleanupTests.cs` (containing P8-U01, P8-U02, P8-U03) is auto
 picked up by the NUnit console runner if it is included in `Flash.Tests.csproj`.
 Invoke the runner by its full NuGet packages path and set the working directory to
 `FlashIDA/bin/` so native DLLs (OpenMS.dll and dependencies) are found by the .NET
-runtime's DLL search path (Phase 0 lesson #12):
+runtime's DLL search path (Phase 0 lesson #12). Use `--agents=1` and
+`--timeout=300000` to avoid parallel cold-cache timeouts from `calculateAveragine`
+(Phase 1 lesson #8). Set `OPENMS_DATA_PATH` so the DLL can locate chemistry data
+(Phase 1 lessons #5–#6):
 
-```powershell
-& "packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe" Flash.Tests.dll --work=FlashIDA\bin
+```yaml
+- name: Run NUnit tests
+  env:
+    OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
+  run: |
+    & "packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe" `
+        Flash.Tests.dll `
+        --work=FlashIDA\bin `
+        --agents=1 `
+        --timeout=300000
 ```
 
 Verify that `Flash.Tests.csproj` includes the new file (or uses a wildcard glob that picks
@@ -758,11 +782,17 @@ are added in Phase 8 itself.
 No changes to trigger branches are needed. Phase 8 commits go to `flashida-v9-migration`,
 which is already in the trigger list.
 
-### Commit strategy — submodule batching (Phase 0 lesson #15)
+### Commit strategy — submodule batching (Phase 0 lesson #15, Phase 1 lesson #1)
 
 Phase 8 touches both C++ (Steps 2-5) and C# (Steps 6-8) code. Batch all C++ changes
 into a single OpenMS submodule commit before updating the submodule pointer, then batch
 all C# changes together. This minimizes submodule pointer update churn.
+
+After pushing to any submodule branch (`flashida-v9-bridge` for C++,
+`flashida-v9-migration` for C#), always update the parent repo's submodule pointer
+(`git add FlashIDA OpenMS` and push) before expecting CI to pick up the changes. The
+CI workflow checks out submodules at the pointer commit, not at the branch HEAD — new
+files are silently invisible to CI until the pointer is updated (Phase 1 lesson #1).
 
 ---
 
@@ -823,10 +853,35 @@ Phase 8 is complete when all of the following are true:
 - [ ] P8-R01 passes: all 12+ method configuration variants produce output matching Phase 7
       golden files.
 
-- [ ] All prior tests P0 through P7 (89 tests) continue to pass. No regressions introduced.
+- [ ] All prior tests P0 through P7 (91 tests) continue to pass. No regressions introduced.
 
 - [ ] The `flashida-ci.yml` CI workflow changes (DLL export verification extension, zero-
       warnings build step, Phase 8 C++ test registration) are committed and passing in CI.
 
 - [ ] Phase 8 changes are merged to `flashida-v9-migration` and Build #4 artifact (Phase 7 +
       Phase 8) is tagged and recorded.
+
+---
+
+## Phase 0–1 Lessons Applied
+
+The following lessons from Phases 0 and 1 were applied when authoring or revising this plan.
+Each entry identifies where the lesson is reflected.
+
+| Lesson | Source | Applied in Phase 8 plan |
+|--------|--------|-------------------------|
+| `Flash.exe` entry point is `FLASHIdaWrapper.Main()`; no `-t` flag | Phase 0 #1 | All `Flash.exe` invocations use `Flash.exe <input_file> <output_file> <method.xml> [ms2_file]` (Step 11, P8-R01 runner comment) |
+| Build output is `FlashIDA/bin/`, not `FlashIDA/src/Flash/bin/Debug/` | Phase 0 #12 | `--work=FlashIDA\bin` in NUnit runner (CI section §3); working-directory references throughout |
+| Thermo DLL secret requires Strategy B (openssl-encrypted zip) | Phase 0 #3 | P8-I02 and P8-R01 runner notes reference "Strategy B / openssl" |
+| OpenMS DLLs are committed in `FlashIDA/dll/`; no download step needed | Phase 0 #5 | Prerequisites §2 and P8-R01 runner note confirm DLLs are in-repo |
+| Test data path is one level up: `Path.Combine(TestDirectory, "..", "test-data")` | Phase 1 #2 | P8-U01 implementation note; do not use `"..\\..\\test-data"` |
+| NUnit runner flags: `--agents=1 --timeout=300000` | Phase 1 #8 | CI section §3 NUnit YAML snippet |
+| `OPENMS_DATA_PATH` must be set in any CI step that invokes OpenMS | Phase 1 #5–#6 | CI section §3 NUnit YAML snippet |
+| Submodule pointer must be updated after every push to a submodule branch | Phase 1 #1 | Commit strategy section (submodule batching) |
+| DLL build takes ~40 min; batch all C++ changes to minimise rebuild cycles | Phase 1 #10 | Prerequisites §2; Step 9 preamble |
+| MSVC `/WX`: never silence C4189 by removing singleton initializer calls | Phase 1 #3–#4 | Step 9 build note warns against removing `ModificationsDB::getInstance()` |
+| `dllName` constant must be `"OpenMS.dll"` with extension | Phase 0 #12 | Step 6 note: "Note: `dllName` must resolve to `"OpenMS.dll"` (with extension)" — already present |
+| Both `FLASHIdaWrapper(IDAParameters)` and `FLASHIdaWrapper(MethodParameters)` exist; prefer the latter | Phase 1 #11 | Step 6 does not change constructor signatures; preference documented in existing text |
+| Multi-scan spectrum parsers must stop at the first scan boundary | Phase 0 #9 | Test cases preamble: "Multi-scan parser note" |
+| Silent zero-result failure mode from malformed input | Phase 0 #14 | Step 11 debugging note |
+| Golden-file capture requires 2 commits minimum | Phase 0 #15 | P8-R01 golden file update note at end of description |

@@ -24,7 +24,7 @@ This phase is purely additive. No existing code path reads, writes, or checks th
 The following must be complete and passing before starting Phase 2 implementation:
 
 1. **Phase 0 done:** `Flash.Tests.csproj` exists. `baseline_phase0.tsv` is committed to `FlashIDA/test-data/golden/`. The `flashida-ci.yml` workflow skeleton exists and the `windows-tests` job is active.
-2. **Phase 1 done (or in-flight, same Build #1 batch):** JSON config parsing is in place in C++. Because Phases 1, 2, and 3 are batched into a single Build #1, they may be developed in parallel on feature branches and merged together. Phase 2 has no functional dependency on Phase 1 beyond sharing the same build.
+2. **Phase 1 done:** JSON config parsing is complete and CI is green (53 tests passing as of 2026-03-28). Phase 1 delivered: `MethodParameters.ToJSON()`, the new `FLASHIdaWrapper(MethodParameters)` constructor, `parseJSONConfig_()` on the C++ side, golden JSON files (`config_default.json`, `config_full.json`), and P/Invoke stubs for `GetConfigInt`/`GetConfigDouble` (C++ implementation deferred to Phase 2 — see Step 3 below). The legacy `FLASHIdaWrapper(IDAParameters)` constructor is still present for backward compatibility. Phase 2's DLL rebuild must include the `GetConfigInt`/`GetConfigDouble` C++ implementations so that the P1-I03 diagnostic bridge stubs auto-activate.
 3. **C++ unit test infrastructure active:** The `cpp-unit-tests` CI job in `flashida-ci.yml` must be active and capable of building and running OpenMS class tests on `ubuntu-latest`. This is the first phase that introduces C++ unit tests; see the CI configuration section below.
 4. **`executables.cmake` FLASH entries uncommented:** The FLASH test entries in `OpenMS/src/tests/class_tests/openms/executables.cmake` are currently commented out. They must be uncommented (or new entries added for the Phase 2 test binary) before `ctest -R FLASH` can discover and run the tests.
 5. **Golden file baseline available:** `FlashIDA/test-data/golden/baseline_phase0.tsv` (from Phase 0) and the Phase 1 golden files (`config_default.json`, `config_full.json`, the `Flash.exe` regressions) are committed, so P2-R01 has a baseline to compare against.
@@ -217,6 +217,22 @@ if (opt_metadata_)
 These five keys are the ones specified in Issue 9 of `baseline-plan.md`. Additional fields can be serialized in Phase 7 when the exploration engine populates them, but the keys above must be present and correct for Phase 2 test P2-U04 to pass.
 
 The `setMetaValue` overload accepts `(const String&, const DataValue&)`. `DataValue` has constructors from `int`, `double`, and `std::string`, so no explicit casts are required beyond the `static_cast<int>` for `group_id` (to disambiguate from `double`).
+
+---
+
+### Step 3b — Implement deferred `GetConfigInt` / `GetConfigDouble` bridge functions
+
+**Deferred from Phase 1 (Phase 1 compliance report §3, §5).**
+
+The C# side already has P/Invoke stubs for `GetConfigInt` and `GetConfigDouble` in `BridgeSmokeTests.cs`, guarded with an `EntryPointNotFoundException` catch so that P1-I03 passes without the C++ exports being present. Phase 2's DLL rebuild is the designated opportunity to implement these exports so that the P1-I03 diagnostic assertions auto-activate.
+
+**Files to modify:**
+- `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h` — add declarations for `GetConfigInt` and `GetConfigDouble`
+- `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp` — add implementations that read the stored config values from the `FLASHIda` instance
+
+Batch this change with the `OptimizationMetadata` C++ changes in the same submodule commit to avoid a second 40-minute DLL rebuild. Both the C++ bridge file and `DeconvolvedSpectrum.cpp` can go in the same push.
+
+**Note on DLL name:** The P/Invoke declarations in C# use `"OpenMS.dll"` (with `.dll` extension), not `"OpenMS"`. Ensure any new `[DllImport]` attributes follow this convention.
 
 ---
 
@@ -478,6 +494,8 @@ All six tests for Phase 2 come from the testing strategy. Five are C++ unit test
 
 Phase 2 activates the `cpp-unit-tests` job for the first time. The `cpp-unit-tests` job activates as a separate job (unchanged from the workflow skeleton established in Phase 0). The `windows-tests` job continues unchanged (P2-R01 is a straight `Flash.exe` regression). No new jobs are needed.
 
+**Dry-run activation (Phase 0 compliance report I-5):** The `cpp-unit-tests` job has `if: false` in the workflow and has never executed. Its build resource requirements (RAM, core count on `ubuntu-latest`) are untested. Before adding Phase 2 code changes, activate the job by removing `if: false` in a separate commit to validate that the build infrastructure works end-to-end. If the dry-run fails, diagnose the CI setup independently before introducing C++ source changes.
+
 ### `cpp-unit-tests` job requirements
 
 The job runs on `ubuntu-latest`. It must:
@@ -491,7 +509,9 @@ The job runs on `ubuntu-latest`. It must:
 
 The job does NOT require Windows, .NET, Thermo DLLs, or OpenMS DLLs. It is a pure C++ build-and-run on Linux.
 
-**Submodule workflow note (Phase 0 lesson #15):** Phase 2 changes are entirely within the OpenMS submodule (C++ only). Batch all C++ changes into as few submodule pointer updates as possible to reduce commit churn — Phase 0 saw 48% of commits (13/27) as submodule pointer updates.
+**Submodule workflow note (Phase 0 lesson #15, Phase 1 lesson #1):** Phase 2 changes are entirely within the OpenMS submodule (C++ only). After pushing C++ changes to the submodule branch, always `git add OpenMS` in the parent repo and push the updated submodule pointer before expecting CI to pick up the changes. CI checks out submodules at the pointer commit, not at the branch HEAD — new files pushed to a submodule branch are silently invisible to CI until the pointer is updated. Batch all C++ changes into as few submodule pointer updates as possible to reduce commit churn — Phase 0 saw 48% of commits (13/27) as submodule pointer updates.
+
+**DLL build time note (Phase 1 lesson #10):** Each push to the C++ submodule that misses the ccache triggers a full OpenMS build on `windows-2022` taking 35–40 minutes. Batch ALL C++ changes (OptimizationMetadata, `GetConfigInt`/`GetConfigDouble`, and any pre-existing MSVC fixes) into a single push to minimize rebuild cycles. Check for MSVC `/WX` issues (unused parameters `C4100`, unused variables `C4189`) locally or via a test compile before pushing — each failed build wastes 40 minutes.
 
 ### Conditional trigger
 
@@ -535,6 +555,10 @@ If older FLASH tests are broken or not yet applicable, add only the Phase 2 test
 
 No changes to the `windows-tests` job configuration. The regression step already runs `Flash.exe <input> <output> <method>` and compares against golden files. P2-R01 passes when the output is byte-for-byte compatible with `baseline_phase0.tsv` (within floating-point tolerance). No new step is needed.
 
+**NUnit configuration note (Phase 1 lessons #7, #8):** The `windows-tests` job must run NUnit with `--agents=1 --timeout=300000`. The `--agents=1` flag prevents parallel execution that can cause concurrent cold-cache computations of `calculateAveragine` (~3.5 min per process). The `--timeout=300000` (5 minutes) is required because the first test to construct a `FLASHIdaWrapper` triggers this cold cache. The `OPENMS_DATA_PATH` environment variable must be set to `${{ github.workspace }}/OpenMS/share/OpenMS` in the NUnit test step — without it, any test that exercises C++ code paths calling `ResidueDB` or `ModificationsDB` will crash the NUnit agent process with a `Cannot find shared data!` fatal error. This crash manifests as `System.Net.Sockets.SocketException` in NUnit output (Agent Process terminated) with `Test Count: 0`. If this occurs, re-run with `--inprocess` to capture the actual C++ error message before investigating further.
+
+**compare_golden.py column classification note (Phase 0 compliance report L-2):** The script classifies only `charges` as string and `hcd` as integer — all other columns are treated as float. Phase 2 is a zero-behavioral-change phase and adds no new TSV columns, so this is not an issue here. However, if future phases add new non-float columns to the TSV output, the `STRING_COLUMNS` or `INT_COLUMNS` sets in `compare_golden.py` must be updated before running the regression comparison.
+
 ---
 
 ## Working Product Verification
@@ -559,7 +583,13 @@ Verified by the `windows-tests` CI job on `windows-latest`. The Phase 0 bridge s
 
 ### 5. All prior tests still pass
 
-Verified by the `windows-tests` CI job on `windows-latest`. Expected: all Phase 0 and Phase 1 tests pass. No regressions introduced.
+Verified by the `windows-tests` CI job on `windows-latest`. Expected: all Phase 0 and Phase 1 tests pass (53 tests green after Phase 1). No regressions introduced.
+
+**Constructor overloading note (Phase 1 lesson #11):** Phase 1 added `FLASHIdaWrapper(MethodParameters mp)` as a new overload while keeping the existing `FLASHIdaWrapper(IDAParameters param)`. Both constructors coexist and are exercised by different tests. Phase 2 adds no C# changes, but any future Phase 2 implementation work that touches `FLASHIdaWrapper.cs` must preserve both constructors. The old constructor uses `ToFLASHDeconvInput()` (legacy space-delimited string); the new constructor uses `ToJSON()`. The C++ side auto-detects the format via `arg[0] == '{'`.
+
+### 6. Test data paths use correct relative root
+
+Any C# test code introduced in Phase 2 that loads test data must use `Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "test-data")` — one level up from `FlashIDA/bin/`. Using `"..","..","test-data"` reaches the parent repo root instead (Phase 1 lesson #2). All existing test classes use the one-level-up convention; new code must follow it.
 
 ---
 
@@ -580,6 +610,33 @@ The following checklist must be satisfied before Phase 2 is considered complete 
 - [ ] P2-R01 passes: `Flash.exe` with `ms1_smoke_test.txt` and `method_default.xml` produces output matching `baseline_phase0.tsv` exactly (within tolerance).
 - [ ] All Phase 0 tests (P0-U01 through P0-R01) continue to pass.
 - [ ] All Phase 1 tests (P1-U01 through P1-R02) continue to pass.
+- [ ] `GetConfigInt` and `GetConfigDouble` C++ bridge exports implemented in `FLASHIdaBridgeFunctions.cpp` (deferred from Phase 1). P1-I03 diagnostic assertions auto-activate (no longer caught by `EntryPointNotFoundException`).
+- [ ] `cpp-unit-tests` CI job dry-run passes (job activated with `if: false` removed, no Phase 2 code yet) before C++ code is added.
 - [ ] `cpp-unit-tests` CI job is active and passes on `ubuntu-latest` with no Thermo or Windows dependency.
 - [ ] CI `cpp-unit-tests` job passes with zero warnings.
 - [ ] Code review: a second developer has confirmed the `toSpectrum()` insertion point is correct and does not break any existing `MSSpectrum` field assignments above it.
+
+---
+
+## Phase 0-1 Lessons Applied
+
+This section summarises the corrections and additions made to this plan based on `Phase_0/lessons-learned.md`, `Phase_1/lessons-learned.md`, `Phase_0/compliance-report.md`, and `Phase_1/compliance-report.md`. It serves as a quick reference for reviewers.
+
+| # | Source | Topic | Correction Applied |
+|---|--------|-------|--------------------|
+| 1 | P0-LL #1, P0-CR M-4 | Flash.exe entry point | P2-R01 already documented the correct invocation (`Flash.exe <input> <output> <method>`). No `-t` flag was present in this plan; confirmed clean. |
+| 2 | P0-LL #12.1, P0-CR M-2 | Build output path | No `FlashIDA/src/Flash/bin/Debug/` references were present in this plan. |
+| 3 | P0-LL #3, P0-CR I-1 | Thermo DLL strategy | No Strategy A / base64 references present. Confirmed Strategy B (openssl-encrypted zip / `THERMO_DLL_PASSPHRASE`) is implied by Phase 0 infrastructure. |
+| 4 | P0-LL #5, P0-CR I-1 | OpenMS DLLs | No download steps present. DLLs are committed in `FlashIDA/dll/` and copied by MSBuild. |
+| 5 | P1-LL #2 | Test data path | Added note in Working Product Verification §6: use `Path.Combine(TestDirectory, "..", "test-data")` — one level up from `bin/`. |
+| 6 | P1-LL #7, #8 | NUnit configuration | Added note in CI §P2-R01: `--agents=1 --timeout=300000` required; `OPENMS_DATA_PATH` must be set. `--inprocess` for debugging SocketException / Agent Process terminated. |
+| 7 | P0-CR I-5 | cpp-unit-tests dry run | Added dry-run activation step: activate the job (`if: false` removed) in a separate commit before adding Phase 2 code. Added DoD checklist item. |
+| 8 | P1-CR §3 (Deferred items) | GetConfigInt/GetConfigDouble | Added Step 3b: implement C++ bridge exports during Phase 2 DLL rebuild, batched with OptimizationMetadata. Added DoD checklist item. |
+| 9 | P0-CR L-2 | compare_golden.py columns | Added note in CI §P2-R01: script only classifies `charges` (string) and `hcd` (int). New non-float columns in future phases must update `STRING_COLUMNS` / `INT_COLUMNS`. |
+| 10 | P1-LL #3 | MSVC /WX warnings-as-errors | Added note in DLL build time section: check for C4100/C4189 before pushing to avoid 40-min wasted builds. |
+| 11 | P1-LL #10 | DLL build ~40 min | Added DLL build time note in CI §submodule: batch all C++ changes into a single push. |
+| 12 | P1-LL #1, P0-LL #15 | Submodule pointer update | Strengthened submodule workflow note: push submodule pointer in parent repo after every submodule branch push; CI uses pointer commit not branch HEAD. |
+| 13 | P1-LL #11 | Constructor overloading | Added note in Working Product Verification §5: both `FLASHIdaWrapper(MethodParameters)` and `FLASHIdaWrapper(IDAParameters)` must be preserved; C++ auto-detects JSON vs legacy string. |
+| 14 | P1-LL #7 | NUnit SocketException diagnosis | Added to NUnit configuration note: use `--inprocess` to surface the actual C++ fatal error when NUnit reports `SocketException` / `Test Count: 0`. |
+| 15 | P0-LL #12.2 | DLL name in P/Invoke | Added to Step 3b: new `[DllImport]` attributes must use `"OpenMS.dll"` (with extension). |
+| 16 | Prerequisites §2 | Phase 1 status | Updated prerequisite from "in-flight / same Build #1" to "complete": 53 tests passing, golden JSON files committed, `GetConfigInt`/`GetConfigDouble` stubs present, both constructors coexist. |

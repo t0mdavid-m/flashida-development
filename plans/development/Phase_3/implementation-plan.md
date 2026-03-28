@@ -26,15 +26,17 @@ At the end of this phase the application behaves identically to Phase 2. No scan
 The following must exist and be green before Phase 3 work begins:
 
 1. Phase 0 complete: `Flash.Tests.csproj` exists, `baseline_phase0.tsv` committed, CI skeleton active.
-2. Phase 1 complete: `Parameter.ToJSON()` implemented, `MethodConfig.cs` exists, C++ JSON parsing branch in `FLASHIda` constructor active, Build #1 DLL artifact available (or Phase 3 is batched alongside Phases 1 and 2 in the same Build #1 — see batching note below).
-3. Phase 2 complete: `OptimizationMetadata.h` and `DeconvolvedSpectrum` accessors implemented.
-4. All Phase 0, 1, and 2 tests pass (39 cumulative tests in CI after Phase 3 ships).
+2. Phase 1 complete: `Parameter.ToJSON()` implemented, `MethodConfig.cs` exists, C++ JSON parsing branch in `FLASHIda` constructor active, Build #1 DLL artifact available (or Phase 3 is batched alongside Phases 1 and 2 in the same Build #1 — see batching note below). Both `FLASHIdaWrapper(MethodParameters)` and `FLASHIdaWrapper(IDAParameters)` constructors exist; C++ auto-detects JSON vs legacy format via `arg[0] == '{'` (Phase 1 lesson #11).
+3. Phase 2 complete: `OptimizationMetadata.h` and `DeconvolvedSpectrum` accessors implemented; `GetConfigInt`/`GetConfigDouble` C++ exports live in the Phase 2 DLL rebuild; `ScanSchedulingConfig` and `ParameterOptimizationConfig` XML classes deferred from Phase 1 land in Phase 3 (see Step 6a).
+4. All Phase 0, 1, and 2 tests pass (53 cumulative tests from Phase 0+1; Phase 2 adds its own tests; CI must be green before Phase 3 work begins).
 5. The OpenMS submodule is on branch `flashida-v9-bridge` and the FlashIDA repo is on branch `flashida-v9-migration`.
-6. `FlashIDA/dll/OpenMS.dll` is committed in the repo (Phase 0 lesson #5 — no download needed). It will be replaced by the Build #1 artifact that includes Phase 3 changes.
+6. `FlashIDA/dll/OpenMS.dll` is committed in the repo (Phase 0 lesson #5 — no download needed). MSBuild copies it to `FlashIDA/bin/` via `CopyToOutputDirectory`. It will be replaced by the Build #1 artifact that includes Phase 3 changes.
 
-**Build batching note:** Phases 1, 2, and 3 are batched into a single C++ build (Build #1). In practice this means all C++ changes for all three phases are developed together and compiled once. When working in this batch, treat the Build #1 OpenMS artifact as the combined output of all three phases. The phase separation exists for clarity of scope, not for separate compilation runs.
+**Build batching note (Phase 1 lesson #10):** Phases 1, 2, and 3 are batched into a single C++ build (Build #1). Each failed DLL build on CI costs ~40 minutes with no ccache hit on a new branch. In practice this means all C++ changes for all three phases are developed together and compiled once. Before pushing C++ changes, verify locally for obvious MSVC issues (unused variables, unreferenced parameters — MSVC `/WX` treats these as errors; see Phase 1 lesson #3). When working in this batch, treat the Build #1 OpenMS artifact as the combined output of all three phases. The phase separation exists for clarity of scope, not for separate compilation runs.
 
-**Submodule workflow note (Phase 0 lesson #15):** 48% of Phase 0 commits were submodule pointer updates. Batch same-side changes (all C# changes or all C++ changes) before updating the submodule pointer to reduce churn. For Phase 3, complete all C++ changes (Steps 1-5, 11, 13) before committing the submodule update in the FlashIDA repo, then do all C# changes (Steps 6-10, 12, 14) in a batch.
+**Submodule workflow note (Phase 1 lesson #1):** After pushing to any submodule branch, always `git add FlashIDA OpenMS` in the parent repo and push immediately. CI checks out submodules at the pointer commit, not at the branch HEAD — new files and code changes are invisible to CI until the pointer is updated. 48% of Phase 0 commits were submodule pointer updates. Batch same-side changes (all C# changes or all C++ changes) before updating the submodule pointer to reduce churn. For Phase 3, complete all C++ changes (Steps 1-5, 11, 13) before committing the submodule update in the FlashIDA repo, then do all C# changes (Steps 6-10, 12, 14) in a batch.
+
+**ModificationsDB singleton note (Phase 1 lesson #4):** Never remove or comment out calls to OpenMS singleton initializers (`ModificationsDB::getInstance()`, `ResidueDB::getInstance()`, `ElementDB::getInstance()`) even if the return value appears unused. These initialize the shared data path resolver as a side effect. If fixing MSVC C4189 unused-variable warnings, use `(void)ModificationsDB::getInstance()->...` to suppress the warning while keeping the call. Removing these calls causes a fatal `Cannot find shared data!` crash.
 
 ### User-Provided Inputs
 
@@ -738,6 +740,43 @@ public IFusionCustomScan BuildFromCommand(ScanCommand cmd)
 
 **Note on `Stages` initialization:** When `ScanCommand` is received from `GetNextScanCommand` via P/Invoke, the `Stages` array is populated by the marshaler from the inline C++ array. However, if `NumIsolationStages == 0`, the stage values will all be zero. `BuildFromCommand` must handle this gracefully, as shown above.
 
+### Step 10a: Add `ScanSchedulingConfig` and `ParameterOptimizationConfig` XML Classes (Phase 1 deferrals)
+
+**File:** `FlashIDA/src/Flash/IDA/MethodConfig.cs`
+
+These two XML serialization classes were deferred from Phase 1 (Phase 1 compliance report §3, documented deferrals) because no XML source existed at Phase 1 implementation time. Phase 3 introduces the ScanCommand struct and scheduling fields parsed from JSON; this is the natural place to add the corresponding XML round-trip classes.
+
+Add the following two classes to `MethodConfig.cs`, alongside the existing 14 JSON serialization classes:
+
+```csharp
+/// <summary>
+/// XML-serializable configuration for scan scheduling (cycle time, timeout).
+/// Mirrors the JSON "scheduling" section from Parameter.ToJSON().
+/// </summary>
+[Serializable]
+public class ScanSchedulingConfig
+{
+    public bool   CycleTimeEnabled  { get; set; } = false;
+    public double CycleTimeSeconds  { get; set; } = 60.0;
+    public bool   TimeoutEnabled    { get; set; } = false;
+    public double TimeoutSeconds    { get; set; } = 30.0;
+}
+
+/// <summary>
+/// XML-serializable configuration for parameter optimization (exploration engine).
+/// Mirrors the JSON "exploration" section from Parameter.ToJSON().
+/// </summary>
+[Serializable]
+public class ParameterOptimizationConfig
+{
+    public bool Enabled    { get; set; } = false;
+    public int  MaxDepth   { get; set; } = 3;
+    public int  MaxVariants { get; set; } = 5;
+}
+```
+
+These classes are referenced by `MethodParameters` when reading XML method files that include scheduling or exploration sections. In Phase 3, they are populated from the JSON defaults; full XML round-trip testing belongs in the Phase 3 unit tests (extend P1-U05/P1-U05b to cover the new sections, or add a dedicated P3-U00 test).
+
 ### Step 11: Add `ScanCommandLayoutTest` C++ Binary
 
 **File to create:** `OpenMS/src/tests/class_tests/openms/source/ScanCommandLayout_test.cpp`
@@ -1080,10 +1119,15 @@ namespace Flash.Tests
         [SetUp]
         public void SetUp()
         {
-            // Use a default IDAParameters built from method_default.xml.
-            // The wrapper constructor calls CreateFLASHIda with JSON (Phase 1).
-            var methodParams = MethodParameters.Load("test-data/configs/method_default.xml");
-            _wrapper = new FLASHIdaWrapper(methodParams.IDA);
+            // Use a default MethodParameters built from method_default.xml.
+            // TestDirectory resolves to FlashIDA/bin/; test-data is one level up (Phase 1 lesson #2).
+            // Use FLASHIdaWrapper(MethodParameters) constructor so JSON path is exercised (Phase 1 lesson #11).
+            // Both FLASHIdaWrapper(MethodParameters) and FLASHIdaWrapper(IDAParameters) constructors exist;
+            // the MethodParameters overload uses ToJSON() and the C++ side auto-detects JSON vs legacy.
+            string testDir = TestContext.CurrentContext.TestDirectory;
+            string configPath = Path.Combine(testDir, "..", "test-data", "configs", "method_default.xml");
+            var methodParams = MethodParameters.Load(configPath);
+            _wrapper = new FLASHIdaWrapper(methodParams);
         }
 
         [TearDown]
@@ -1196,9 +1240,19 @@ namespace Flash.Tests
 |------|--------|-------------|
 | `.github/workflows/flashida-ci.yml` | Modify | Activate `cpp-unit-tests` job (already added in Phase 2); add Phase 3 test discovery for `FLASHIdaQueueTracking_test`; add "Verify DLL exports" step for 3 new functions inside `windows-tests` job; add cross-job artifact upload for `ScanCommandLayout_test` output (optional — see CI section) |
 
-### Test Data (no new files required for Phase 3)
+### Test Data
 
 Phase 3 regression (P3-R01) reuses `ms1_smoke_test.txt` and `method_default.xml` from Phase 0. No new test spectrum or config files are needed. The golden file comparison target is `baseline_phase0.tsv` (the Phase 0 regression anchor that covers Phases 1–3).
+
+**Phase 3 must also capture and commit `baseline_phase3.tsv`.** This file is identical to `baseline_phase0.tsv` (Phase 3 is a zero-behavioral-change phase), but it is committed separately so that Phase 4 can use it as its regression anchor for P4-R01 (`UseUnifiedBridge=False`). Without `baseline_phase3.tsv`, Phase 4 prerequisites cannot be satisfied. Capture procedure:
+
+1. After P3-R01 passes, the CI `windows-tests` job writes `output\phase3_shadow.tsv`.
+2. Download the artifact from the workflow run summary.
+3. Verify the file is identical to `baseline_phase0.tsv` using `compare_golden.py` (a diff should show zero failures).
+4. Rename/copy to `baseline_phase3.tsv` and commit to `FlashIDA/test-data/golden/`.
+5. Update `FlashIDA/test-data/golden/README.md` to document Phase 3 golden file provenance.
+
+**2-commit minimum (Phase 0 lesson #15):** This capture requires 2 commits: the first runs CI and produces the artifact; the second commits the golden file.
 
 **Golden file capture workflow (Phase 0 lesson #15):** If any new golden files are needed, golden-file capture requires a minimum of 2 commits: the first commit runs CI and produces the golden artifact; the second commit includes the captured golden file. Batch multiple golden file captures into a single CI run to minimize churn.
 
@@ -1294,6 +1348,28 @@ Golden file changes in Phase 3 are a red flag and must be investigated before me
 
 **Note:** These are Tier 2 tests (load OpenMS.dll via P/Invoke). They run in the `windows-tests` CI job.
 
+### Strengthen Problematic Continuity Test Assertions (Phase 0 compliance H-1)
+
+Phase 0 compliance identified five continuity tests with assertions that cannot fail on behavioral grounds. Phase 3 — which refactors scan processing via the ScanCommand pipeline — is the designated phase to strengthen these (Phase 0 compliance recommendation #7).
+
+| Test | Current issue | Required fix |
+|------|--------------|-------------|
+| CT13 (InclusionList_OnlyListedMasses) | Checks `PrecursorMz > 0` (trivially true) | Check that precursor m/z values correspond to inclusion-listed masses within tolerance |
+| CT14 (ExclusionList_ExcludedMassesSuppressed) | Same issue as CT13 | Verify excluded masses are absent from scan commands |
+| CT17 (TagTargeting_TriggersFollowUpMS2) | Checks `ScanType == "MSn"` (true for all DDA) | Exercise MS1→MS2→follow-up chain; assert follow-up count > 0 |
+| CT22 (MS3Enabled_MsnLevel3RecordsExist) | Tautology: filters to MsnLevel==3 then asserts MsnLevel==3 | Add `Assert.That(ms3Results.Count, Is.GreaterThan(0))` before the filter |
+| CT27 (FAIMSAdaptiveSkip_LowPrecursorCVLessFrequent) | Ends with `Assert.Pass()` (unconditional) | Replace with actual behavioral check on collected results |
+
+These fixes do not require new test data — the existing continuity test harness infrastructure is sufficient.
+
+### Tolerance-Based Golden Comparison (Phase 0 compliance H-3)
+
+Phase 0 uses exact-string golden comparison for continuity test JSON golden files. Phase 3 is the designated phase to upgrade this if float drift occurs (Phase 0 compliance recommendation #9). If the shadow path deconvolution affects floating-point state and causes spurious continuity golden failures, upgrade the comparison to tolerance-based: absolute tolerance 1e-6 for float values ≤ 1.0, relative tolerance 1e-4 for float values > 1.0. This mirrors the TSV regression comparison rules in `compare_golden.py`. Add a `CompareJsonWithTolerance` helper or extend the existing `CompareJsonSection` from Phase 1.
+
+### DataPipe Bypass Note (Phase 0 compliance H-2)
+
+The ContinuityTestHarness bypasses DataPipe — it calls bridge functions directly. Phase 3's new `ProcessScan` and `GetNextScanCommand` bridge functions are exercised only in tests, not through the async DataPipe path. This limitation is documented in the Goal section above. Full DataPipe integration testing is planned for later phases when mock-based acquisition loop tests are added. Do not attempt to retrofit DataPipe wrapping into the ContinuityTestHarness during Phase 3 — the scope cost would exceed the benefit at this stage.
+
 ---
 
 ## CI Configuration
@@ -1316,11 +1392,17 @@ windows-latest job: windows-tests (needs: cpp-unit-tests)
   - MSBuild Flash.Tests.csproj
   - Download "cpp-layout-output" artifact from cpp-unit-tests job
   - packages\NUnit.ConsoleRunner.*\tools\nunit3-console.exe Flash.Tests.dll
-    (run from working directory FlashIDA\bin\; Phase 0 lesson #12)
+      --agents=1 --timeout=300000
+      (Phase 1 lesson #8: single agent prevents parallel cold-cache; 5-min timeout for calculateAveragine)
+      env: OPENMS_DATA_PATH=${{ github.workspace }}/OpenMS/share/OpenMS
+      (Phase 1 lesson #5: required for chemistry data; set even if DLL was built without data path issue)
+      (run from working directory FlashIDA\bin\; Phase 0 lesson #12)
     -> P3-U01, U02, U03, U04 (ScanCommandLayoutTests.cs)
   - Flash.exe <input> <output> <method.xml> + compare_golden.py  -> P3-R01
   - packages\NUnit.ConsoleRunner.*\tools\nunit3-console.exe Flash.Tests.dll --where "class == BridgePhase3Tests"
-    (run from working directory FlashIDA\bin\; Phase 0 lesson #12)
+      --agents=1 --timeout=300000
+      env: OPENMS_DATA_PATH=${{ github.workspace }}/OpenMS/share/OpenMS
+      (run from working directory FlashIDA\bin\; Phase 0 lesson #12)
     -> P3-I01, I02, I03, I04
   - Step: Verify DLL exports (dumpbin /exports)
     -> P3-I05
@@ -1417,6 +1499,8 @@ Add the following to the regression test step in the `windows-tests` job. The sp
 3. Add the "Verify DLL exports" step for 3 new functions inside the `windows-tests` job.
 4. Extend the regression step in `windows-tests` to capture stdout and scan for `[TRACK-CREATE]` lines.
 5. (Optional) Download C++ layout artifact in `windows-tests` and extend `ScanCommandLayoutTests` to read it.
+6. **Activate the stress test CI step** (Phase 0 compliance M-6): Remove the `if: false` guard from the stress test step in the `windows-tests` job. CT31 and CT32 must run unconditionally in Phase 3 CI. If the step was added in Phase 0 as a gated placeholder, change `if: false` to `if: true` (or remove the condition entirely). The stress tests are Tier 2 (load OpenMS.dll) and belong in the existing `windows-tests` job.
+7. Add `--agents=1 --timeout=300000` and `OPENMS_DATA_PATH` to every `nunit3-console.exe` invocation in `windows-tests` (Phase 1 lessons #5 and #8).
 
 ---
 
@@ -1462,7 +1546,7 @@ All of the following must be true before Phase 3 is considered complete and Buil
 - [ ] `ScanFactory.BuildFromCommand(ScanCommand)` method implemented and compiles.
 - [ ] Shadow validation calls added in `IDAScanProcessor`, `FAIMSScanProcessor`, `QuantScanProcessor`.
 - [ ] All 18 Phase 3 tests (P3-U01 through P3-R01, plus CT31 and CT32) pass in CI.
-- [ ] All prior-phase tests (P0-*, P1-*, P2-* — 23 tests) continue to pass in CI.
+- [ ] All prior-phase tests (P0-*, P1-*, P2-*, and acquisition-loop CT tests — 59 tests total as of Phase 2: 53 from Phase 0+1 + 6 new Phase 2 tests) continue to pass in CI.
 - [ ] `Flash.exe ms1_smoke_test.txt output.tsv method_default.xml` output is identical to `baseline_phase0.tsv` (P3-R01 passes in CI; see `test-file-specification.md` §2.2 for the golden file inventory). Note: entry point is `FLASHIdaWrapper.Main()`, no `-t` flag (Phase 0 lesson #1).
 - [ ] `[TRACK-CREATE]` log entries appear in `Flash.exe` stdout.
 - [ ] CT31 (1000 scans sequential) and CT32 (concurrent processing) stress tests implemented and passing (deferred from Phase 0 lesson #13).
@@ -1471,3 +1555,36 @@ All of the following must be true before Phase 3 is considered complete and Buil
 - [ ] `ScanCommandLayout_test` binary builds and its output matches hard-coded C# expected values (verified in CI job `cpp-unit-tests`).
 - [ ] Phase 3 changes committed to `flashida-v9-migration` (C#) and `flashida-v9-bridge` (C++) branches.
 - [ ] Build #1 CI run (Phases 1 + 2 + 3 combined) is green on both `ubuntu-latest` and `windows-latest`.
+- [ ] `baseline_phase3.tsv` captured from the Phase 3 CI run and committed to `FlashIDA/test-data/golden/` (required by Phase 4 prerequisite §2 and P4-R01).
+- [ ] `ScanSchedulingConfig` and `ParameterOptimizationConfig` XML classes added to `MethodConfig.cs` (Phase 1 deferrals resolved).
+- [ ] PROBLEMATIC continuity tests CT13, CT14, CT17, CT22, CT27 have strengthened assertions (Phase 0 compliance H-1).
+- [ ] Stress test CI step has `if: false` removed (stress tests run unconditionally in Phase 3 CI).
+- [ ] All NUnit invocations use `--agents=1 --timeout=300000` and set `OPENMS_DATA_PATH` (Phase 1 lessons #5 and #8).
+- [ ] Submodule pointer updated in parent repo after every push to `flashida-v9-bridge` or `flashida-v9-migration` (Phase 1 lesson #1).
+
+---
+
+## Phase 0-1 Lessons Applied
+
+This section summarizes corrections made to the Phase 3 implementation plan based on lessons learned from Phase 0 and Phase 1.
+
+| # | Source | Correction Applied |
+|---|--------|--------------------|
+| 1 | Phase 0 lesson #1, Phase 0 compliance M-4 | No `-t` flag: entry point is `FLASHIdaWrapper.Main()`. Plan already had this correct; reinforced in Working Product Verification items 4 and confirmed in P3-R01 description. |
+| 2 | Phase 0 lesson #12 item 1 | Build output path is `FlashIDA/bin/`, not `FlashIDA/src/Flash/bin/Debug/`. Plan already used the correct path; no change needed, confirmed at CI diagram lines. |
+| 3 | Phase 0 lesson #3 | Thermo DLL strategy is B (openssl/THERMO_DLL_PASSPHRASE). Plan already referenced Strategy B at CI diagram; reinforced. |
+| 4 | Phase 0 lesson #5 | OpenMS DLLs are committed in `FlashIDA/dll/`, copied by MSBuild. Added explicit statement in prerequisite #6. |
+| 5 | Phase 1 lesson #2 | Test data path is one level up from `bin/`: `Path.Combine(TestDirectory, "..", "test-data")`. Fixed `BridgePhase3Tests.cs` SetUp to use `TestContext.CurrentContext.TestDirectory` + `"..", "test-data", ...` instead of bare relative path. |
+| 6 | Phase 1 lessons #5, #8 | NUnit runner requires `--agents=1 --timeout=300000` and `OPENMS_DATA_PATH` env var. Added to CI diagram and summary. |
+| 7 | Phase 0 compliance M-6, Phase 0 lesson #13 | CT31/CT32 stress tests deferred from Phase 0 must be implemented and the `if: false` CI guard removed in Phase 3. Stress test CI activation added to Summary of CI Workflow Changes. |
+| 8 | Phase 1 compliance deferrals | `ScanSchedulingConfig` and `ParameterOptimizationConfig` XML classes deferred from Phase 1 land in Phase 3. Added Step 10a. |
+| 9 | Phase 0 compliance H-1 | Strengthen PROBLEMATIC test assertions CT13, CT14, CT17, CT22, CT27. Added dedicated section before CI Configuration. |
+| 10 | Phase 0 compliance H-3 | Tolerance-based golden comparison for continuity tests. Added dedicated section; upgrade `compare_golden.py` if float drift occurs. |
+| 11 | Phase 0 compliance H-2 | ContinuityTestHarness bypasses DataPipe. Documented in Goal section and in dedicated section before CI Configuration. Note added to not attempt DataPipe wrapping in Phase 3. |
+| 12 | Phase 1 lesson #1 | Submodule pointer must be updated after every push to submodule branches. Added explicit note and DoD checklist item. |
+| 13 | Phase 1 lesson #10 | DLL build takes ~40 min per CI run with no ccache hit. Added to Build batching note; batch all C++ changes before pushing. |
+| 14 | Phase 1 lesson #3 | MSVC `/WX` treats unused variables/parameters as errors. Added to Build batching note; check for C4100/C4189 before pushing. |
+| 15 | Phase 1 lesson #4 | Never remove OpenMS singleton initializers (`ModificationsDB::getInstance()` etc). Added dedicated ModificationsDB singleton note in Prerequisites. |
+| 16 | Phase 0 lesson #12 item 2 | DLL name is `"OpenMS.dll"` with extension in P/Invoke `dllName`. Already correct in plan at Step 7 note; reinforced. |
+| 17 | Phase 1 lesson #11 | Both `FLASHIdaWrapper(MethodParameters)` and `FLASHIdaWrapper(IDAParameters)` constructors exist. Added to Prerequisites and fixed BridgePhase3Tests SetUp to use `FLASHIdaWrapper(MethodParameters)`. |
+| 18 | Phase 1 compliance deferrals | Phase 2 explicitly listed as prerequisite with what it delivers (GetConfigInt/GetConfigDouble C++ exports, ScanSchedulingConfig/ParameterOptimizationConfig deferred XML classes). Updated prerequisite #3. |

@@ -94,8 +94,11 @@ Run the smoke test to verify the full toolchain:
 ```powershell
 # Unit tests (run from FlashIDA/bin/ so native DLLs are found)
 # NUnit runner is invoked by full path from NuGet packages directory
+# --agents=1 prevents cold-cache timeouts; --timeout=300000 allows calculateAveragine to warm up (Phase 1 lessons #8, #9)
+# OPENMS_DATA_PATH must be set so OpenMS can find chemistry data files (Phase 1 lesson #5)
+$env:OPENMS_DATA_PATH = "..\OpenMS\share\OpenMS"
 cd FlashIDA/bin
-..\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll
+..\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll --agents=1 --timeout=300000
 
 # Regression test (test mode)
 FlashIDA/bin/Flash.exe test-data/spectra/ms1_standard.txt output.tsv test-data/configs/method_default.xml
@@ -108,6 +111,12 @@ FlashIDA/bin/Flash.exe test-data/spectra/ms1_standard.txt output.tsv test-data/c
 | Secret Name | Purpose | See Section |
 |-------------|---------|-------------|
 | `THERMO_DLL_PASSPHRASE` | Decryption passphrase for openssl-encrypted DLL archive (Strategy B) | 3.3 |
+
+**Required environment variables (NUnit test step on `windows-tests`):**
+
+| Variable | Value | Reason |
+|----------|-------|--------|
+| `OPENMS_DATA_PATH` | `${{ github.workspace }}/OpenMS/share/OpenMS` | Required for all steps that invoke OpenMS functionality via P/Invoke. Without it the DLL cannot locate chemistry data files (residue masses, isotope distributions, modifications database) and the process crashes. A DLL rebuild can silently change data path resolution behaviour, so this variable is mandatory even if prior phases worked without it. (Phase 1 lesson #5.) |
 
 > **Note (Phase 0 lesson #3):** Strategy A (base64 secret via `THERMO_IAPI_DLLS_BASE64`) is not viable — the 5 Thermo DLLs compress to 75 KB, and base64 encoding produces 101 KB, exceeding GitHub's 48 KB per-secret limit. Strategy B (openssl-encrypted archive committed at `FlashIDA/dependencies/thermo-dlls.zip.enc`) is the chosen strategy.
 
@@ -228,7 +237,9 @@ jobs:
       # NUnit runner: invoke by full path from NuGet packages dir
       # Working directory: FlashIDA/bin/ (native DLLs must be on search path)
       # Filter: use --where "class =~ ..." (not @categories)
-      - run nunit3-console Flash.Tests.dll  # Tiers 1+2 (unit + bridge)
+      # Flags: --agents=1 --timeout=300000 (prevent cold-cache timeout + parallel issues)
+      # Env: OPENMS_DATA_PATH must point to OpenMS/share/OpenMS (Phase 1 lessons #5, #8, #9)
+      - run nunit3-console Flash.Tests.dll --agents=1 --timeout=300000  # Tiers 1+2 (unit + bridge)
       - verify bridge smoke tests passed (if: always())
       - run dumpbin /exports validation (Phase 3+)
       - run Flash.exe <input> <output> <method.xml> (regression, no -t flag)
@@ -417,22 +428,26 @@ Test data lives in a dedicated directory:
 FlashIDA/test-data/
   spectra/
     ms1_smoke_test.txt        # Minimal spectrum for Phase 0 smoke test
+    ms2_smoke_test.txt        # Single MS2 scan for Phase 0 continuity tests (AL-CT17–CT21)
     ms1_standard.txt          # Tab-delimited mz/intensity, used by Flash.exe test mode
     ms2_hcd_fragment.txt      # MS2 spectrum for tag-based targeting test
   configs/
-    method_default.xml        # Standard DDA
-    method_deep.xml           # Deep mode
-    method_inclusion.xml      # Inclusion list mode
-    method_exclusion.xml      # Exclusion list mode
-    method_tag_targeting.xml  # MS2 tagging + conditional MS2
-    method_quant.xml          # Isobaric quantification
-    method_ms3_mode1.xml      # MS3 characterization mode 1
-    method_ms3_mode2.xml      # MS3 characterization mode 2
-    method_ms3_mode3.xml      # MS3 characterization mode 3
-    method_faims_3cv.xml      # FAIMS with 3 CVs
-    method_faims_skip.xml     # FAIMS with adaptive skipping
-    method_exploration.xml    # Parameter optimization enabled
-    method_json_roundtrip.xml # Full-featured config for JSON round-trip
+    method_default.xml         # Standard DDA
+    method_default_topn5.xml   # Standard DDA with TopN=5 (used by CT08, CT12)
+    method_deep.xml            # Deep mode
+    method_inclusion.xml       # Inclusion list mode
+    method_exclusion.xml       # Exclusion list mode
+    method_tag_targeting.xml   # MS2 tagging + conditional MS2
+    method_quant.xml           # Isobaric quantification
+    method_ms3_mode1.xml       # MS3 characterization mode 1
+    method_ms3_mode2.xml       # MS3 characterization mode 2
+    method_ms3_mode3.xml       # MS3 characterization mode 3
+    method_faims_3cv.xml       # FAIMS with 3 CVs
+    method_faims_skip.xml      # FAIMS with adaptive skipping
+    method_exploration.xml     # Parameter optimization enabled
+    method_json_roundtrip.xml  # Full-featured config for JSON round-trip
+    test_inclusion_list.txt    # Target masses for AL-CT13 inclusion list test
+    test_fasta.fasta           # FASTA for JSON round-trip files.fasta field
   golden/
     README.md                 # Documents golden file provenance and update procedure
     baseline_phase0.tsv       # Phase 0 baseline capture (current behavior)
@@ -492,7 +507,7 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | Test ID | Tier | Description | Expected Outcome |
 |---------|------|-------------|------------------|
 | P1-U01 | 1 | `Parameter.ToJSON()` produces valid JSON | `JavaScriptSerializer` can deserialize the output without error |
-| P1-U02 | 1 | `ToJSON()` includes all `method.xml` sections | JSON contains keys: `deconvolution`, `precursor_selection`, `quantification`, `faims`, `ms_settings`, `scheduling`, `exploration`, `files` |
+| P1-U02 | 1 | `ToJSON()` includes all `method.xml` sections | JSON contains keys: `deconvolution`, `precursor_selection`, `tagging`, `quantification`, `faims`, `ms_settings`, `scheduling`, `exploration`, `files` (9 keys; `tagging` added in Phase 1 — see baseline-plan.md Issue 8 note) |
 | P1-U03 | 1 | JSON field values match XML source | Parse `method_json_roundtrip.xml`, call `ToJSON()`, compare each field against `config_full.json` golden file |
 | P1-U04 | 1 | `ms_settings.ms2` is an array (supports multiple MS2 configs) | Verify array length matches XML `<MS2>` child count |
 | P1-U05 | 1 | `MethodConfig.cs` round-trip: XML -> MethodConfig -> JSON -> parse -> verify | All fields survive the round-trip |
@@ -616,14 +631,14 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P5-U03 | 1 (C#) | No code references `QuantScanProcessor` | Compile succeeds after deletion; grep for `QuantScanProcessor` in `*.cs` returns zero hits |
 | P5-U04 | 1 (C#) | `DataPipe` propagates completion correctly | Unit test: push 5 items, complete, verify ActionBlock processed all 5 |
 | P5-R01 | 3 | All modes produce identical output to Phase 4 | `Flash.exe` with every mode config, compare to Phase 4 golden files |
-| P5-R02 | 3 | FAIMS mode still works (ScanScheduler still active) | `Flash.exe` with `method_faims_3cv.xml`, compare to golden |
+| P5-R02 | 3 | FAIMS mode still works (ScanScheduler still active); captures FAIMS baselines | `Flash.exe` with `method_faims_3cv.xml` and `method_faims_skip.xml`; outputs committed as `faims_3cv.tsv` and `faims_skip.tsv` (used as Phase 6 regression targets) |
 
 **Regression from Phases 0-4:** All P0-* through P4-* tests must pass.
 
 **Working Product Verification automation:**
 - WPV-1 ("All modes identical to Phase 4"): Automated by P5-R01.
 - WPV-2 ("DataPipe completion"): Automated by P5-U04.
-- WPV-3 ("FAIMS still works"): Automated by P5-R02.
+- WPV-3 ("FAIMS still works; FAIMS golden baselines captured"): Automated by P5-R02.
 - WPV-4 ("QuantScanProcessor fully dead"): Automated by P5-U03.
 
 ---
@@ -950,8 +965,8 @@ This table tracks which acquisition modes are tested at each phase. A filled cel
 | MS3 mode 1 (SPS) | - | - | - | - | **NEW** | R | R | R | R |
 | MS3 mode 2 (CID) | - | - | - | - | **NEW** | R | R | R | R |
 | MS3 mode 3 (HCD) | - | - | - | - | **NEW** | R | R | R | R |
-| FAIMS (multi-CV) | - | - | - | - | - | R | **NEW** | R | R |
-| FAIMS adaptive skip | - | - | - | - | - | - | **NEW** | R | R |
+| FAIMS (multi-CV) | - | - | - | - | - | **NEW** | R | R | R |
+| FAIMS adaptive skip | - | - | - | - | - | **NEW** | R | R | R |
 | Exploration (CE opt) | - | - | - | - | - | - | - | **NEW** | R |
 | Exploration (MS3) | - | - | - | - | - | - | - | **NEW** | R |
 

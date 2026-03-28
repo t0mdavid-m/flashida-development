@@ -100,7 +100,8 @@ cpp-unit-tests  (ubuntu-latest)       windows-tests  (windows-latest)
 **`windows-tests`** (Tiers 1–4, windows-latest):
 - Restores Thermo DLLs from secret. OpenMS DLLs are already committed in `FlashIDA/dll/` (no download needed).
 - Builds solution via MSBuild; copies DLLs to build output (`FlashIDA/bin/`).
-- Runs NUnit tests by full path from the NuGet packages directory (e.g., `packages\NUnit.ConsoleRunner.3.x.x\tools\nunit3-console.exe`), with working directory set to `FlashIDA/bin/` so that native DLLs are found by the .NET runtime. Uses `--where "class =~ ..."` filter (not `--where "cat == ..."`) for bridge test selection. Covers Tier 1 (unit) and Tier 2 (integration/bridge) tests.
+- Runs NUnit tests by full path from the NuGet packages directory (e.g., `packages\NUnit.ConsoleRunner.3.x.x\tools\nunit3-console.exe`), with working directory set to `FlashIDA/bin/` so that native DLLs are found by the .NET runtime. Uses `--where "class =~ ..."` filter (not `--where "cat == ..."`) for bridge test selection. Passes `--agents=1 --timeout=300000` to prevent cold-cache timeouts on `calculateAveragine` and avoid parallel process interference. Covers Tier 1 (unit) and Tier 2 (integration/bridge) tests. (Phase 1 lessons #8, #9.)
+- Sets `OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS` as an environment variable on the NUnit test step. This is required for all steps that invoke OpenMS functionality via P/Invoke; without it the DLL cannot locate chemistry data files (residue masses, isotope distributions, modifications database) and crashes. A DLL rebuild can silently change data path resolution behaviour, making this variable mandatory regardless of whether prior phases needed it. (Phase 1 lesson #5.)
 - Verifies bridge smoke tests passed (inline result check, `if: always()`).
 - In Phase 3+: runs `dumpbin /exports` verification of `OpenMS.dll`.
 - Runs regression suite (`regression-runner.ps1`): executes `Flash.exe <input_file> <output_file> <method.xml>` for each config, compares output to golden files via `compare_golden.py`.
@@ -117,7 +118,7 @@ on:
     branches: [main, develop, flashida-v9-migration]
 ```
 
-Every push to the migration branch or any `phase-*` feature branch triggers the full suite. All 98 tests run on every commit; no subset runs are defined.
+Every push to the migration branch or any `phase-*` feature branch triggers the full suite. All tests run on every commit; no subset runs are defined. The cumulative test count grows from 35 at Phase 0 (7 P0-* + 28 AL-CT) to 130 at Phase 8 (98 P*-* across all phases + 32 AL-CT).
 
 ---
 
@@ -195,6 +196,7 @@ Phases within the same build batch (e.g., Phases 1 + 2 + 3 in Build #1) can be d
 
 - **Submodule pointer updates** accounted for ~48% of Phase 0 commits (13 of 27). Batch same-side changes (all C# changes together, or all C++ changes together) before updating the submodule pointer to reduce churn.
 - **Thermo interface mocking** required 9 iterative commits in Phase 0 due to undocumented proprietary interfaces. Budget 2-3 extra CI round-trips per phase that touches Thermo interfaces.
+- **Submodule pointer must be committed** when new C++ files are added. New files in the OpenMS submodule are invisible to CI until the FlashIDA repo's submodule pointer is updated and the updated pointer is committed. (Phase 1 lesson #1.)
 
 ### Merge Policy
 
@@ -250,7 +252,7 @@ The script takes a source `.mzML` file and an output path. Extracted scans are t
 
 | Phase | File(s) | Requirements |
 |-------|---------|--------------|
-| 0 | `ms1_smoke_test.txt` | 10–200 peaks, ≥1 deconvolution result, real top-down MS1 |
+| 0 | `ms1_smoke_test.txt` | Minimum 2 scans from the main elution region (~6,588 + ~21 peaks). Must contain protein charge envelopes detectable by FLASHDeconv. A single-scan file or a scan with 10–200 peaks produces zero output. (Phase 0 lessons #6, #7.) |
 | 4 | Mode-specific files (`ms1_deep.txt`, etc.) | One file per acquisition mode being tested |
 | 6 | `ms1_faims_3cv.txt` | Real FAIMS acquisition; scans at ≥2 CV values; precursor count variation sufficient to trigger adaptive skip threshold |
 | 7 | `ms1_exploration.txt` | High-quality precursors; scores high enough to trigger exploration |
@@ -274,9 +276,9 @@ Detailed requirements for each file are in the corresponding phase plan.
 | 1 | Build #1 (batched) | No | No | `config_default.json`, `config_full.json` | Build #1 DLL must be available before `windows-tests` can run |
 | 2 | Build #1 (batched) | Yes (first activation) | No | None | FLASH test entries in `executables.cmake` must be uncommented |
 | 3 | Build #1 | Yes | Yes (first activation) | None | `dumpbin /exports` check added to `windows-tests`; `ScanCommandLayoutTest` cross-artifact from ubuntu to windows |
-| 4 | Build #2 | Yes | Yes | Mode-specific golden files (10 configs) | Regression may approach 20-min budget; monitor and parallelize if needed |
-| 5 | None (reuse Build #2) | No | No | None | Pure C# refactor; cached Build #2 DLLs unchanged |
-| 6 | Build #3 | Yes | Yes (FAIMS stress) | `faims_3cv.tsv`, `faims_skip.tsv` | Stress test uses 50 scan events; mutex correctness required |
+| 4 | Build #2 | Yes | Yes | 9 new mode-specific golden files (`phase4_*.tsv`); P4-R01 reuses `baseline_phase0.tsv` | Regression may approach 20-min budget; monitor and parallelize if needed |
+| 5 | None (reuse Build #2) | Yes (no new C++ tests; existing tests run against Build #2 DLLs) | Yes | `faims_3cv.tsv`, `faims_skip.tsv` | P5-R02 captures FAIMS baselines while `ScanScheduler.cs` is still active; these become Phase 6 regression targets |
+| 6 | Build #3 | Yes | Yes (FAIMS stress) | None (uses Phase 5 FAIMS baselines) | Stress test uses 50 scan events; mutex correctness required |
 | 7 | Build #4 (batched) | Yes | Yes | Exploration golden file | Phase with most C++ tests (10); `method_exploration.xml` must be committed |
 | 8 | Build #4 | Yes | Yes | None (reuses Phase 7 files) | Full regression (12+ configs); `dumpbin` must show exactly 5 exports; `/warnaserror` build |
 

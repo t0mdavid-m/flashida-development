@@ -72,6 +72,7 @@ Spec <native_id>\t<rt_seconds>
 **Size constraints:**
 
 - Target: < 500 KB on disk (the primary scan may have thousands of peaks).
+- Actual size as committed for Phase 0: **143 KB** (2 scans: 6,588 + 21 peaks). This exceeds the original < 20 KB spec target, but that target was unreachable — no real MS1 scan with < 200 peaks contains detectable protein charge envelopes. The spec has been updated to match the actual file. (See Phase 0 lessons learned #6.)
 - The file must remain small enough for the smoke test to complete in under 60 seconds on a `windows-latest` GitHub Actions runner.
 
 **Source:** Extract 2 consecutive MS1 scans from an existing top-down `.mzML` file, where the first scan is from the main elution region:
@@ -217,15 +218,37 @@ The `--include-cv` flag causes the script to read the FAIMS CV from the spectrum
 
 | Phase | Test IDs | Purpose |
 |-------|----------|---------|
-| Phase 5 | P5-R02 | FAIMS still works after C# simplification |
+| Phase 5 | P5-R02 | FAIMS still works after C# simplification; captures `faims_3cv.tsv` and `faims_skip.tsv` baselines |
 | Phase 6 | P6-R02 | FAIMS 3-CV cycling regression |
 | Phase 6 | P6-R03 | FAIMS adaptive skipping regression |
-| Phase 7 | P7-R01 | Exploration disabled regression (non-FAIMS path; standard spectrum used instead) |
 | Phase 8 | P8-R01 | Full regression (FAIMS mode configs) |
 
 ---
 
-### 1.5 `ms1_high_density.txt` (optional)
+### 1.5 `ms2_smoke_test.txt`
+
+**Purpose:** Single MS2 scan used in Phase 0 continuity tests for tag-based targeting, conditional MS2, and isobaric quantification test modes (AL-CT17–CT21). Distinct from `ms2_hcd_fragment.txt` (Phase 4 regression), which requires a protein-matched fragment spectrum.
+
+**Format:** Single-scan. See [Spectrum File Format](#spectrum-file-format) above.
+
+**Content requirements:**
+
+- A real measured MS2 HCD scan from a top-down experiment.
+- Sufficient fragment ion density for the continuity harness to exercise the tag-based targeting path.
+
+**Size constraints:**
+
+- Target: < 200 KB on disk.
+
+**Used by:**
+
+| Phase | Test IDs | Purpose |
+|-------|----------|---------|
+| Phase 0 | AL-CT17, AL-CT18, AL-CT19, AL-CT20, AL-CT21 | Continuity tests: tag targeting, conditional MS2, quant mode |
+
+---
+
+### 1.6 `ms1_high_density.txt` (optional)
 
 **Purpose:** High-density MS1 spectrum containing 50 or more deconvolvable proteoforms. Used in queue saturation stress tests (Phase 3 P3-S01 and Phase 4 threading tests). This file is optional; if not provided, stress tests use repeated calls with `ms1_standard.txt` instead.
 
@@ -344,6 +367,29 @@ When an intentional behavioral change occurs (e.g., Phase 4 switch-over changes 
 
 Golden file changes in phases that claim zero behavioral change (Phase 0, Phase 2, Phase 3, Phase 5) are a red flag and must be investigated before merging.
 
+### 2.5 Continuity Golden JSON Files
+
+These are behavioral reference files used by the acquisition loop continuity tests (Section 5 of `acquisition-loop-testing-strategy.md`). They are JSON (not TSV) and capture `ScanCommandRecord` sequences produced by the full pipeline for a given input and config. They are captured in Phase 0 (first run) and asserted against in every subsequent phase.
+
+**Location:** `FlashIDA/test-data/golden/`
+
+> **Phase 0 lesson #15 / Phase 1 lesson #1:** Continuity golden JSON files follow the same 2-commit capture procedure as TSV golden files (Section 2.3). The first push runs CI and uploads the artifact; the second push commits the captured file. Submodule pointer must be updated and committed before the first push, or new C++ files are invisible to CI.
+
+> **Comparison note:** Continuity golden comparison uses exact string equality on the serialized JSON (not tolerance-based field comparison). This means float fields in the JSON must match to full precision. If a DLL rebuild changes floating-point output even within tolerance, the continuity golden files must be recaptured. (Phase 0 lesson #23.)
+
+| File | Captured by | Mode |
+|------|-------------|------|
+| `continuity_standard_dda.json` | AL-CT06 (Phase 0) | Standard DDA |
+| `continuity_inclusion.json` | AL-CT15 (Phase 0) | Inclusion list |
+| `continuity_exclusion.json` | AL-CT16 (Phase 0) | Exclusion list |
+| `continuity_tag_targeting.json` | AL-CT19 (Phase 0) | Tag-based targeting |
+| `continuity_quant.json` | AL-CT21 (Phase 0) | Isobaric quantification |
+| `continuity_ms3_mode1.json` | AL-CT24 (Phase 0) | MS3 mode 1 |
+| `continuity_ms3_mode2.json` | AL-CT25 (Phase 0) | MS3 mode 2 |
+| `continuity_ms3_mode3.json` | AL-CT26 (Phase 0) | MS3 mode 3 |
+| `continuity_faims_skip.json` | AL-CT28 (Phase 0) | FAIMS adaptive skip |
+| `continuity_exploration.json` | AL-CT30 (Phase 7) | Exploration CE optimization |
+
 ---
 
 ## 3. Configuration Files (method XMLs / JSONs)
@@ -399,7 +445,7 @@ These are not input configs; they are expected JSON output files used in Phase 1
 | `config_default.json` | `FlashIDA/test-data/json/` | Expected `Parameter.ToJSON()` output from `method_default.xml`. Used by P1-U03 for field-by-field comparison. |
 | `config_full.json` | `FlashIDA/test-data/json/` | Expected `Parameter.ToJSON()` output from `method_json_roundtrip.xml`. Used by P1-U03 and P1-U05. |
 
-Format: standard JSON, UTF-8, 2-space indentation. Keys exactly match the JSON schema in `baseline-plan.md` Issue 8.
+Format: standard JSON, UTF-8, 2-space indentation. These files are the authoritative reference for the actual JSON schema used in Phases 2+. The schema deviates from `baseline-plan.md` Issue 8 in two documented ways: (1) a `tagging` top-level key is present (see Issue 8 Phase 1 lesson #15), and (2) `scheduling` uses nested objects with `value_ms` rather than flat `_seconds` keys (see Issue 8 Phase 1 lesson #14).
 
 ---
 
@@ -548,7 +594,31 @@ The production script extends this reference with the options listed above.
 
 ---
 
-### 4.4 `Flash.Tests.csproj`
+### 4.4 `test_inclusion_list.txt`
+
+**Location:** `FlashIDA/test-data/configs/test_inclusion_list.txt`
+
+**Purpose:** A short inclusion list used by Phase 0 AL-CT13 (inclusion list mode continuity test). Contains a small number of target masses that the continuity harness uses to verify that only listed masses produce MS2 commands.
+
+**Format:** One target mass per line (decimal, in Da). Optionally a second column for the mass tolerance window.
+
+**Introduced in:** Phase 0 (required by AL-CT13 test; documented retroactively — see Phase 0 compliance report recommendation I-3.)
+
+---
+
+### 4.5 `test_fasta.fasta`
+
+**Location:** `FlashIDA/test-data/configs/test_fasta.fasta`
+
+**Purpose:** A small FASTA file used in Phase 0 continuity tests and JSON config round-trip tests that exercise the `files.fasta` config field. Contains one or two representative protein sequences.
+
+**Format:** Standard FASTA format. File size: < 5 KB.
+
+**Introduced in:** Phase 0 (required by JSON round-trip test; documented retroactively — see Phase 0 compliance report recommendation I-3.)
+
+---
+
+### 4.6 `Flash.Tests.csproj`
 
 **Location:** `FlashIDA/src/Flash.Tests/Flash.Tests.csproj`
 
@@ -562,7 +632,7 @@ The production script extends this reference with the options listed above.
 | `OutputType` | `Library` |
 | NUnit version | `3.13.3` (or current version used by the solution) |
 | NUnit3TestAdapter version | `4.3.1` |
-| NUnitConsoleRunner version | `3.16.3` |
+| NUnit.ConsoleRunner version | `3.16.3` |
 
 **Test files compiled into this project (accumulated across phases):**
 
@@ -570,6 +640,13 @@ The production script extends this reference with the options listed above.
 |------|-----------|---------|
 | `SmokeTests.cs` | Phase 0 | P0-U01 through P0-U04 |
 | `BridgeSmokeTests.cs` | Phase 0 | P0-I01, P0-I02 |
+| `Mocks/MockMsScan.cs` | Phase 0 | IMsScan test double for acquisition-loop tests |
+| `Mocks/MockCustomScan.cs` | Phase 0 | IFusionCustomScan test double |
+| `Mocks/MockScanFactory.cs` | Phase 0 | ScanFactory override for acquisition-loop tests |
+| `Mocks/MockTrailer.cs` | Phase 0 | Scan trailer dictionary mock |
+| `Mocks/ScanCommandRecord.cs` | Phase 0 | Phase-independent scan command abstraction |
+| `AcquisitionLoop/ContinuityTestHarness.cs` | Phase 0 | Pipeline harness for continuity tests |
+| `AcquisitionLoop/ContinuityTests.cs` | Phase 0 | AL-CT01–CT32 (NEVER deleted) |
 | `JsonConfigTests.cs` | Phase 1 | P1-U01 through P1-U05 |
 | `ScanCommandLayoutTests.cs` | Phase 3 | P3-U01 through P3-U04 (struct size and offset validation) |
 | `TrackingIdTests.cs` | Phase 3 | P3-I04 (incrementing tracking IDs) |
@@ -589,9 +666,16 @@ msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU"
 ```powershell
 # Run from FlashIDA\bin\ so native DLLs are found by .NET runtime
 # NUnit runner invoked by full path from NuGet packages directory
+# OPENMS_DATA_PATH must be set for all P/Invoke steps (Phase 1 lesson #5)
+# --agents=1 prevents simultaneous cold-cache init; --timeout=300000 allows calculateAveragine to warm up (Phase 1 lessons #8, #9)
 cd FlashIDA\bin
-..\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll --result=TestResults.xml
+$env:OPENMS_DATA_PATH = "..\OpenMS\share\OpenMS"
+..\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll --agents=1 --timeout=300000 --result=TestResults.xml
 ```
+
+> **Phase 1 lesson #7 (NUnit agent crash diagnosis):** If the NUnit agent process crashes with an ambiguous error, add `--inprocess` temporarily to run tests in-process; the error is then printed to stdout before the crash rather than being lost. Remove `--inprocess` after the root cause is identified and fixed.
+
+> **Phase 1 lesson #5 (OPENMS_DATA_PATH):** After any DLL rebuild, data path resolution may change. Set `OPENMS_DATA_PATH` explicitly rather than relying on implicit resolution. This is required for every CI step that invokes OpenMS P/Invoke functions, including bridge tests and regression runs.
 
 **Introduced in:** Phase 0, Step 2.
 
@@ -604,7 +688,8 @@ The complete expected directory tree for `FlashIDA/test-data/` as of Phase 8 (al
 ```
 FlashIDA/test-data/
 ├── spectra/
-│   ├── ms1_smoke_test.txt          # Phase 0: minimal MS1, 2 scans (~6,588+21 peaks)
+│   ├── ms1_smoke_test.txt          # Phase 0: minimal MS1, 2 scans (~6,588+21 peaks, 143 KB)
+│   ├── ms2_smoke_test.txt          # Phase 0: single MS2 scan for continuity tests
 │   ├── ms1_standard.txt            # Phase 4: representative MS1 scans, 5+ envelopes
 │   ├── ms2_hcd_fragment.txt        # Phase 4: single MS2 HCD scan, known protein
 │   ├── ms1_faims_3cv.txt           # Phase 5/6: FAIMS MS1 scans, 3+ CV values
@@ -613,6 +698,9 @@ FlashIDA/test-data/
 ├── configs/
 │   ├── method_default.xml          # Phase 0: standard DDA, regression anchor
 │   ├── method_default_topn5.xml    # Phase 0: standard DDA with TopN=5 (CT08, CT12)
+│   ├── method_json_roundtrip.xml   # Phase 1: all fields populated, for JSON round-trip tests
+│   ├── test_inclusion_list.txt     # Phase 0: target masses for AL-CT13 inclusion list test
+│   ├── test_fasta.fasta            # Phase 0: FASTA for JSON round-trip files.fasta field
 │   ├── method_deep.xml             # Phase 4: deep mode (also CT12 deep-vs-standard)
 │   ├── method_inclusion.xml        # Phase 4: inclusion list mode
 │   ├── method_exclusion.xml        # Phase 4: exclusion list mode
@@ -623,12 +711,20 @@ FlashIDA/test-data/
 │   ├── method_ms3_mode3.xml        # Phase 4: MS3 mode 3 (HCD-triggered)
 │   ├── method_faims_3cv.xml        # Phase 5: FAIMS 3 CVs, no adaptive skipping
 │   ├── method_faims_skip.xml       # Phase 5: FAIMS adaptive skipping enabled
-│   ├── method_exploration.xml      # Phase 7: CE exploration enabled
-│   └── method_json_roundtrip.xml   # Phase 1: all fields populated, for JSON round-trip tests
+│   └── method_exploration.xml      # Phase 7: CE exploration enabled
 │
 ├── golden/
 │   ├── README.md                   # Provenance, update procedure, review expectations
 │   ├── baseline_phase0.tsv         # Phase 0: first golden file (smoke test, current behavior)
+│   ├── continuity_standard_dda.json  # Phase 0: AL-CT06 behavioral reference (Standard DDA)
+│   ├── continuity_inclusion.json     # Phase 0: AL-CT15 behavioral reference (Inclusion list)
+│   ├── continuity_exclusion.json     # Phase 0: AL-CT16 behavioral reference (Exclusion list)
+│   ├── continuity_tag_targeting.json # Phase 0: AL-CT19 behavioral reference (Tag targeting)
+│   ├── continuity_quant.json         # Phase 0: AL-CT21 behavioral reference (Isobaric quant)
+│   ├── continuity_ms3_mode1.json     # Phase 0: AL-CT24 behavioral reference (MS3 mode 1)
+│   ├── continuity_ms3_mode2.json     # Phase 0: AL-CT25 behavioral reference (MS3 mode 2)
+│   ├── continuity_ms3_mode3.json     # Phase 0: AL-CT26 behavioral reference (MS3 mode 3)
+│   ├── continuity_faims_skip.json    # Phase 0: AL-CT28 behavioral reference (FAIMS skip)
 │   ├── phase4_standard_dda.tsv     # Phase 4: standard DDA with unified bridge
 │   ├── phase4_deep_mode.tsv        # Phase 4: deep mode
 │   ├── phase4_inclusion.tsv        # Phase 4: inclusion list mode
@@ -640,7 +736,8 @@ FlashIDA/test-data/
 │   ├── phase4_ms3_mode3.tsv        # Phase 4: MS3 mode 3
 │   ├── faims_3cv.tsv               # Phase 5 capture: FAIMS 3-CV baseline
 │   ├── faims_skip.tsv              # Phase 5 capture: FAIMS adaptive skip baseline
-│   └── phase7_exploration.tsv      # Phase 7: exploration engine enabled
+│   ├── phase7_exploration.tsv      # Phase 7: exploration engine enabled
+│   └── continuity_exploration.json  # Phase 7: AL-CT30 behavioral reference (Exploration)
 │
 └── json/
     ├── config_default.json         # Phase 1: expected ToJSON() for method_default.xml
@@ -661,7 +758,7 @@ FlashIDA/test-scripts/
 ```
 FlashIDA/src/Flash.Tests/
 ├── Flash.Tests.csproj              # NUnit project, .NET 4.8
-├── packages.config                 # NUnit 3, NUnit3TestAdapter, NUnitConsoleRunner
+├── packages.config                 # NUnit 3, NUnit3TestAdapter, NUnit.ConsoleRunner
 ├── SmokeTests.cs                   # Phase 0
 ├── BridgeSmokeTests.cs             # Phase 0
 ├── JsonConfigTests.cs              # Phase 1
@@ -670,5 +767,14 @@ FlashIDA/src/Flash.Tests/
 ├── TrackingIdTests.cs              # Phase 3
 ├── BridgeTests.cs                  # Phase 3–6
 ├── DeadCodeTests.cs                # Phase 6
-└── StressTests.cs                  # Phase 3, 6
+├── StressTests.cs                  # Phase 3, 6
+├── Mocks/
+│   ├── MockMsScan.cs               # Phase 0: IMsScan test double
+│   ├── MockCustomScan.cs           # Phase 0: IFusionCustomScan test double
+│   ├── MockScanFactory.cs          # Phase 0: ScanFactory override
+│   ├── MockTrailer.cs              # Phase 0: Scan trailer mock
+│   └── ScanCommandRecord.cs        # Phase 0: Phase-independent scan command abstraction
+└── AcquisitionLoop/
+    ├── ContinuityTestHarness.cs    # Phase 0: pipeline harness
+    └── ContinuityTests.cs          # Phase 0: AL-CT01–CT32 (NEVER deleted)
 ```

@@ -32,7 +32,9 @@ The following must be complete and verified before starting Phase 7:
 
 5. **JSON config exploration fields parsed** (Phase 1). The `exploration` object in the JSON schema (`enabled`, `max_depth`, `max_variants`) is already parsed by `FLASHIda`'s JSON constructor and stored. The full `<ParameterOptimization>` XML block is serialized to JSON by `Parameter.ToJSON()`. Phase 7 must read the additional exploration fields that Phase 1 stored but did not act upon (`max_variants_per_precursor`, `max_queue_for_exploration`, `max_exploration_depth`, `ms2_exploration`, `ms3_exploration`, `scoring.metric_type`).
 
-6. **`method_exploration.xml` does not yet exist.** It must be created and committed as part of this phase alongside its golden file. The file's canonical location (`FlashIDA/test-data/configs/`), XML schema sections, and key parameter values are specified in [../test-file-specification.md](../test-file-specification.md) §3.1 and §3.2. The golden file is named `phase7_exploration.tsv` (see [../test-file-specification.md](../test-file-specification.md) §2.2).
+6. **ms3 array parsing deferred from Phase 1.** Phase 1's JSON config parsing implemented `ms["ms2"]` array parsing into `ms2_configs_` but did not implement the corresponding `ms["ms3"]` array parsing. The Phase 1 pseudocode comment (`// ms2 and ms3 arrays are parsed into vectors for later use`) flagged this as pending. Phase 7 must implement ms3 array parsing in `FLASHIda.cpp`'s JSON constructor (`ms3_configs_` vector, mirroring the ms2 pattern) so that `buildMS3Command_()` can use ms3 activation and CE settings from the config.
+
+7. **`method_exploration.xml` does not yet exist.** It must be created and committed as part of this phase alongside its golden file. The file's canonical location (`FlashIDA/test-data/configs/`), XML schema sections, and key parameter values are specified in [../test-file-specification.md](../test-file-specification.md) §3.1 and §3.2. The golden file is named `phase7_exploration.tsv` (see [../test-file-specification.md](../test-file-specification.md) §2.2).
 
 ### User-Provided Inputs
 
@@ -40,9 +42,9 @@ No new user-provided spectrum data is required for Phase 7 (reuses `ms1_standard
 
 ---
 
-## Phase 0 Lessons Learned — Cross-References
+## Phase 0–1 Lessons Learned — Cross-References
 
-The following lessons from [../Phase_0/lessons-learned.md](../Phase_0/lessons-learned.md) apply to Phase 7. Read these before implementation.
+The following lessons from [../Phase_0/lessons-learned.md](../Phase_0/lessons-learned.md) and [../Phase_1/lessons-learned.md](../Phase_1/lessons-learned.md) apply to Phase 7. Read these before implementation.
 
 1. **Flash.exe entry point (lesson #1):** The entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()`. There is no `-t` flag. Correct invocation: `Flash.exe <input_file> <output_file> <method.xml> [ms2_file]`.
 
@@ -69,6 +71,26 @@ The following lessons from [../Phase_0/lessons-learned.md](../Phase_0/lessons-le
 12. **Multi-scan parser (lesson #9):** Any new code that loads spectrum TSV files must stop at the first scan boundary (`if (started) break;` on encountering a second `Spec` line). Flash.exe's `Main()` parser handles multi-scan correctly (processes scan N when scan N+1's header is encountered), but test parsers must stop at the first scan for single-scan loading.
 
 13. **`.gitattributes` (lesson #4):** `FlashIDA/.gitattributes` has `* text eol=crlf`, which forces CRLF conversion on ALL files. Any new binary file extensions (`.enc`, `.gpg`, `.zip`, etc.) must be added to `.gitattributes` as `binary` before committing to prevent silent corruption.
+
+The following lessons from [../Phase_1/lessons-learned.md](../Phase_1/lessons-learned.md) also apply:
+
+14. **Submodule pointer update required for CI to see new files (Phase 1 lesson #1):** CI checks out submodules at the pointer commit, not at the branch HEAD. After pushing to either the `FlashIDA` or `OpenMS` sub-repo, always `git add FlashIDA OpenMS` in the parent repo and push the pointer update before expecting CI to pick up the changes. Without this step, new files (test classes, `.cs` source, C++ headers) are silently invisible to the CI build.
+
+15. **Test data path: one level up from `bin/` (Phase 1 lesson #2):** `TestContext.CurrentContext.TestDirectory` resolves to `FlashIDA/bin/`. The correct relative path to test data is `Path.Combine(TestDirectory, "..", "test-data")` — one level up, not two. All existing test classes use this pattern; new test classes must follow it.
+
+16. **NUnit runner flags: `--agents=1 --timeout=300000` (Phase 1 lesson #8):** `SpectralDeconvolution::calculateAveragine` takes ~3.5 minutes on the first call in a CI process (cold cache). Set `--agents=1` to prevent parallel cold-cache computations and `--timeout=300000` (5 minutes) to prevent the first-call timeout. Keep these flags in all NUnit invocations.
+
+17. **`OPENMS_DATA_PATH` required in CI (Phase 1 lesson #5):** Any CI step that invokes OpenMS functionality via P/Invoke must set `OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS`. Without it the DLL crashes with `Cannot find shared data! OpenMS cannot function without it!`. This applies to NUnit test steps and `Flash.exe` regression runs.
+
+18. **DLL build takes ~40 minutes; batch all C++ changes (Phase 1 lesson #10):** Each push to the OpenMS submodule branch triggers a full MSVC build (~40 min). Batch all C++ changes for Phase 7 into a single push to minimize rebuild cycles. Verify code compiles locally for obvious MSVC issues before pushing.
+
+19. **MSVC `/WX` treats warnings as errors (Phase 1 lesson #3):** MSVC's `/WX` flag is active. Unused parameters (`C4100`) and initialized-but-unreferenced variables (`C4189`) are build errors on Windows even if they compile cleanly under GCC/Clang. Fix these before pushing.
+
+20. **`ModificationsDB::getInstance()` has initialization side effects — never remove (Phase 1 lesson #4):** Calls to `ModificationsDB::getInstance()` (and other OpenMS singleton initializers: `ResidueDB::getInstance()`, `ElementDB::getInstance()`) must not be removed or commented out, even if their return values are unused. These calls initialize the OpenMS shared data path resolver as a side effect; removing them causes a fatal crash at runtime. Use `(void)` cast to suppress unused-variable warnings while preserving the call.
+
+21. **Constructor preference: `FLASHIdaWrapper(MethodParameters)` (Phase 1 lesson #11):** Both `FLASHIdaWrapper(IDAParameters)` and `FLASHIdaWrapper(MethodParameters)` constructors exist. The `MethodParameters` overload uses `ToJSON()` (full JSON config including exploration fields). Prefer this constructor in Phase 7 test code. The `IDAParameters` overload remains for backward compatibility with bridge tests and legacy paths.
+
+22. **ms3 array parsing deferred from Phase 1 (Phase 1 lesson, deferred work):** Phase 1's JSON config parsing parsed the `ms["ms2"]` array into `ms2_configs_` but did not implement the corresponding ms3 array parsing. The comment in the pseudocode (`// ms2 and ms3 arrays are parsed into vectors for later use`) acknowledged ms3 parsing as pending. Phase 7 is the appropriate phase to implement ms3 array parsing in the JSON config path, since `buildMS3Command_()` (Step 8) needs ms3 activation and CE settings from the config.
 
 ---
 
@@ -845,14 +867,20 @@ Also note that `method_exploration_overflow.xml` and `method_exploration_ms3.xml
 
 Phase 7 adds only C++ unit tests (existing `cpp-unit-tests` job, `ubuntu-latest`) and one new regression config (existing `windows-tests` job, `windows-latest`). No new runner, no new job, no new secrets. The existing Build #4 artifact cache key (OpenMS submodule hash) automatically handles the DLL rebuild when the C++ source advances.
 
-#### 5. CI infrastructure reminders (Phase 0 lessons)
+#### 5. CI infrastructure reminders (Phase 0–1 lessons)
 
-- **Thermo DLLs (lesson #3):** Use Strategy B — decrypt `FlashIDA/dependencies/thermo-dlls.zip.enc` with `openssl enc -d -aes-256-cbc -pbkdf2` using `THERMO_DLL_PASSPHRASE` secret. Do not use base64 or GPG.
-- **OpenMS DLLs (lesson #5):** Already committed in `FlashIDA/dll/`. Do not add cache/download steps. MSBuild copies them via `CopyToOutputDirectory`.
-- **NUnit runner (lesson #12):** Invoke by full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.16.3/tools/nunit3-console.exe`). Working directory must be `FlashIDA/bin/`.
-- **Build output (lesson #12):** Output goes to `FlashIDA/bin/`, not `FlashIDA/src/Flash/bin/Debug/`.
-- **Submodule batching (lesson #15):** Batch same-side changes (all C++ or all C#) before updating the submodule pointer to minimize churn.
-- **`.gitattributes` (lesson #4):** If any new binary file extensions are introduced, add them to `FlashIDA/.gitattributes` as `binary` before committing.
+- **Thermo DLLs (Phase 0 lesson #3):** Use Strategy B — decrypt `FlashIDA/dependencies/thermo-dlls.zip.enc` with `openssl enc -d -aes-256-cbc -pbkdf2` using `THERMO_DLL_PASSPHRASE` secret. Do not use base64 or GPG.
+- **OpenMS DLLs (Phase 0 lesson #5):** Already committed in `FlashIDA/dll/`. Do not add cache/download steps. MSBuild copies them via `CopyToOutputDirectory`.
+- **NUnit runner (Phase 0 lesson #12):** Invoke by full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.16.3/tools/nunit3-console.exe`). Working directory must be `FlashIDA/bin/`.
+- **NUnit flags (Phase 1 lesson #8):** Always pass `--agents=1 --timeout=300000` to the NUnit console runner. Required to avoid cold-cache timeouts from `calculateAveragine` (~3.5 min first call).
+- **`OPENMS_DATA_PATH` (Phase 1 lesson #5):** All CI steps that invoke OpenMS via P/Invoke must set `OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS`. Applies to NUnit test steps and `Flash.exe` regression runs.
+- **Build output (Phase 0 lesson #12):** Output goes to `FlashIDA/bin/`, not `FlashIDA/src/Flash/bin/Debug/`.
+- **Test data path (Phase 1 lesson #2):** `Path.Combine(TestDirectory, "..", "test-data")` — one level up from `bin/`.
+- **Submodule pointer updates (Phase 1 lesson #1):** After pushing to either sub-repo, update the parent repo's submodule pointer immediately. New files are silently invisible to CI until the pointer is updated.
+- **Submodule batching (Phase 0 lesson #15):** Batch same-side changes (all C++ or all C#) before updating the submodule pointer to minimize churn.
+- **DLL build time (Phase 1 lesson #10):** ~40 min per push with no ccache hit. Batch all C++ changes and verify for MSVC `/WX` issues before pushing.
+- **`ModificationsDB::getInstance()` (Phase 1 lesson #4):** Never remove or comment out OpenMS singleton initializer calls. Use `(void)` cast if the return value is unused.
+- **`.gitattributes` (Phase 0 lesson #4):** If any new binary file extensions are introduced, add them to `FlashIDA/.gitattributes` as `binary` before committing.
 
 ---
 
@@ -892,7 +920,7 @@ This is also verified structurally by P7-U07 and P7-U08 in the `cpp-unit-tests` 
 ## Definition of Done
 
 - [ ] All 12 Phase 7 tests pass: P7-U01 through P7-U10 (C++, `ubuntu-latest`) and P7-R01, P7-R02 (`windows-latest`).
-- [ ] All prior phase tests (P0 through P6, cumulative total 77 tests) continue to pass — no regressions introduced.
+- [ ] All prior phase tests (P0 through P6, cumulative total 79 tests) continue to pass — no regressions introduced.
 - [ ] `ExplorationGroup` and `ExplorationVariant` structs are defined in `FLASHIda.h`.
 - [ ] `initiateMS2Exploration_()`, `feedExplorationResult_()`, `initiateMS3Exploration_()`, `computeFragmentationQuality_()`, `buildCEVariants_()` are implemented in `FLASHIda.cpp`.
 - [ ] `getNextScanCommand()` suppresses MS1 cycle time injection when `active_exploration_groups_` is non-empty.
@@ -909,3 +937,34 @@ This is also verified structurally by P7-U07 and P7-U08 in the `cpp-unit-tests` 
 - [ ] No new C++ compiler warnings introduced (existing `/Wall` or `-Wall` build flags must remain clean).
 - [ ] Code review complete: `ExplorationGroup` / `ExplorationVariant` structs, `feedExplorationResult_()` winner logic, depth-limit check, and MS1 suppression logic reviewed by at least one other developer.
 - [ ] Phase 8 prerequisites are satisfied: Phase 7 golden files committed, all WPV items checked off. Build #4 development can proceed to Phase 8 (cleanup) on the same branch.
+
+---
+
+## Phase 0–1 Lessons Applied
+
+This section records which Phase 0 and Phase 1 lessons are directly reflected in this implementation plan, so future plan reviews can verify coverage.
+
+| Lesson | Source | Where Applied in This Plan |
+|--------|--------|---------------------------|
+| Flash.exe entry point — no `-t` flag | Phase 0 #1 | Cross-References item 1; WPV section preamble; P7-R01, P7-R02 test descriptions; DoD |
+| Build output path `FlashIDA/bin/` | Phase 0 #12 | Cross-References item 2; CI reminders §5 |
+| DLL name `"OpenMS.dll"` with extension | Phase 0 #12 | Cross-References item 3; Files to Create/Modify note |
+| NUnit working directory `FlashIDA/bin/` | Phase 0 #12 | Cross-References item 4; CI reminders §5 |
+| Spectrum file format (tab + seconds) | Phase 0 #2 | Cross-References item 5 |
+| Thermo DLL Strategy B (openssl) | Phase 0 #3 | Cross-References item 6; CI reminders §5 |
+| OpenMS DLLs committed in `FlashIDA/dll/` | Phase 0 #5 | Cross-References item 7; CI reminders §5 |
+| Golden file capture requires 2-commit minimum | Phase 0 #15 | Cross-References item 8; Step 11 golden capture workflow; CI §3 |
+| DLL-dependent tests are Tier 2 | Phase 0 #12 | Cross-References item 9; Test Cases preamble |
+| Silent zero-result P/Invoke failures | Phase 0 #14 | Cross-References item 10; Files to Create/Modify note |
+| Submodule batching | Phase 0 #15 | Cross-References item 11; Step 11; CI reminders §5 |
+| Multi-scan parser stop at first boundary | Phase 0 #9 | Cross-References item 12 |
+| `.gitattributes` binary extensions | Phase 0 #4 | Cross-References item 13; CI reminders §5 |
+| Submodule pointer update required for CI | Phase 1 #1 | Cross-References item 14; CI reminders §5 |
+| Test data path one level up from `bin/` | Phase 1 #2 | Cross-References item 15; CI reminders §5 |
+| NUnit `--agents=1 --timeout=300000` | Phase 1 #8 | Cross-References item 16; CI reminders §5 |
+| `OPENMS_DATA_PATH` required in CI | Phase 1 #5 | Cross-References item 17; CI reminders §5 |
+| DLL build ~40 min; batch C++ changes | Phase 1 #10 | Cross-References item 18; CI reminders §5 |
+| MSVC `/WX` warnings-as-errors | Phase 1 #3 | Cross-References item 19 |
+| `ModificationsDB::getInstance()` side effects | Phase 1 #4 | Cross-References item 20; CI reminders §5 |
+| Prefer `FLASHIdaWrapper(MethodParameters)` | Phase 1 #11 | Cross-References item 21 |
+| ms3 array parsing deferred from Phase 1 | Phase 1 (deferred) | Prerequisites item 6; Cross-References item 22 |

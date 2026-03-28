@@ -21,9 +21,9 @@ The outcome is Build #3: a fully working application where C++ owns the entire s
 
 ## Prerequisites
 
-The following must be in place before starting Phase 6 work.
+The following must be in place before starting Phase 6 work. Phase 5 is complete and its CI run is green before any Phase 6 code is written.
 
-**Phase 5 must be complete and all Phase 5 tests must pass:**
+**Phase 5 is complete — all Phase 5 tests pass in CI:**
 - `UnifiedScanProcessor.cs` is the only scan processor.
 - `IScanProcessor` has exactly one method: `void ProcessMS(IMsScan)`.
 - `DataPipe` is a two-stage `BufferBlock<IMsScan>` -> `ActionBlock<IMsScan>` pipeline.
@@ -39,7 +39,8 @@ The following must be in place before starting Phase 6 work.
 
 **Phase 5 golden files exist:**
 - `FlashIDA/test-data/golden/phase4_standard_dda.tsv` (and all other mode golden files from Phase 4/5).
-- `FlashIDA/test-data/golden/faims_3cv.tsv` (FAIMS 3-CV cycling, captured during Phase 5 P5-R02 verification).
+- `FlashIDA/test-data/golden/faims_3cv.tsv` (FAIMS 3-CV cycling, captured during Phase 5 P5-R02 verification). Used as regression baseline for P6-R02.
+- `FlashIDA/test-data/golden/faims_skip.tsv` (FAIMS adaptive skip, captured during Phase 5 P5-R02 verification). Used as regression baseline for P6-R03.
 - Both FAIMS method configs committed: `method_faims_3cv.xml` and `method_faims_skip.xml`.
 
 **Test data must be committed:**
@@ -153,6 +154,8 @@ Implementation requirements:
 ### Step 4: Implement the FAIMS helper methods in FLASHIda.cpp
 
 **File:** `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp`
+
+**OpenMS singleton initializers must not be removed (Phase 1 lesson #4):** If any call to `ModificationsDB::getInstance()`, `ResidueDB::getInstance()`, or `ElementDB::getInstance()` appears in `FLASHIda.cpp` — even if the return value is unused — do not remove or comment it out. These calls trigger initialization of the OpenMS shared data path resolver as a side effect. Removing them causes a fatal crash (`Cannot find shared data! OpenMS cannot function without it!`) that kills the NUnit agent process. If MSVC flags the unused return value as a C4189 warning, suppress it with a `(void)` cast, not by removing the call.
 
 Implement each helper method in full. These are the exact behaviors captured in Step 1.
 
@@ -426,8 +429,10 @@ Add tests P6-U07 and P6-U08 that grep the C# source directory for references to 
 [Test]
 public void ScanScheduler_HasNoRemainingReferences()
 {
+    // TestDirectory resolves to FlashIDA/bin/ (Phase 1 lesson #2).
+    // One level up is FlashIDA/; the source tree is at FlashIDA/src/Flash/.
     var sourceDir = Path.Combine(TestContext.CurrentContext.TestDirectory,
-        @"..\..\..\..\FlashIDA\src\Flash");
+        "..", "src", "Flash");
     var hits = Directory.GetFiles(sourceDir, "*.cs", SearchOption.AllDirectories)
         .Where(f => !f.Contains("DeadCodeTests.cs"))
         .Where(f => File.ReadAllText(f).Contains("ScanScheduler"))
@@ -438,8 +443,10 @@ public void ScanScheduler_HasNoRemainingReferences()
 [Test]
 public void FAIMSScanProcessor_HasNoRemainingReferences()
 {
+    // TestDirectory resolves to FlashIDA/bin/ (Phase 1 lesson #2).
+    // One level up is FlashIDA/; the source tree is at FlashIDA/src/Flash/.
     var sourceDir = Path.Combine(TestContext.CurrentContext.TestDirectory,
-        @"..\..\..\..\FlashIDA\src\Flash");
+        "..", "src", "Flash");
     var hits = Directory.GetFiles(sourceDir, "*.cs", SearchOption.AllDirectories)
         .Where(f => !f.Contains("DeadCodeTests.cs"))
         .Where(f => File.ReadAllText(f).Contains("FAIMSScanProcessor"))
@@ -448,7 +455,7 @@ public void FAIMSScanProcessor_HasNoRemainingReferences()
 }
 ```
 
-Adjust the `sourceDir` path to correctly resolve relative to the test DLL output directory in the CI environment.
+**Path note (Phase 1 lesson #2):** `TestContext.CurrentContext.TestDirectory` resolves to `FlashIDA/bin/`. One level up (`.."`) reaches `FlashIDA/`. The source tree lives at `FlashIDA/src/Flash/`, so the correct path is `Path.Combine(TestDirectory, "..", "src", "Flash")`. Do NOT use `../../..` or four levels up — that navigates outside the `FlashIDA/` directory.
 
 ---
 
@@ -485,9 +492,13 @@ After all code changes are committed:
 
 **Submodule batching (Phase 0 lesson #15):** Batch all C++ changes (Steps 2-4, 6, 10) into as few commits as possible before updating the submodule pointer. Similarly, batch all C# changes (Steps 7-9, 11) together. This reduces submodule pointer update churn (Phase 0 saw 48% of commits being submodule updates).
 
+**Submodule pointer update required after every push (Phase 1 lesson #1):** After pushing to `flashida-v9-bridge` or `flashida-v9-migration`, always `git add FlashIDA OpenMS` in the parent repo and push. The CI workflow checks out submodules at the pointer commit, not at the branch HEAD. Forgetting to update the pointer causes CI to silently compile the old code — new files are invisible and the new test count does not appear, making the failure very hard to diagnose.
+
+**Batch all C++ changes before triggering a DLL build (Phase 1 lesson #10):** Each `build-openms-dll.yml` run costs ~40 minutes with no ccache hit. Before triggering a build, ensure all C++ edits (Steps 2–4, 6, 10 in this plan) are committed and pushed. Verify the C++ code has no obvious MSVC issues: MSVC's `/WX` flag treats warnings as errors, so unused variables (`C4189`), unused parameters (`C4100`), and similar common warnings will block the build. Check these locally or in a test compile before pushing.
+
 1. Advance the OpenMS submodule pointer in the FlashIDA repository to the commit containing the Phase 6 C++ changes.
 2. Trigger `build-openms-dll.yml` manually to produce the Phase 6 `OpenMS.dll` artifact.
-3. Wait for the build to complete (30-60 min).
+3. Wait for the build to complete (~40 min with no ccache hit; Phase 1 lesson #10). The ccache key includes the branch name — the first build on `phase-6-faims-absorption` has no cache and takes the full ~40 min. Subsequent builds on the same branch are faster.
 4. Trigger `flashida-ci.yml` and verify:
    - `cpp-unit-tests` job (ubuntu-latest): P6-U01 through P6-U06 all pass.
    - `windows-tests` job (windows-latest): P6-U07, P6-U08 pass; all prior-phase C# tests pass.
@@ -702,7 +713,7 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 
 **Tier:** 2 (integration test, `windows-latest`)
 
-**Description:** From a C# test using P/Invoke, create a `FLASHIda` instance with a 3-CV FAIMS config JSON. Call `ProcessScan` with a synthetic MS1 spectrum that produces 5 precursors. Then call `GetNextScanCommand` in a loop to retrieve the CV-transition MS1 and the 5 MS2 commands. Verify:
+**Description:** From a C# test using P/Invoke, create a `FLASHIda` instance with a 3-CV FAIMS config JSON. Use the `FLASHIdaWrapper(MethodParameters)` constructor (Phase 1 lesson #11) — this overload calls `ToJSON()` and passes the JSON string to C++, which is required for FAIMS config fields. The legacy `FLASHIdaWrapper(IDAParameters)` constructor uses the space-delimited legacy string that does not carry FAIMS fields; do not use it here. Both constructors remain in the codebase for backward compatibility. Call `ProcessScan` with a synthetic MS1 spectrum that produces 5 precursors. Then call `GetNextScanCommand` in a loop to retrieve the CV-transition MS1 and the 5 MS2 commands. Verify:
 1. The first command returned after the `ProcessScan` call is an MS1 with `faims_cv` matching the second CV (CV transition).
 2. All subsequent MS2 commands have `faims_cv` matching the new CV.
 3. Call `ProcessScan` again with the same spectrum two more times (completing a full 3-CV cycle). Verify the `faims_cv` sequence across the three injected transition-MS1 commands is [-50, -60, -40] (advancing from the initial -40).
@@ -791,6 +802,10 @@ If the Phase 6 C++ test binary is in a new file (`FLASHIdaFAIMS_test.cpp`), veri
 
 No structural changes to the job. `DeadCodeTests.cs` is compiled as part of `Flash.Tests.csproj` and run automatically by the NUnit console runner (invoked via full NuGet packages path from `FlashIDA/bin/` working directory, per Phase 0 lesson #12). The P6-U07 and P6-U08 tests will be picked up without YAML changes.
 
+**NUnit runner flags (Phase 1 lesson #8):** All NUnit invocations in `windows-tests` must include `--agents=1 --timeout=300000`. The single-agent flag prevents parallel cold-cache `calculateAveragine` computations (which take ~3.5 minutes each). The 5-minute timeout accommodates the cold-cache cost on the first test that constructs a `FLASHIdaWrapper`.
+
+**`OPENMS_DATA_PATH` (Phase 1 lesson #5):** Every CI step that invokes OpenMS functionality via P/Invoke must set `OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS`. Without it, the C++ data path resolver may fail to find chemistry data files (residue masses, isotope distributions, modifications database), causing a fatal crash that NUnit reports as `Agent Process was terminated` with `Test Count: 0`. This is especially important after any DLL rebuild (Phase 1 lesson #6).
+
 #### Bridge verification step in `windows-tests` job (windows-latest)
 
 Add a step to run P6-I01:
@@ -798,8 +813,10 @@ Add a step to run P6-I01:
 ```yaml
 - name: Run FAIMS bridge integration test
   working-directory: FlashIDA/bin
+  env:
+    OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
   run: |
-    ..\..\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll --where "test == P6_I01"
+    ..\..\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll --where "test == P6_I01" --agents=1 --timeout=300000
 ```
 
 NUnit must be invoked by full NuGet packages path and run from `FlashIDA/bin/` so that native DLLs (OpenMS.dll and dependencies) are found by the .NET runtime's DLL search path (Phase 0 lesson #12). Adjust the filter to match the NUnit test name as defined in `BridgeTests.cs` or wherever P6-I01 is implemented.
@@ -812,8 +829,10 @@ Add a step to run P6-S01:
 - name: Run FAIMS stress test (P6-S01)
   timeout-minutes: 10
   working-directory: FlashIDA/bin
+  env:
+    OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
   run: |
-    ..\..\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll --where "test == P6_S01"
+    ..\..\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe Flash.Tests.dll --where "test == P6_S01" --agents=1 --timeout=300000
 ```
 
 The `timeout-minutes: 10` step-level timeout is in addition to the NUnit internal watchdog. If `nunit3-console` hangs (deadlock), the step-level timeout terminates it and the job fails with a clear message.
@@ -878,7 +897,7 @@ P6-S01 runs as the stress test step in `windows-tests`. If P6-S01 reports a dead
 
 ### 7. Full prior-phase regression
 
-Confirmed by the full CI run. All 64 prior-phase tests must still pass (cumulative count before Phase 6: 64). (Automated: all P0-P5 test IDs in the full CI run.)
+Confirmed by the full CI run. All 66 prior-phase tests must still pass (cumulative count before Phase 6: 66). (Automated: all P0-P5 test IDs in the full CI run.)
 
 ### Debugging guide
 
@@ -917,7 +936,7 @@ All of the following must be true before Phase 6 is considered complete:
 - [ ] `FAIMSScanProcessor.cs` is deleted (`git rm`), removed from `Flash.csproj`, with zero remaining references in C# source files.
 - [ ] `ScanScheduler.cs` is deleted (`git rm`), removed from `Flash.csproj`, with zero remaining references in C# source files.
 - [ ] All 13 Phase 6 tests pass in CI: P6-U01 through P6-U08, P6-I01, P6-R01 through P6-R03, P6-S01.
-- [ ] All 64 prior-phase tests (P0 through P5) still pass in CI without modification.
+- [ ] All 66 prior-phase tests (P0 through P5) still pass in CI without modification.
 - [ ] P6-R02 CI run: `Flash.exe ms1_faims_3cv.txt <output_file> method_faims_3cv.xml` produces CV transition log entries matching the Phase 5 golden file exactly.
 - [ ] P6-R03 CI run: `Flash.exe ms1_faims_3cv.txt <output_file> method_faims_skip.xml` produces skip event log entries matching the Phase 5 golden file exactly.
 - [ ] P6-R01 CI run: `Flash.exe <input_file> <output_file> method_default.xml` (non-FAIMS) produces output matching the Phase 5 standard DDA golden file exactly.
@@ -925,3 +944,33 @@ All of the following must be true before Phase 6 is considered complete:
 - [ ] Build #3 `OpenMS.dll` artifact is stored in CI with cache key matching the Phase 6 OpenMS submodule commit hash.
 - [ ] Phase 6 golden files (`faims_3cv.tsv`, `faims_skip.tsv`) are committed to `FlashIDA/test-data/golden/` and the `golden/README.md` is updated to document their provenance.
 - [ ] The written behavioral audit from Step 1 is preserved (as a comment block in `FLASHIda.cpp` or as a committed document in `plans/development/Phase_6/`) for future reference.
+
+---
+
+## Phase 0-1 Lessons Applied
+
+This section records which Phase 0 and Phase 1 lessons were incorporated into this plan and where.
+
+| Lesson | Source | Applied In |
+|--------|--------|------------|
+| No `-t` flag — `Flash.exe <input> <output> <method>` is the correct invocation | Phase 0 #1 | P6-R01/R02/R03 test descriptions; definition of done |
+| Spectrum header is tab-separated with RT in seconds | Phase 0 #2 | Prerequisites (`ms1_faims_3cv.txt` format note) |
+| Thermo DLL secret: Strategy B (openssl/`THERMO_DLL_PASSPHRASE`) | Phase 0 #3 | P6-I01 requirements |
+| New binary file extensions must be added to `.gitattributes` before committing | Phase 0 #4 | Files to Create or Modify (`.gitattributes` note) |
+| OpenMS DLLs are committed in `FlashIDA/dll/`; no CI cache/download needed | Phase 0 #5 | Prerequisites (Build #2 artifacts section); CI DLL artifact cache section |
+| Multi-scan parser: stop at first scan boundary (`if (started) break;`) | Phase 0 #9 | P6-I01 multi-scan parser warning |
+| Build output is `FlashIDA/bin/`, not `FlashIDA/src/Flash/bin/Debug/` | Phase 0 #12 (item 1) | CI YAML working-directory; NUnit runner paragraph |
+| DLL name is `"OpenMS.dll"` with extension | Phase 0 #12 (item 2) | P6-I01 requirements |
+| NUnit must run from `FlashIDA/bin/` so native DLLs are found | Phase 0 #12 (item 7) | CI YAML working-directory; NUnit runner paragraph |
+| Silent zero-result P/Invoke failures: log input data before investigating | Phase 0 #14 | Debugging guide (P6-I01/regression zero-result note) |
+| Golden-file capture requires 2 commits minimum; batch captures | Phase 0 #15 (item 1) | Step 12 golden file capture section |
+| Submodule pointer update churn: batch same-side changes | Phase 0 #15 (item 2) | Step 13 submodule batching note |
+| Submodule pointer must be updated after every push (new files invisible to CI otherwise) | Phase 1 #1 | Step 13 submodule pointer update paragraph |
+| Test data path: `Path.Combine(TestDirectory, "..", "test-data")` — one level up from `bin/` | Phase 1 #2 | Step 11 `sourceDir` path in `DeadCodeTests.cs`; path note after Step 11 |
+| MSVC `/WX`: batch all C++ changes; check for unused variables/parameters before pushing | Phase 1 #3 | Step 13 batch C++ changes paragraph |
+| Never remove `ModificationsDB::getInstance()` singleton calls — they have initialization side effects | Phase 1 #4 | Step 4 singleton initializer warning |
+| `OPENMS_DATA_PATH` must be set in every CI step that invokes OpenMS via P/Invoke | Phase 1 #5 | CI YAML NUnit steps (`env:`); NUnit runner paragraph |
+| After any DLL rebuild, set `OPENMS_DATA_PATH` explicitly (implicit path resolution is fragile) | Phase 1 #6 | NUnit runner paragraph |
+| NUnit: `--agents=1 --timeout=300000` to handle `calculateAveragine` cold cache (~3.5 min) | Phase 1 #8 | CI YAML NUnit steps; NUnit runner paragraph |
+| DLL build takes ~40 min with no ccache hit; batch all C++ changes per build | Phase 1 #10 | Step 13 DLL build time estimate; batch changes paragraph |
+| Both constructors exist; use `FLASHIdaWrapper(MethodParameters)` for JSON/FAIMS fields | Phase 1 #11 | P6-I01 description constructor note |

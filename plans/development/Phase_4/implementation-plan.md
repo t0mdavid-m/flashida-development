@@ -28,7 +28,8 @@ The following must be in place before beginning Phase 4 implementation:
 
 1. **Build #1 is complete and verified.** Phases 1, 2, and 3 are merged and all their tests pass:
    - P0-* through P3-* tests all pass in CI.
-   - `Flash.exe` runs with shadow validation (entry point is `FLASHIdaWrapper.Main()`, no `-t` flag — see Phase 0 lesson #1), producing TRACK log entries.
+   - `Flash.exe` runs with shadow validation (entry point is `FLASHIdaWrapper.Main()`, no `-t` flag — see Phase 0 lesson #1), producing TRACK log entries. Correct invocation: `Flash.exe <input_file> <output_file> <method.xml> [ms2_file]`.
+   - **Phase 3 specifically delivers:** the `ProcessScan` and `GetNextScanCommand` bridge functions exported from `OpenMS.dll`; the `ScanCommand` struct with all fields; the `ScanFactory.BuildFromCommand()` stub in C#; the shadow validation wiring in scan processors; `GetNextScanCommand` returning MS1 when queue is empty; the priority queue data structure (`queues_[4]`) and `queue_mutex_`; the `pending_scan_map_` and tracking ID counter; and the Phase 3 golden file (`baseline_phase3.tsv`) committed to `test-data/golden/`.
    - `GetNextScanCommand` returns MS1 when queue is empty (stub behavior).
    - `ScanCommand` struct marshaling is verified (C# and C++ agree on layout, size, and field offsets).
    - JSON configuration is parsed by C++ and legacy auto-detect fallback works.
@@ -328,6 +329,8 @@ This is a one-line change. Verify it does not break the stub behavior expected b
 
 **Silent zero-result failures (Phase 0 lesson #14):** The C++ engine returns 0 without an error code when input data is malformed (wrong RT, mixed peaks from multi-scan parsing, etc.). When `ProcessScan` returns 0 unexpectedly, log the input data characteristics (RT, peak count, first/last m/z) before investigating engine internals. The bridge does not distinguish "no results found" from "input data is malformed."
 
+**`ModificationsDB` singleton calls (Phase 1 lesson #4):** Never remove or comment out calls to OpenMS singleton initializers (`ModificationsDB::getInstance()`, `ResidueDB::getInstance()`, `ElementDB::getInstance()`) even if the return value appears unused. These calls have initialization side effects (the data path resolver, residue mass tables, isotope distributions) that downstream subsystems depend on. If MSVC's `/WX` flags an unused-variable warning (`C4189`) on a singleton call, suppress it with a `(void)` cast rather than removing the call. Removing such a call produces a fatal crash at runtime (`Cannot find shared data! OpenMS cannot function without it!`) that is difficult to correlate with the removed line.
+
 ---
 
 ### Step 5: C# Switch-Over — Replace Old Bridge Call Sequences
@@ -462,6 +465,8 @@ Golden files are captured entirely through CI — there is no local `Flash.exe` 
 
 **2-commit minimum (Phase 0 lesson #15):** Golden file capture inherently requires at least 2 commits: the first runs CI and produces the golden artifact; the second includes the captured golden file. With 9 Phase 4 golden files, batch all captures into a single CI run to minimize churn.
 
+**DLL build cost (Phase 1 lesson #10):** Each push to the `flashida-v9-bridge` branch that changes C++ code triggers a full OpenMS build on `windows-2022` taking ~40 minutes with no ccache hit. Phase 4 has substantial C++ changes (full `processScan` implementation, new private methods, updated bridge return value). Batch all C++ changes into a single push to minimize DLL rebuild cycles. Before pushing, check for obvious MSVC issues: unused parameters (`C4100`) and unused local variables (`C4189`) are errors under `/WX`. Use `(void)param;` suppressions where needed. After the first successful build on a new branch, subsequent builds benefit from ccache.
+
 The capture workflow is:
 
 1. Push the Phase 4 implementation branch to GitHub.
@@ -473,9 +478,11 @@ The capture workflow is:
 
 Subsequent CI runs use the committed files as the comparison baseline for P4-R01 through P4-R10. Comparisons are performed by `compare_golden.py` (see `test-file-specification.md §4.1` for the comparison algorithm, tolerance values, and failure conditions).
 
+**`compare_golden.py` column classification (Phase 0 compliance lesson L-2):** `compare_golden.py` classifies TSV columns into `exact`, `numeric`, and `ignore` categories for comparison. Phase 4 adds mode-specific output fields (e.g., MS3 priority, quant follow-up flags, conditional MS2 markers) that are new columns not present in Phase 3 golden files. Before capturing Phase 4 golden files, update `compare_golden.py`'s column classification table to include these new columns with appropriate comparison types. If a new column is left unclassified, `compare_golden.py` will either skip it silently or raise an error — verify behavior by running it against a test output before committing the golden files. Mode-specific golden files (`phase4_deep_mode.tsv`, `phase4_inclusion.tsv`, etc.) may have different column sets than the standard DDA golden — each file's column set is validated independently.
+
 The regression runner script (`regression-runner.ps1`) must be updated to include Phase 4 configs and golden files, and must support a `-captureMode` switch that writes output files rather than comparing them. The full script interface is defined in `test-file-specification.md §4.2`.
 
-**Submodule batching (Phase 0 lesson #15):** Phase 4 has substantial changes on both C++ and C# sides. Batch all same-side changes before updating the submodule pointer to reduce churn (48% of Phase 0 commits were submodule pointer updates). Recommended commit sequence: (1) all C++ changes to FLASHIda.cpp/h and bridge functions, (2) update submodule pointer, (3) all C# changes to Flash.cs/Parameter.cs/ScanFactory.cs, (4) test data and golden files.
+**Submodule batching and pointer updates (Phase 0 lesson #15, Phase 1 lesson #1):** Phase 4 has substantial changes on both C++ and C# sides. Batch all same-side changes before updating the submodule pointer to reduce churn (48% of Phase 0 commits were submodule pointer updates). After pushing to a sub-repo (`OpenMS` or `FlashIDA`), always update the parent repo's submodule pointer immediately (`git add OpenMS FlashIDA` and push); CI checks out submodules at the pointer commit, not at the branch HEAD, so new files pushed to a sub-repo are invisible to CI until the pointer is updated. Recommended commit sequence: (1) all C++ changes to FLASHIda.cpp/h and bridge functions, (2) update submodule pointer, (3) all C# changes to Flash.cs/Parameter.cs/ScanFactory.cs, (4) test data and golden files.
 
 ---
 
@@ -584,10 +591,12 @@ These tests run entirely within C++ using the OpenMS ClassTest framework. They r
 
 These tests load `OpenMS.dll` via P/Invoke and exercise the bridge from the C# side with known inputs. They require Thermo DLLs (for build) and OpenMS DLLs (for runtime).
 
-**NUnit runner note (Phase 0 lesson #12):** The NUnit console runner must be invoked by its full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.16.3/tools/nunit3-console.exe`), not assumed to be on PATH. The working directory must be `FlashIDA/bin/` so that native DLLs (`OpenMS.dll` and dependencies) are found by the .NET runtime's DLL search path. Relative paths in tests (e.g., `..\\test-data\\`) depend on this specific working directory.
+**NUnit runner note (Phase 0 lesson #12, Phase 1 lessons #2, #8):** The NUnit console runner must be invoked by its full NuGet packages path (e.g., `packages/NUnit.ConsoleRunner.3.16.3/tools/nunit3-console.exe`), not assumed to be on PATH. The working directory must be `FlashIDA/bin/` so that native DLLs (`OpenMS.dll` and dependencies) are found by the .NET runtime's DLL search path. Relative paths in tests use `Path.Combine(TestDirectory, "..", "test-data")` — one level up from `bin/` to `FlashIDA/` — which depends on this specific working directory. The NUnit runner must include `--agents=1 --timeout=300000`: single-agent execution avoids parallel cold-cache computations of `calculateAveragine` (~3.5 min first call), and the 5-minute per-test timeout accommodates that cold cache. The CI step that invokes the NUnit runner must also set `OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS`; without it, any test that exercises `FLASHIdaWrapper` will crash with `Cannot find shared data!` (the OpenMS data path resolver searches relative to the executable, which is the NUnit packages directory in CI — not `FlashIDA/bin/`).
 
 | Test ID | Description | Expected Outcome |
 |---------|-------------|------------------|
+**Constructor selection (Phase 1 lesson #11):** `FLASHIdaWrapper` has two constructors: `FLASHIdaWrapper(IDAParameters)` (legacy, uses `ToFLASHDeconvInput()` space-delimited string) and `FLASHIdaWrapper(MethodParameters)` (new, uses `ToJSON()`). Integration tests P4-I01 and P4-I02 must use `FLASHIdaWrapper(MethodParameters)` to exercise the JSON config path that `UseUnifiedBridge` depends on. The `IDAParameters` constructor remains available as a fallback for legacy bridge tests; do not remove it.
+
 | P4-I01 | Feature flag `UseUnifiedBridge=False` produces old behavior | Load a `FLASHIda` instance with `method_default.xml` where `UseUnifiedBridge=False`. Run the old bridge call sequence (`GetPeakGroupSize`, `GetIsolationWindows`) against `ms1_standard.txt`. Verify output matches Phase 3 behavior (same scan commands as Phase 3 integration tests). This confirms the flag gate is functional and the old path is not broken. |
 | P4-I02 | Feature flag `UseUnifiedBridge=True` produces matching behavior | Load a `FLASHIda` instance with `method_default.xml` where `UseUnifiedBridge=True`. Call `ProcessScan` with the same `ms1_standard.txt` data. Call `GetNextScanCommand` to retrieve commands. Verify: `ProcessScan` returns > 0 (non-stub), returned commands have `msn_level=2`, `precursor_mz` values match what the old path would generate. This is the primary integration-level correctness check for the switch-over. |
 
@@ -752,7 +761,8 @@ The following checklist must be fully satisfied before Phase 4 is considered com
 - [ ] P4-R01 (flag-off regression) passes — output matches Phase 3 golden.
 - [ ] P4-R02 (standard DDA, flag on) passes — output matches phase4 standard DDA golden.
 - [ ] P4-R03 through P4-R10 (deep, inclusion, exclusion, tag, quant, MS3 x3) all pass.
-- [ ] All P0-* through P3-* tests still pass (full regression suite not broken).
+- [ ] P3-I02 (`ProcessScan_StubReturnsZero`) is updated or removed before Phase 4 merges: Phase 4 changes `ProcessScan` to return the actual command count (non-zero), which would break this test's `Assert.AreEqual(0, result)`. Either remove the test, change the assertion to `Assert.Greater(result, -1)`, or supersede it with P4-I02. (See Step 4 callout.)
+- [ ] All P0-* through P3-* tests still pass (full regression suite not broken), including any updated version of P3-I02.
 
 ### Test Data
 
@@ -777,3 +787,29 @@ The following checklist must be fully satisfied before Phase 4 is considered com
 - [ ] `OpenMS.dll` from Build #2 is available as a CI artifact keyed to the Phase 4 OpenMS submodule commit hash.
 - [ ] Build #2 DLL is used for all Phase 4 regression and integration tests.
 - [ ] Phase 5 may begin once all items above are checked off and the PR is merged to `flashida-v9-migration`.
+
+---
+
+## Phase 0-1 Lessons Applied
+
+This section records which Phase 0 and Phase 1 lessons were applied during the writing of this plan and where each appears.
+
+| Lesson | Source | Where Applied in This Plan |
+|--------|--------|---------------------------|
+| L0-1: No `-t` flag; correct `Flash.exe <input_file> <output_file> <method.xml> [ms2_file]` | Phase 0 #1 | Prerequisites §1 (entry point note); regression test table (P4-R01 through P4-R10); all regression test descriptions use correct invocation |
+| L0-3: Strategy B for Thermo DLLs (openssl-encrypted zip) | Phase 0 #3 | CI Configuration §6 (Thermo DLLs note) |
+| L0-4: Binary file extensions in `.gitattributes` | Phase 0 #4 | Test Data Files table note |
+| L0-5: OpenMS DLLs committed in `FlashIDA/dll/`, no download needed | Phase 0 #5 | CI Configuration §6 (OpenMS DLLs note) |
+| L0-9: Multi-scan parsers must stop at first scan boundary | Phase 0 #9 | Prerequisites §4 (multi-scan parser caveat) |
+| L0-12: Build output `FlashIDA/bin/`; DLL name `"OpenMS.dll"` with extension; NUnit full path; working dir `bin/` | Phase 0 #12 | CI Configuration §4 (build output note); Files to Modify table (FLASHIdaWrapper.cs row); integration test NUnit runner note |
+| L0-14: Silent zero-result P/Invoke failures | Phase 0 #14 | Step 4 (bridge return value) — "Silent zero-result failures" callout |
+| L0-15: 2-commit minimum for golden capture; submodule pointer batching | Phase 0 #15 | Step 8 golden capture workflow; submodule batching note |
+| L1-1: Submodule pointer must be updated after every sub-repo push | Phase 1 #1 | Step 8 — "Submodule batching and pointer updates" callout |
+| L1-2: Test data path is `Path.Combine(TestDirectory, "..", "test-data")` (one level up from `bin/`) | Phase 1 #2 | Integration test NUnit runner note |
+| L1-3: Check for pre-existing MSVC `/WX` errors before DLL build | Phase 1 #3 | Step 8 — "DLL build cost" callout |
+| L1-4: Never remove `ModificationsDB::getInstance()` singleton calls | Phase 1 #4 | Step 4 — "ModificationsDB singleton calls" callout |
+| L1-5: `OPENMS_DATA_PATH` must be set in all CI steps that invoke OpenMS | Phase 1 #5 | Integration test NUnit runner note |
+| L1-8: NUnit `--agents=1 --timeout=300000` | Phase 1 #8 | Integration test NUnit runner note |
+| L1-10: DLL build ~40 min; batch C++ changes | Phase 1 #10 | Step 8 — "DLL build cost" callout |
+| L1-11: Prefer `FLASHIdaWrapper(MethodParameters)` constructor; keep old overload | Phase 1 #11 | Integration test section — "Constructor selection" note |
+| L0 compliance L-2: `compare_golden.py` column classification for new columns | Phase 0 audit | Step 8 — "`compare_golden.py` column classification" callout |
