@@ -20,6 +20,17 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install OpenMS build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential ccache ninja-build \
+            qt6-base-dev \
+            libeigen3-dev \
+            libboost-random-dev libboost-regex-dev libboost-iostreams-dev \
+            libboost-date-time-dev libboost-math-dev \
+            libxerces-c-dev zlib1g-dev libsvm-dev libbz2-dev \
+            coinor-libcoinmp-dev
+
       - name: Get OpenMS submodule commit hash
         id: openms-hash
         shell: bash
@@ -38,8 +49,12 @@ jobs:
         env:
           CCACHE_DIR: ~/.ccache
         run: |
-          cmake -S OpenMS -B OpenMS/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build OpenMS/build --target DeconvolvedSpectrum_OptimizationMetadata_test --config Release
+          cmake -S OpenMS -B OpenMS/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWITH_GUI=OFF \
+            -DPYOPENMS=OFF \
+            -G Ninja
+          cmake --build OpenMS/build --target DeconvolvedSpectrum_OptimizationMetadata_test
 
       - name: Run FLASH C++ unit tests
         run: ctest --test-dir OpenMS/build -R DeconvolvedSpectrum_OptimizationMetadata --output-on-failure
