@@ -121,14 +121,28 @@ jobs:
           path: FlashIDA/test-output/baseline_phase0.tsv
 
       # --- Phase 1: JSON golden file capture ---
-      - name: Capture JSON golden files
+      - name: Verify JSON golden capture
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path FlashIDA\test-output\json | Out-Null
-          # Generate JSON from method_default.xml via a small inline C# script
-          # The actual JSON is printed to stdout by FLASHIdaWrapper constructor
-          # For golden capture, we use the regression output which exercises the JSON path
-          # The JSON content is validated by P1-U01 through P1-U05 unit tests
+          $jsonDir = "FlashIDA\test-output\json"
+          if (Test-Path "$jsonDir\config_default.json") {
+              Write-Host "config_default.json captured"
+          } else {
+              Write-Host "WARNING: config_default.json not captured"
+          }
+          if (Test-Path "$jsonDir\config_full.json") {
+              Write-Host "config_full.json captured"
+          } else {
+              Write-Host "WARNING: config_full.json not captured"
+          }
+
+      - name: Upload JSON golden capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: json-golden-capture
+          path: FlashIDA/test-output/json/
+          if-no-files-found: warn
 
       - name: Verify test data directories
         shell: powershell
