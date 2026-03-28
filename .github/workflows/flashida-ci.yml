@@ -29,6 +29,7 @@ jobs:
             libboost-random-dev libboost-regex-dev libboost-iostreams-dev \
             libboost-date-time-dev libboost-math-dev \
             libxerces-c-dev zlib1g-dev libsvm-dev libbz2-dev \
+            liblzma-dev libzstd-dev \
             coinor-libcoinmp-dev
 
       - name: Get OpenMS submodule commit hash
