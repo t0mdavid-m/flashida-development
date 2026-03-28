@@ -153,7 +153,8 @@ jobs:
               exit 1
           }
           if (-not (Test-Path "$configsDir\method_json_roundtrip.xml")) {
-              Write-Host "WARNING: method_json_roundtrip.xml not found (Phase 1 test data)"
+              Write-Host "ERROR: method_json_roundtrip.xml not found (required for Phase 1 tests)"
+              exit 1
           }
           Write-Host "Test data verification passed."
 
