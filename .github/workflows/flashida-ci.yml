@@ -242,7 +242,8 @@ jobs:
               if ($trackLines.Count -gt 0) {
                   Write-Host "Found $($trackLines.Count) [TRACK-CREATE] entries in regression output."
               } else {
-                  Write-Host "WARNING: No [TRACK-CREATE] entries found (shadow validation may not be active yet)."
+                  Write-Host "FAIL: regression-stdout.txt exists but contains zero [TRACK-CREATE] entries."
+                  exit 1
               }
           } else {
               Write-Host "Regression stdout log not found, skipping TRACK verification."
