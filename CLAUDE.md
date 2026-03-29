@@ -68,3 +68,18 @@ The following files in `plans/development/` are **read-only reference documents*
 - `verification-report.md` — Cross-document consistency verification
 
 **WARNING — Archived plans:** The `plans/` directory contains older iterations (`v2-parameter-optimization.md` through `v9-parameter-optimization.md`). These are SUPERSEDED and kept only for historical reference.
+
+## Lessons Learned
+
+Append reusable lessons here when discovered during implementation. Date-prefix each entry. These apply to this repo (FlashIDA + OpenMS cross-project work). For broader lessons, update `~/.claude/CLAUDE.md` instead.
+
+- (2026-03-23) Flash.exe entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()`. No `-t` flag. Invocation: `Flash.exe <input> <output> <method.xml> [ms2_file]`.
+- (2026-03-23) Spectrum TSV files use tab-separated headers with RT in seconds (`Spec scan=N\t<seconds>`), not the space-separated minutes format in test-file-specification.md.
+- (2026-03-23) Binary files (`.enc`, `.zip`, `.dll`) need explicit `binary` attribute in `.gitattributes` — the repo's `* text eol=crlf` corrupts them silently.
+- (2026-03-23) OpenMS DLLs are committed in `FlashIDA/dll/` and copied by MSBuild. No download step needed in CI.
+- (2026-03-23) Flash.exe's parser only processes scan N when scan N+1's header is read. Single-scan files produce zero output. Test files need 2+ scans.
+- (2026-03-23) When deconvolution returns 0 results unexpectedly, log input data characteristics (RT, peak count, m/z range) before investigating engine internals. The bridge doesn't distinguish "no results" from "malformed input."
+- (2026-03-27) Submodule pointer must be updated in parent repo after every push to submodule branches, or CI won't see the new code.
+- (2026-03-29) OpenMS ClassTest framework: use `NOT_TESTABLE` for deferred test stubs, not `ABORT_IF(true)` (which counts as failure).
+- (2026-03-29) `build-dlls` workflow in OpenMS repo auto-triggers on push to `flashida-v9-bridge`. Download artifact: `gh run download <id> -R t0mdavid-m/OpenMS -n selected-bin-artifacts`.
+- (2026-03-29) When testing modes with sub-options (strict/non-strict inclusion, conditional/unconditional MS2), always test both variants with separate config files.
