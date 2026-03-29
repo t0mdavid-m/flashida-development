@@ -197,21 +197,21 @@ jobs:
           path: FlashIDA/test-output/
 
       # --- DLL export verification (Phase 3) ---
-      # Warning-only until OpenMS.dll is rebuilt with Phase 3 exports.
-      # Will be promoted to hard failure after DLL rebuild.
       - name: Verify DLL exports include Phase 3 functions
         shell: cmd
         run: |
           if not exist "FlashIDA\bin\OpenMS.dll" (
-            echo WARNING: OpenMS.dll not found
-            exit /b 0
+            echo ERROR: OpenMS.dll not found
+            exit /b 1
           )
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
           dumpbin /exports FlashIDA\bin\OpenMS.dll > dll_exports.txt 2>&1
-          findstr /C:"ProcessScan" dll_exports.txt >nul 2>&1 && echo ProcessScan: found || echo WARNING: ProcessScan not found
-          findstr /C:"GetNextScanCommand" dll_exports.txt >nul 2>&1 && echo GetNextScanCommand: found || echo WARNING: GetNextScanCommand not found
-          findstr /C:"GetNextTrackingId" dll_exports.txt >nul 2>&1 && echo GetNextTrackingId: found || echo WARNING: GetNextTrackingId not found
-          exit /b 0
+          set MISSING=0
+          findstr /C:"ProcessScan" dll_exports.txt >nul 2>&1 && echo ProcessScan: found || (echo MISSING: ProcessScan & set MISSING=1)
+          findstr /C:"GetNextScanCommand" dll_exports.txt >nul 2>&1 && echo GetNextScanCommand: found || (echo MISSING: GetNextScanCommand & set MISSING=1)
+          findstr /C:"GetNextTrackingId" dll_exports.txt >nul 2>&1 && echo GetNextTrackingId: found || (echo MISSING: GetNextTrackingId & set MISSING=1)
+          if %MISSING%==1 exit /b 1
+          echo All Phase 3 DLL exports verified.
 
       # --- Bridge smoke test verification ---
       - name: Verify bridge smoke tests
