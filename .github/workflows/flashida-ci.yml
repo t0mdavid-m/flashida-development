@@ -200,26 +200,18 @@ jobs:
       # Warning-only until OpenMS.dll is rebuilt with Phase 3 exports.
       # Will be promoted to hard failure after DLL rebuild.
       - name: Verify DLL exports include Phase 3 functions
-        shell: powershell
+        shell: cmd
         run: |
-          $dllPath = "FlashIDA\bin\OpenMS.dll"
-          if (-not (Test-Path $dllPath)) {
-              Write-Host "WARNING: OpenMS.dll not found at $dllPath"
-              exit 0
-          }
-          $exports = & dumpbin /exports $dllPath 2>&1
-          $required = @("ProcessScan", "GetNextScanCommand", "GetNextTrackingId")
-          $missing = @()
-          foreach ($fn in $required) {
-              if ($exports -notmatch $fn) {
-                  $missing += $fn
-              }
-          }
-          if ($missing.Count -gt 0) {
-              Write-Host "WARNING: Missing DLL exports (expected after DLL rebuild): $($missing -join ', ')"
-          } else {
-              Write-Host "All Phase 3 DLL exports verified."
-          }
+          if not exist "FlashIDA\bin\OpenMS.dll" (
+            echo WARNING: OpenMS.dll not found
+            exit /b 0
+          )
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
+          dumpbin /exports FlashIDA\bin\OpenMS.dll > dll_exports.txt 2>&1
+          findstr /C:"ProcessScan" dll_exports.txt >nul 2>&1 && echo ProcessScan: found || echo WARNING: ProcessScan not found
+          findstr /C:"GetNextScanCommand" dll_exports.txt >nul 2>&1 && echo GetNextScanCommand: found || echo WARNING: GetNextScanCommand not found
+          findstr /C:"GetNextTrackingId" dll_exports.txt >nul 2>&1 && echo GetNextTrackingId: found || echo WARNING: GetNextTrackingId not found
+          exit /b 0
 
       # --- Bridge smoke test verification ---
       - name: Verify bridge smoke tests
