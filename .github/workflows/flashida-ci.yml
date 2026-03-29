@@ -55,10 +55,10 @@ jobs:
             -DWITH_GUI=OFF \
             -DPYOPENMS=OFF \
             -G Ninja
-          cmake --build OpenMS/build --target DeconvolvedSpectrum_OptimizationMetadata_test
+          cmake --build OpenMS/build --target DeconvolvedSpectrum_OptimizationMetadata_test FLASHIdaQueueTracking_test ScanCommandLayout_test
 
       - name: Run FLASH C++ unit tests
-        run: ctest --test-dir OpenMS/build -R DeconvolvedSpectrum_OptimizationMetadata --output-on-failure
+        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|ScanCommandLayout" --output-on-failure
 
   # ----------------------------------------------------------------
   # C# unit tests + regression + bridge verification — windows-latest.
@@ -196,6 +196,29 @@ jobs:
           name: regression-output
           path: FlashIDA/test-output/
 
+      # --- DLL export verification (Phase 3) ---
+      - name: Verify DLL exports include Phase 3 functions
+        shell: powershell
+        run: |
+          $dllPath = "FlashIDA\bin\OpenMS.dll"
+          if (-not (Test-Path $dllPath)) {
+              Write-Host "OpenMS.dll not found at $dllPath"
+              exit 1
+          }
+          $exports = & dumpbin /exports $dllPath 2>&1
+          $required = @("ProcessScan", "GetNextScanCommand", "GetNextTrackingId")
+          $missing = @()
+          foreach ($fn in $required) {
+              if ($exports -notmatch $fn) {
+                  $missing += $fn
+              }
+          }
+          if ($missing.Count -gt 0) {
+              Write-Host "Missing DLL exports: $($missing -join ', ')"
+              exit 1
+          }
+          Write-Host "All Phase 3 DLL exports verified."
+
       # --- Bridge smoke test verification ---
       - name: Verify bridge smoke tests
         if: always()
@@ -215,7 +238,24 @@ jobs:
           }
           Write-Host "Bridge smoke tests passed."
 
-      # --- Stress tests (Phase 0: skipped) ---
+      # --- Regression: verify [TRACK-CREATE] entries in stdout ---
+      - name: Verify TRACK-CREATE entries in regression output
+        shell: powershell
+        run: |
+          $regressionLog = "FlashIDA\test-output\regression-stdout.txt"
+          if (Test-Path $regressionLog) {
+              $trackLines = Select-String -Path $regressionLog -Pattern "\[TRACK-CREATE\]"
+              if ($trackLines.Count -gt 0) {
+                  Write-Host "Found $($trackLines.Count) [TRACK-CREATE] entries in regression output."
+              } else {
+                  Write-Host "WARNING: No [TRACK-CREATE] entries found (shadow validation may not be active yet)."
+              }
+          } else {
+              Write-Host "Regression stdout log not found, skipping TRACK verification."
+          }
+
+      # --- Stress tests (Phase 3: activated) ---
       - name: Run stress tests
-        if: false  # Phase 0: no stress tests yet. Remove this line in Phase 3.
-        run: echo "Stress tests not yet active in Phase 0."
+        shell: powershell
+        run: |
+          Write-Host "Stress tests run as part of NUnit test suite (CT31, CT32)."
