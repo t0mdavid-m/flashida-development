@@ -136,6 +136,20 @@ jobs:
           name: golden-capture
           path: FlashIDA/test-output/baseline_phase0.tsv
 
+      # --- Phase 4: Golden capture for all 9 mode configs ---
+      - name: Phase 4 golden capture (all modes)
+        shell: powershell
+        run: |
+          powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output\phase4-golden -captureMode
+
+      - name: Upload Phase 4 golden capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase4-golden-capture
+          path: FlashIDA/test-output/phase4-golden/phase4_*.tsv
+          if-no-files-found: warn
+
       # --- Phase 1: JSON golden file capture ---
       - name: Verify JSON golden capture
         shell: powershell
@@ -187,7 +201,7 @@ jobs:
       - name: Run regression tests
         shell: powershell
         run: |
-          powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output
+          powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output 2>&1 | Tee-Object -FilePath FlashIDA\test-output\regression-stdout.txt
 
       - name: Upload regression output
         if: always()
