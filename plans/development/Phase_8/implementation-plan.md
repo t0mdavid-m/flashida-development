@@ -58,9 +58,66 @@ The following must be true before starting Phase 8:
    switched `FLASHIdaWrapper.cs` to pass JSON via `Parameter.ToJSON()`. The legacy
    space-delimited string path must not be reachable from any live C# code path.
 
+6. **ScanCommand struct is in its final form.** The struct includes all fields accumulated
+   through Phases 3-6: `scan_id` as the first field (Phase 3 cache alignment deviation),
+   `uint64_t enqueue_timestamp_ms` (added in Phase 4), `double faims_cv` (added in Phase 6).
+   `IsolationStage` has `collision_energy` as `double` (not `int`) and `activation_type` as
+   `char[32]` (not `char[16]`), totaling 80 bytes. Both C++ `static_assert` values and C#
+   `Marshal.SizeOf` expectations reflect the final sizes. See "Phase 3-7 Deviations Impact"
+   section below for the complete layout.
+
 ### User-Provided Inputs
 
 No new user-provided data is required for Phase 8. All spectrum files, golden files, and config files were established in prior phases. Phase 8 is a cleanup and documentation phase.
+
+---
+
+## Phase 3-7 Deviations Impact
+
+Phase 8 inherits accumulated struct changes and CI policy changes from Phases 3-7. All verification tests in this phase must use the final struct layouts, not the originally planned layouts from the Phase 3 spec.
+
+### Struct Layout: Final State After All Phases
+
+**IsolationStage (80 bytes, verified by `static_assert`):**
+
+| Field | Type | Phase 3 deviation |
+|-------|------|-------------------|
+| `precursor_mz` | double | Unchanged |
+| `isolation_width` | double | Unchanged |
+| `collision_energy` | **double** | Was `int` in original plan; supports fractional CE values (Phase 7 uses fractional CE for exploration variants) |
+| `reaction_time` | double | Reordered |
+| `reagent_max_it` | double | Reordered |
+| `reagent_agc_target` | int32_t | Unchanged type |
+| `charge_state` | int32_t | Renamed from `charge` |
+| `activation_type` | **char[32]** | Was `char[16]` in original plan; accommodates longer names like EThcD |
+
+**ScanCommand (final size, verified by `static_assert`):** The struct size is NOT the original 1144 bytes. It changed in Phase 4 (added `uint64_t enqueue_timestamp_ms`, 8 bytes) and Phase 6 (added `double faims_cv`, 8 bytes). The Phase 8 `static_assert` and C# `Marshal.SizeOf` tests must verify the final size that includes both additions. Key field order and additions:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `scan_id` | int32_t | **First field** (not `msn_level` — Phase 3 cache alignment deviation) |
+| `msn_level` | int32_t | Moved from offset 0 |
+| `num_stages` | int32_t | Renamed from `num_isolation_stages` |
+| `stages[10]` | IsolationStage[10] | 80 bytes each = 800 bytes |
+| `max_it` | double | |
+| `agc_target` | int32_t | |
+| `orbitrap_resolution` | int32_t | |
+| `analyzer` | char[32] | |
+| `faims_cv` | **double** | **Added in Phase 6** (deferred from Phase 3) |
+| `scan_description` | char[256] | |
+| `priority` | int32_t | |
+| `enqueue_timestamp_ms` | **uint64_t** | **Added in Phase 4** |
+| `is_agc` | int32_t | |
+
+Note: The exact field order and offsets within `ScanCommand` may differ from the table above due to alignment padding. Consult the Phase 4 and Phase 6 implementation plans for the authoritative field order. The key invariant is that Phase 8 verification tests must use the actual final layout, not any intermediate version.
+
+### CI Policy: TRACK-CREATE Hard-Fail
+
+The CI `[TRACK-CREATE]` check is a **hard-fail gate** (established by Phase 3 compliance finding F-5, carried forward through all subsequent phases). All Phase 8 regression tests (P8-R01) must produce `[TRACK-CREATE]` entries in stdout or CI will fail. This applies to every one of the 12+ regression config runs.
+
+### Fractional Collision Energy
+
+`collision_energy` is `double` throughout the system. Phase 7's exploration engine uses fractional CE values (e.g., CE sweep from 20.0 to 40.0 with step 5.0). The Phase 8 full regression suite (P8-R01) includes `method_exploration.xml` which exercises fractional CE. The `compare_golden.py` tolerance rules handle this correctly (floating-point comparison with relative tolerance 1e-4 for values > 1.0).
 
 ---
 
@@ -87,10 +144,14 @@ definitions) and `FLASHIdaWrapper.cs` (C# P/Invoke declarations):
 | 12 | `ResetScanState` | Resets per-scan internal state (formerly called between events) |
 | 13 | `GetDeconvolutionQuality` | Returns a quality metric for the last deconvolution |
 
-Note: The exact set of 13 must be confirmed against the current `FLASHIdaBridgeFunctions.h`
-before deletion. If the count or names differ from what was originally counted as ~20
-functions minus the 5 keepers, adjust accordingly. The invariant is: after Phase 8,
-exactly 5 exports remain.
+Note: The exact set of functions to remove must be confirmed against the current
+`FLASHIdaBridgeFunctions.h` before deletion. The 13 listed above are from the original
+~20 legacy bridge functions. Additionally, Phase 2 added `GetConfigInt` and
+`GetConfigDouble` as diagnostic bridge helpers — these must also be removed if the
+"exactly 5 exports" invariant is to hold. Verify the complete export list in the current
+DLL (via `dumpbin /exports`) before starting removals. The invariant is: after Phase 8,
+exactly 5 exports remain (`CreateFLASHIda`, `DisposeFLASHIda`, `ProcessScan`,
+`GetNextScanCommand`, `GetNextTrackingId`).
 
 ### 5 bridge exports that remain
 
@@ -387,7 +448,12 @@ The integration test P8-I01 checks `dumpbin /exports` for exactly 5 bridge symbo
 verifies that none of the removed names are present. If the test script contains a hard-coded
 list of expected absent names, add all 13 removed function names to it. See Section 5.4 of
 `testing-strategy.md` for the baseline `dumpbin` CI step; extend the `findstr` block to also
-assert absence:
+assert absence.
+
+**Note:** The 5 keeper exports use the final struct layouts (including `enqueue_timestamp_ms`
+from Phase 4 and `faims_cv` from Phase 6). The `dumpbin` check verifies symbol presence
+only, not struct ABI — struct size verification is handled by `static_assert` in C++ and
+`Marshal.SizeOf` in C# (P3-U01/P3-U02, updated in Phases 4 and 6 to reflect the final sizes).
 
 ```cmd
 dumpbin /exports FlashIDA\dll\OpenMS.dll > exports.txt
@@ -397,7 +463,7 @@ findstr /C:"DisposeFLASHIda"    exports.txt || exit /b 1
 findstr /C:"ProcessScan"        exports.txt || exit /b 1
 findstr /C:"GetNextScanCommand" exports.txt || exit /b 1
 findstr /C:"GetNextTrackingId"  exports.txt || exit /b 1
-rem Verify 13 removed functions are absent
+rem Verify removed functions are absent (13 legacy + 2 Phase 2 diagnostic)
 findstr /C:"GetPeakGroupSize"               exports.txt && exit /b 1
 findstr /C:"GetIsolationWindows"            exports.txt && exit /b 1
 findstr /C:"DeconvolveMS2"                  exports.txt && exit /b 1
@@ -411,6 +477,9 @@ findstr /C:"AddToInclusionList"             exports.txt && exit /b 1
 findstr /C:"GetMS1ScanResult"               exports.txt && exit /b 1
 findstr /C:"ResetScanState"                 exports.txt && exit /b 1
 findstr /C:"GetDeconvolutionQuality"        exports.txt && exit /b 1
+rem Phase 2 diagnostic helpers (also removed for 5-export invariant)
+findstr /C:"GetConfigInt"                   exports.txt && exit /b 1
+findstr /C:"GetConfigDouble"               exports.txt && exit /b 1
 ```
 
 ---
@@ -419,6 +488,13 @@ findstr /C:"GetDeconvolutionQuality"        exports.txt && exit /b 1
 
 The full regression suite is automated by **P8-R01** in the `windows-tests` CI job. Do not
 proceed to committing until P8-R01 passes in CI for the current branch state.
+
+**CI TRACK-CREATE gate (Phase 3 compliance F-5):** Every regression run must produce at
+least one `[TRACK-CREATE]` entry in stdout. This is a hard-fail CI gate inherited from
+Phase 3. If any config produces zero `[TRACK-CREATE]` entries, the CI job fails even if the
+golden file comparison passes. The exploration config (`method_exploration.xml`) should
+produce multiple `[TRACK-CREATE]` entries for both the initial MS2 commands and the
+exploration variant commands.
 
 **Debugging note (Phase 0 lesson #14):** The C++ bridge returns 0 results silently when
 input data is malformed — there is no distinct error code for "bad input" vs "no results
@@ -681,6 +757,15 @@ openssl from `FlashIDA/dependencies/thermo-dlls.zip.enc`, same as all C# build s
 output to the corresponding Phase 7 golden file using `compare_golden.py`. This is the
 comprehensive validation that cleanup removed only dead code and changed no behavior.
 
+**CI gate note:** Every regression run must produce `[TRACK-CREATE]` entries in stdout
+(hard-fail gate from Phase 3 compliance finding F-5). If any config produces zero
+`[TRACK-CREATE]` entries, the CI job fails even if the golden file comparison passes.
+
+**Fractional CE note:** `method_exploration.xml` uses fractional collision energy values
+(Phase 7 CE sweep). `collision_energy` is `double` throughout the struct chain
+(`IsolationStage.collision_energy`), so fractional values are correctly represented.
+The `compare_golden.py` relative tolerance (1e-4 for |v| > 1.0) handles these correctly.
+
 **Configurations covered (minimum 12):**
 
 Canonical golden file names are defined in [../test-file-specification.md §2.2](../test-file-specification.md).
@@ -860,9 +945,12 @@ Phase 8 is complete when all of the following are true:
 - [ ] P8-U04 passes: C++ unit test confirms non-JSON input is rejected.
 
 - [ ] P8-R01 passes: all 12+ method configuration variants produce output matching Phase 7
-      golden files.
+      golden files. All runs emit `[TRACK-CREATE]` entries (CI hard-fail gate).
 
-- [ ] All prior tests P0 through P7 continue to pass. No regressions introduced.
+- [ ] All prior tests P0 through P7 continue to pass. No regressions introduced. In
+      particular, struct size tests (P3-U01/P3-U02, updated in Phases 4 and 6) still pass
+      with the final `ScanCommand` and `IsolationStage` sizes (including `enqueue_timestamp_ms`
+      from Phase 4 and `faims_cv` from Phase 6).
 
 - [ ] The `flashida-ci.yml` CI workflow changes (DLL export verification extension, zero-
       warnings build step, Phase 8 C++ test registration) are committed and passing in CI.
@@ -872,9 +960,9 @@ Phase 8 is complete when all of the following are true:
 
 ---
 
-## Phase 0–2 Lessons Applied
+## Phase 0–7 Lessons Applied
 
-The following lessons from Phases 0, 1, and 2 were applied when authoring or revising this
+The following lessons from Phases 0 through 7 were applied when authoring or revising this
 plan. Each entry identifies where the lesson is reflected.
 
 | Lesson | Source | Applied in Phase 8 plan |
@@ -903,3 +991,11 @@ plan. Each entry identifies where the lesson is reflected.
 | ccache key uses `hashFiles('OpenMS/CMakeLists.txt')`, not `executables.cmake` | Phase 2 #7 | No direct ccache key reference in Phase 8, but noted for consistency with `cpp-unit-tests` job |
 | `(void)var;` suppresses MSVC unused variable warnings under `/WX` | Phase 2 #8 | P8-U04 test section includes MSVC `/WX` note about `(void)var;` usage |
 | Phase 2 cumulative: 59 tests (OptimizationMetadata, GetConfigInt/GetConfigDouble, 5 C++ unit tests) | Phase 2 #9 | Prerequisites §3 updated to reflect Phase 2 actual deliverables |
+| `ScanCommand.scan_id` is the first field, not `msn_level` | Phase 3 | Phase 3-7 Deviations Impact section; all struct references use actual field order |
+| `IsolationStage.collision_energy` is `double`, not `int` | Phase 3 | Phase 3-7 Deviations Impact section; P8-R01 fractional CE note |
+| `IsolationStage.activation_type` is `char[32]`, not `char[16]` | Phase 3 | Phase 3-7 Deviations Impact section |
+| `IsolationStage` size = 80 bytes | Phase 3 | Phase 3-7 Deviations Impact section |
+| CI TRACK-CREATE check is hard-fail | Phase 3 F-5 | Phase 3-7 Deviations Impact section; P8-R01 CI gate note |
+| `enqueue_timestamp_ms` (uint64_t) added to ScanCommand | Phase 4 | Phase 3-7 Deviations Impact section; struct size is not 1144 |
+| `faims_cv` (double) added to ScanCommand | Phase 6 | Phase 3-7 Deviations Impact section; struct size is not 1144 |
+| Phase 7 exploration engine uses fractional CE values | Phase 7 | P8-R01 fractional CE note; `method_exploration.xml` regression config |

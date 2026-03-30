@@ -110,6 +110,8 @@
 
 ## 5. Actionable Findings
 
+> **Update (2026-03-29):** All findings F-1 through F-6 were fixed before merge. See baseline-plan.md Phase 3 completion notes for details.
+
 ### Must Fix (before merge to main)
 
 | # | Finding | Location | Fix |

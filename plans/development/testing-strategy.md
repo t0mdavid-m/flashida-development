@@ -451,9 +451,9 @@ FlashIDA/test-data/
   golden/
     README.md                 # Documents golden file provenance and update procedure
     baseline_phase0.tsv       # Phase 0 baseline capture (current behavior)
-    phase4_standard_dda.tsv   # Expected output for ms1_standard.txt + method_default.xml (captured at Phase 4)
-    phase4_deep_mode.tsv      # Expected output for deep mode (captured at Phase 4)
-    ...                       # One golden file per mode configuration, prefixed by originating phase
+    phase4_standard_dda.tsv   # Pre-switch baseline: old bridge output for standard DDA (captured at Phase 4 Step 0, before unified bridge)
+    phase4_deep_mode.tsv      # Pre-switch baseline: old bridge output for deep mode (captured at Phase 4 Step 0)
+    ...                       # One golden file per mode configuration — Phase 4 files are pre-switch baselines
   json/
     config_default.json       # Expected JSON output from method_default.xml
     config_full.json          # Expected JSON from method_json_roundtrip.xml
@@ -569,18 +569,18 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P3-U01 | 1 (C#) | `ScanCommand` struct size matches C++ | `Marshal.SizeOf<ScanCommand>()` equals expected byte count (compute from C++ struct layout) |
 | P3-U02 | 1 (C#) | `IsolationStage` struct size matches C++ | `Marshal.SizeOf<IsolationStage>()` equals expected byte count |
 | P3-U03 | 1 (C#) | `ScanCommand` field offsets match C++ | `Marshal.OffsetOf` for each field matches C++ `offsetof` values (hard-coded in test) |
-| P3-U04 | 1 (C#) | `char[]` fields in `ScanCommand` are `ByValTStr` with correct size | `analyzer` is 32 bytes, `scan_description` is 256 bytes, `activation_type` is 16 bytes |
+| P3-U04 | 1 (C#) | `char[]` fields in `ScanCommand` are `ByValTStr` with correct size | `analyzer` is 32 bytes, `scan_description` is 256 bytes, `activation_type` is 32 bytes (updated per Phase 3 compliance report, 2026-03-29: char[32] to accommodate longer names like EThcD) |
 | P3-U05 | 1 (C++) | Tracking ID base-36 encoding is correct | `encodeBase36(0)` = "0000", `encodeBase36(1)` = "0001", `encodeBase36(36)` = "0010" |
-| P3-U06 | 1 (C++) | Tracking IDs are sequential and unique | Generate 10,000 IDs from a single `FLASHIda` instance, verify all unique, verify sequential |
+| P3-U06 | 1 (C++) | Tracking IDs are sequential and unique | Generate 10,000 IDs from a single `FLASHIda` instance, verify all unique, verify sequential. Also checks ID < 1679616 (base-36 4-char range guard). (Strengthened per Phase 3 compliance report F-6, 2026-03-29.) |
 | P3-U07 | 1 (C++) | `GetNextScanCommand` returns MS1 when queue is empty | Create `FLASHIda`, call `GetNextScanCommand`, verify `msn_level == 1` and `is_agc == 0` |
 | P3-U08 | 1 (C++) | Queue priority dequeue order is 3 -> 0 | Push commands at priorities 0, 1, 2, 3, dequeue 4 times, verify order is 3, 2, 1, 0 |
 | P3-U09 | 1 (C++) | AGC scan is always dequeued first | Configure AGC, verify `GetNextScanCommand` returns AGC before any queued command |
 | P3-U10 | 1 (C++) | Timeout cleanup removes expired commands | Push command, advance clock past timeout, call `GetNextScanCommand`, verify expired command is not returned |
-| P3-I01 | 2 | ScanCommand marshaling round-trip | C# populates `ScanCommand` with known values, calls bridge function that reads and echoes values, verify match |
+| P3-I01 | 2 | ScanCommand marshaling round-trip | C# populates `ScanCommand` with known values, calls bridge function that reads and echoes values, verify match. Tests MsnLevel, FirstMass, OrbitrapResolution, NumStages, Analyzer, and ScanDescription (6 additional assertions added per Phase 3 compliance report F-3, 2026-03-29). |
 | P3-I02 | 2 | `ProcessScan` stub returns 0 | Call `ProcessScan` with valid spectrum data, verify return value is 0 (stub) |
 | P3-I03 | 2 | `GetNextScanCommand` returns valid struct | Call `GetNextScanCommand`, verify returned `ScanCommand` has `msn_level == 1` |
 | P3-I04 | 2 | `GetNextTrackingId` returns incrementing values | Call 100 times, verify monotonically increasing |
-| P3-I05 | 2 | DLL exports include new functions | `dumpbin /exports OpenMS.dll` contains `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` |
+| P3-I05 | 2 | DLL exports include new functions | Tests all 3 exports (`ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId`) via `DoesNotThrow` P/Invoke calls. (Strengthened per Phase 3 compliance report F-4, 2026-03-29; original unconditional `Assert.Pass` replaced.) CI `dumpbin /exports` step provides independent verification. |
 | P3-R01 | 3 | `Flash.exe` with shadow validation | Output matches Phase 2 golden files; TRACK log entries present in console output |
 
 **Regression from Phases 0-2:** All P0-* through P2-* tests must pass.
@@ -611,22 +611,22 @@ Golden files are committed to the repository. When an intentional behavioral cha
 | P4-I01 | 2 | Feature flag `UseUnifiedBridge=False` -> old behavior | Regression: identical output to Phase 3 |
 | P4-I02 | 2 | Feature flag `UseUnifiedBridge=True` -> new behavior | Standard DDA output matches old behavior (same scan commands, same deconv results) |
 | P4-R01 | 3 | Regression: `UseUnifiedBridge=False` | `Flash.exe` output matches Phase 3 golden files |
-| P4-R02 | 3 | Standard DDA: `UseUnifiedBridge=True` | `Flash.exe` with `method_default.xml` + unified bridge, compare to `phase4_standard_dda.tsv` |
-| P4-R03 | 3 | Deep mode: `UseUnifiedBridge=True` | `Flash.exe` with `method_deep.xml`, compare to `phase4_deep_mode.tsv` |
-| P4-R04 | 3 | Inclusion list mode | `Flash.exe` with `method_inclusion.xml`, compare to golden |
-| P4-R05 | 3 | Exclusion list mode | `Flash.exe` with `method_exclusion.xml`, compare to golden |
-| P4-R06 | 3 | Tag-based targeting mode | `Flash.exe` with `method_tag_targeting.xml`, compare to golden |
-| P4-R07 | 3 | Isobaric quant mode | `Flash.exe` with `method_quant.xml`, compare to golden |
-| P4-R08 | 3 | MS3 mode 1 (fragment matching) | `Flash.exe` with `method_ms3_mode1.xml`, compare to golden |
-| P4-R09 | 3 | MS3 mode 2 | `Flash.exe` with `method_ms3_mode2.xml`, compare to golden |
-| P4-R10 | 3 | MS3 mode 3 | `Flash.exe` with `method_ms3_mode3.xml`, compare to golden |
+| P4-R02 | 3 | Standard DDA: unified bridge vs. pre-switch baseline | `Flash.exe` with `method_default.xml` + `UseUnifiedBridge=True`, compare to `phase4_standard_dda.tsv` (pre-switch baseline captured in Step 0) |
+| P4-R03 | 3 | Deep mode: unified bridge vs. pre-switch baseline | `Flash.exe` with `method_deep.xml` + unified bridge, compare to `phase4_deep_mode.tsv` (pre-switch baseline) |
+| P4-R04 | 3 | Inclusion list: unified bridge vs. pre-switch baseline | `Flash.exe` with `method_inclusion.xml`, compare to pre-switch baseline |
+| P4-R05 | 3 | Exclusion list: unified bridge vs. pre-switch baseline | `Flash.exe` with `method_exclusion.xml`, compare to pre-switch baseline |
+| P4-R06 | 3 | Tag targeting: unified bridge vs. pre-switch baseline | `Flash.exe` with `method_tag_targeting.xml`, compare to pre-switch baseline |
+| P4-R07 | 3 | Isobaric quant: unified bridge vs. pre-switch baseline | `Flash.exe` with `method_quant.xml`, compare to pre-switch baseline |
+| P4-R08 | 3 | MS3 mode 1: unified bridge vs. pre-switch baseline | `Flash.exe` with `method_ms3_mode1.xml`, compare to pre-switch baseline |
+| P4-R09 | 3 | MS3 mode 2: unified bridge vs. pre-switch baseline | `Flash.exe` with `method_ms3_mode2.xml`, compare to pre-switch baseline |
+| P4-R10 | 3 | MS3 mode 3: unified bridge vs. pre-switch baseline | `Flash.exe` with `method_ms3_mode3.xml`, compare to pre-switch baseline |
 
 **Regression from Phases 0-3:** All P0-* through P3-* tests must pass.
 
 **Working Product Verification automation:**
 - WPV-1 ("UseUnifiedBridge=False identical to Phase 3"): Automated by P4-R01.
-- WPV-2 ("UseUnifiedBridge=True standard DDA matches"): Automated by P4-R02.
-- WPV-3 ("Each mode works"): Automated by P4-R03 through P4-R10.
+- WPV-2 ("UseUnifiedBridge=True standard DDA matches pre-switch baseline"): Automated by P4-R02.
+- WPV-3 ("Each mode matches pre-switch baseline"): Automated by P4-R03 through P4-R10.
 - WPV-4 ("TRACK audit trail"): Automated by P4-U09.
 - WPV-5 ("Race condition fix"): Automated by P4-U01 (atomic return, no two-step GetPeakGroupSize/GetIsolationWindows).
 
@@ -752,28 +752,33 @@ The P/Invoke bridge between C# and C++ is the most failure-prone surface in the 
 
 ### 5.1 Struct Marshaling Validation
 
-**`ScanCommand` struct (estimated 550+ bytes):**
+**`ScanCommand` struct (1144 bytes, verified by static_assert):**
 
 ```
 Offset validation test — hard-coded expected offsets from C++ sizeof/offsetof:
+(Updated per Phase 3 compliance report, 2026-03-29: scan_id first, activation_type
+is char[32], collision_energy is double, faims_cv and enqueue_timestamp_ms deferred)
 
 Field                    C++ offset    C# Marshal.OffsetOf
 ------------------------------------------------------
-msn_level                0             0
-num_isolation_stages     4             4
-stages[0].precursor_mz   8             8
-stages[0].activation_type 40           40  (char[16])
-stages[9].reagent_agc_target  ???       ???
+scan_id                  0             0
+msn_level                4             4
+num_isolation_stages     8             8
+stages[0].precursor_mz   16            16
+stages[0].activation_type 40           40  (char[32])
+stages[9].reagent_agc_target  ...       ...
 max_it                   (after stages array)
 agc_target               ...
+orbitrap_resolution      ...
 analyzer                 ... (char[32])
-faims_cv                 ...
 scan_description         ... (char[256])
 priority                 ...
-enqueue_timestamp_ms     ...
 is_agc                   ...
-scan_id                  ...
 ```
+
+**IsolationStage struct (80 bytes, verified by static_assert):**
+- `collision_energy` is `double` (not `int`), supporting fractional CE values.
+- `activation_type` is `char[32]` (not `char[16]`), accommodating longer activation names like EThcD.
 
 A C++ test binary (`ScanCommandLayoutTest`) is created that prints `sizeof(ScanCommand)`, `sizeof(IsolationStage)`, and `offsetof()` for every field. A C# test reads this output and compares against `Marshal.SizeOf` and `Marshal.OffsetOf`. Any mismatch fails the build.
 
@@ -826,7 +831,7 @@ public void ScanCommand_FieldOffsetsMatchCpp()
 **String field edge cases:**
 - `analyzer` = exactly 31 chars + null terminator (fills `char[32]`)
 - `scan_description` = exactly 255 chars + null terminator (fills `char[256]`)
-- `activation_type` = exactly 15 chars + null terminator (fills `char[16]`)
+- `activation_type` = exactly 31 chars + null terminator (fills `char[32]`) (updated per Phase 3 compliance report, 2026-03-29)
 - Empty strings (all zeros)
 
 ### 5.3 ABI Compatibility Checks

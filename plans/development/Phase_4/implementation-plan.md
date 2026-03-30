@@ -10,6 +10,62 @@
 
 ---
 
+## Phase 3 Deviations Impact
+
+Phase 3 compliance review identified several deviations from the original plan that affect Phase 4 implementation. All Phase 4 code must use the actual Phase 3 layouts, not the originally planned layouts.
+
+### Struct Layout Deviations (from Phase 3 compliance report)
+
+**ScanCommand actual layout (1144 bytes)** — field order and types differ from the Phase 3 plan:
+
+| Field | Type | Offset | Plan deviation |
+|-------|------|--------|----------------|
+| `scan_id` | int32_t | 0 | **First field** (plan had `msn_level` first) |
+| `msn_level` | int32_t | 4 | Moved from offset 0 |
+| `priority` | int32_t | 8 | Moved from offset 1120 |
+| `is_agc` | int32_t | 12 | Moved from offset 1136 |
+| `num_stages` | int32_t | 16 | Renamed from `num_isolation_stages` |
+| `orbitrap_resolution` | int32_t | 20 | Moved from offset 820 |
+| `agc_target` | int32_t | 24 | Moved from offset 816 |
+| `pad1` | int32_t | 28 | Alignment padding |
+| `first_mass` | double | 32 | Moved into ScanCommand (was only in IsolationStage) |
+| `last_mass` | double | 40 | Moved into ScanCommand (was only in IsolationStage) |
+| `max_it` | double | 48 | Moved from offset 808 |
+| `analyzer` | char[32] | 56 | Moved from offset 824 |
+| `scan_description` | char[256] | 88 | Moved from offset 864 |
+| `stages` | IsolationStage[10] | 344 | Moved from offset 8 |
+
+**Missing fields**: `enqueue_timestamp_ms` and `faims_cv` were **not included** in the Phase 3 implementation. `enqueue_timestamp_ms` must be added in Phase 4 (see Step 2b). `faims_cv` is deferred to Phase 6 and should NOT be added in Phase 4.
+
+**IsolationStage actual layout (80 bytes)** — field types and names differ:
+
+| Field | Type | Plan deviation |
+|-------|------|----------------|
+| `precursor_mz` | double | Unchanged |
+| `isolation_width` | double | Unchanged |
+| `collision_energy` | **double** | Was `int` in plan |
+| `reaction_time` | double | Reordered (was offset 56) |
+| `reagent_max_it` | double | Reordered (was offset 64) |
+| `reagent_agc_target` | int32_t | Unchanged type |
+| `charge_state` | int32_t | Renamed from `charge` |
+| `activation_type` | **char[32]** | Was `char[16]` in plan |
+
+**C# struct matches the actual C++ layout** (verified in `FLASHIdaWrapper.cs`). C# uses `CollisionEnergy` as `double`, `ActivationType` with `SizeConst = 32`, field order matches C++ exactly.
+
+### Deferred Phase 3 Tests
+
+- **P3-U08 (priority dequeue order)** — implemented as `NOT_TESTABLE` stub in Phase 3 because `processScan_` did not push commands. Phase 4 must **activate this test** with real assertions once `processScan()` pushes commands. Replace the stub with the actual priority-order verification.
+- **P3-U09 (AGC first)** — same situation as P3-U08. Phase 4 must **activate this test** when `needsAGCScan_()` is wired up.
+- **P3-R01 regression** — deferred from Phase 3. Phase 4 must implement the regression comparison using `baseline_phase3.tsv`.
+
+### CI Changes from Phase 3
+
+- **F-5 fix**: The CI `TRACK-CREATE` check is now **hard-fail**. All Phase 4 regression tests must produce `[TRACK-CREATE]` entries in stdout or CI will fail. This applies to P4-R01 through P4-R10. Ensure every regression run emits at least one `[TRACK-CREATE]` log line.
+- **F-3 fix**: P3-I01 now tests 6 additional `ScanCommand` fields (`MsnLevel`, `FirstMass`, `OrbitrapResolution`, `NumStages`, `Analyzer`, `ScanDescription`). Phase 4's bridge tests build on this stronger marshaling foundation.
+- **CT14 and CT22 assertions**: Fixed from tautological to meaningful. CT14 checks `Count > 0` + exclusion diff. CT22 checks `ms2Commands.Count > 0`. Phase 4 tests should follow this pattern.
+
+---
+
 ## Goal
 
 This is the critical switch-over phase. `ProcessScan` is promoted from a stub (Phase 3) to a fully functional entry point that handles every MS1 and MS2 acquisition mode. Once the full implementation is verified, C# stops calling the old bridge functions and trusts `ProcessScan` + `GetNextScanCommand` exclusively for all scan decisions.
@@ -30,9 +86,9 @@ The following must be in place before beginning Phase 4 implementation:
    - P0-* through P3-* tests all pass in CI (59 cumulative tests from Phases 0-2, plus Phase 3 tests).
    - `Flash.exe` runs with shadow validation (entry point is `FLASHIdaWrapper.Main()`, no `-t` flag — see Phase 0 lesson #1), producing TRACK log entries. Correct invocation: `Flash.exe <input_file> <output_file> <method.xml> [ms2_file]`.
    - **Phase 2 specifically delivered:** `OptimizationMetadata` struct (18 fields, stored as `std::optional` on `DeconvolvedSpectrum`) with accessors (`hasOptimizationMetadata()`, `getOrCreateOptimizationMetadata()`, `getOptimizationMetadata()`); `GetConfigInt`/`GetConfigDouble` bridge functions exported from `OpenMS.dll`; 5 C++ unit tests passing via `ctest -R DeconvolvedSpectrum_OptimizationMetadata`; `cpp-unit-tests` CI job active on `ubuntu-latest` (no longer gated by `if: false`).
-   - **Phase 3 specifically delivers:** the `ProcessScan` and `GetNextScanCommand` bridge functions exported from `OpenMS.dll`; the `ScanCommand` struct with all fields; the `ScanFactory.BuildFromCommand()` stub in C#; the shadow validation wiring in scan processors; `GetNextScanCommand` returning MS1 when queue is empty; the priority queue data structure (`queues_[4]`) and `queue_mutex_`; the `pending_scan_map_` and tracking ID counter; and the Phase 3 golden file (`baseline_phase3.tsv`) committed to `test-data/golden/`.
+   - **Phase 3 specifically delivered:** the `ProcessScan` and `GetNextScanCommand` bridge functions exported from `OpenMS.dll`; the `ScanCommand` struct (actual field order: `scan_id` first, not `msn_level` — see Phase 3 Deviations Impact section above); the `ScanFactory.BuildFromCommand()` stub in C#; the shadow validation wiring in scan processors; `GetNextScanCommand` returning MS1 when queue is empty; the priority queue data structure (`queues_[4]`) and `queue_mutex_`; the `pending_scan_map_` and tracking ID counter; and the Phase 3 golden file (`baseline_phase3.tsv`) committed to `test-data/golden/`. **Note:** `enqueue_timestamp_ms` and `faims_cv` fields were NOT included in Phase 3 structs — `enqueue_timestamp_ms` must be added in Phase 4, `faims_cv` is deferred to Phase 6. **Note:** P3-U08 (priority dequeue) and P3-U09 (AGC first) are stubs (`NOT_TESTABLE`) that must be activated in Phase 4.
    - `GetNextScanCommand` returns MS1 when queue is empty (stub behavior).
-   - `ScanCommand` struct marshaling is verified (C# and C++ agree on layout, size, and field offsets).
+   - `ScanCommand` struct marshaling is verified (C# and C++ agree on layout, size = 1144 bytes, and field offsets — actual field order starts with `scan_id`, see Phase 3 Deviations Impact section).
    - JSON configuration is parsed by C++ and legacy auto-detect fallback works.
 
 2. **Phase 3 golden files exist.** `baseline_phase3.tsv` (or equivalent per-mode golden files from Phase 3) is committed to `FlashIDA/test-data/golden/`. These are the regression baseline for P4-R01.
@@ -106,6 +162,45 @@ Note: the roadmap lists 4 MS3 modes. The test plan covers modes 1, 2, and 3 expl
 
 ## Detailed Implementation Steps
 
+### Step 0: Capture Pre-Switch Golden Baselines
+
+**Rationale:** The deconvolution engine doesn't change in Phase 4 — only the dataflow changes (routing through `ProcessScan` instead of per-mode C# bridge paths). Golden files must be captured **before** the switch-over so that regression tests can prove the unified bridge produces identical output to the old path. Capturing after the switch would be self-referential — "whatever the new code produces" — and would not prove behavioral equivalence.
+
+**Prerequisite:** All mode-specific method config files (§3 of test-file-specification.md) and test spectrum files (`ms1_standard.txt`, `ms2_hcd_fragment.txt`) must be committed first.
+
+**Procedure:**
+
+1. Create all 9 mode-specific method config files (see Prerequisites §3) **without** the `UseUnifiedBridge` flag (it doesn't exist yet — the old bridge path is the only path).
+2. Push the config and test data files. The CI `windows-tests` job runs `Flash.exe` for each configuration via the regression runner in capture mode (`regression-runner.ps1 -captureMode`).
+3. Download the golden capture artifacts from the GitHub Actions run summary.
+4. Inspect each `.tsv` file per the checklist in `test-file-specification.md §2.3` (header row matches 15-column format, row count non-zero, float values in plausible ranges).
+5. Commit the reviewed `.tsv` files to `FlashIDA/test-data/golden/` and push.
+6. Update `FlashIDA/test-data/golden/README.md` with provenance: branch, CI run URL, OpenMS commit hash, spectrum source, and the note **"Captured from old bridge path (pre-switch) to serve as behavioral equivalence baseline for the unified bridge switch-over."**
+
+These golden files become the regression targets for P4-R02 through P4-R10. After the switch-over, each regression test runs `Flash.exe` with `UseUnifiedBridge=True` and compares output against these pre-switch baselines. A match proves the unified bridge is behaviorally equivalent to the old path.
+
+**Golden files captured in this step:**
+
+```
+test-data/golden/phase4_standard_dda.tsv    — old bridge, method_default.xml
+test-data/golden/phase4_deep_mode.tsv       — old bridge, method_deep.xml
+test-data/golden/phase4_inclusion.tsv       — old bridge, method_inclusion.xml
+test-data/golden/phase4_exclusion.tsv       — old bridge, method_exclusion.xml
+test-data/golden/phase4_tag_targeting.tsv   — old bridge, method_tag_targeting.xml
+test-data/golden/phase4_quant.tsv           — old bridge, method_quant.xml
+test-data/golden/phase4_ms3_mode1.tsv       — old bridge, method_ms3_mode1.xml
+test-data/golden/phase4_ms3_mode2.tsv       — old bridge, method_ms3_mode2.xml
+test-data/golden/phase4_ms3_mode3.tsv       — old bridge, method_ms3_mode3.xml
+```
+
+**2-commit minimum (Phase 0 lesson #15):** Golden file capture inherently requires at least 2 commits: the first runs CI and produces the golden artifact; the second includes the captured golden file. Batch all 9 captures into a single CI run.
+
+**`compare_golden.py` column classification (Phase 0 compliance lesson L-2):** Before capturing, update `compare_golden.py`'s column classification table to include any mode-specific output columns with appropriate comparison types (exact, numeric, ignore). Mode-specific golden files may have different column sets than standard DDA — each file's column set is validated independently.
+
+After Step 0 is complete, proceed to Step 1 to implement the unified bridge. The golden files are now committed and ready to serve as regression targets.
+
+---
+
 ### Step 1: Add `UseUnifiedBridge` Feature Flag
 
 **Files:** `FlashIDA/src/Flash/etc/method.xml`, `FlashIDA/src/Flash/Parameter.cs`, `FlashIDA/src/Flash/MethodConfig.cs`
@@ -172,22 +267,44 @@ Test P4-U02 must exercise each branch with a hard-coded real peak array from cha
 
 #### Step 2b: Implement `buildMS2Command_()`
 
-A private helper that constructs a `ScanCommand` from a peak group:
+A private helper that constructs a `ScanCommand` from a peak group.
 
+**IMPORTANT — Use actual Phase 3 struct layout** (see Phase 3 Deviations Impact section). Key differences from the original plan:
+- Field order starts with `scan_id`, then `msn_level`, `priority`, `is_agc`, `num_stages`, etc.
+- `collision_energy` is `double` (not `int`)
+- `activation_type` is `char[32]` (not `char[16]`)
+- `charge` field is named `charge_state`
+- `num_isolation_stages` is renamed to `num_stages`
+- `first_mass` and `last_mass` are on `ScanCommand` directly (not on `IsolationStage`)
+
+Fields to populate:
+- `scan_id`: next scan ID counter (from `nextTrackingIdInt_()`)
 - `msn_level = 2`
-- `num_isolation_stages = 1`
+- `priority = 1`
+- `is_agc = 0`
+- `num_stages = 1`
+- `orbitrap_resolution`, `agc_target` from MS2 settings
+- `first_mass`, `last_mass` from MS2 scan range settings
+- `max_it` from MS2 settings
+- `analyzer` from MS2 settings
+- `scan_description`: base-36 tracking ID (4 chars, from atomic counter)
 - `stages[0].precursor_mz` from peak group representative m/z
 - `stages[0].isolation_width` from MS2 settings in config
-- `stages[0].collision_energy` from `hcd_energy_` in config
-- `stages[0].charge` from peak group representative charge
-- `stages[0].activation_type` from MS2 activation setting (e.g., "HCD")
-- `max_it`, `agc_target`, `orbitrap_resolution`, `analyzer` from MS2 settings
-- `faims_cv = 0.0` (populated by FAIMS logic in Phase 6; not yet active)
-- `scan_description`: base-36 tracking ID (4 chars, from atomic counter)
-- `priority = 1`
-- `enqueue_timestamp_ms`: current time in milliseconds
-- `is_agc = 0`
-- `scan_id`: next scan ID counter
+- `stages[0].collision_energy` from `hcd_energy_` in config (**double**, not int)
+- `stages[0].charge_state` from peak group representative charge
+- `stages[0].activation_type` from MS2 activation setting (e.g., "HCD") — **char[32]**
+
+**Phase 4 must also add `enqueue_timestamp_ms` to `ScanCommand`** (deferred from Phase 3). This requires:
+1. Add `uint64_t enqueue_timestamp_ms;` field to the C++ `ScanCommand` struct in `FLASHIda.h`. Place it after the last current field or repurpose `pad1` (currently at offset 28) to minimize size change. If added at the end, the struct size will increase from 1144 to 1152 bytes (8 bytes for uint64_t, aligned).
+2. Add matching `public ulong EnqueueTimestampMs;` field to the C# `ScanCommand` struct at the same position.
+3. Update `static_assert` for the new struct size (will no longer be 1144).
+4. Update C# `Marshal.SizeOf` test expectations (P3-U01 expected 1144; must be updated to new size).
+5. Update all P3-U03 field offset expectations that shift due to the new field.
+6. Set the value to `std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()`
+
+**Size coordination:** Adding `enqueue_timestamp_ms` changes the confirmed 1144-byte struct size. Both C++ `static_assert` and C# layout tests must be updated in the same commit. The `ScanCommandLayout_test` binary output will also change.
+
+**Do NOT add `faims_cv`** — it is deferred to Phase 6.
 
 After creating the command, store it in `pending_scan_map_[tracking_id]` before pushing to the queue. Log `[TRACK-CREATE]` after storage.
 
@@ -291,18 +408,22 @@ for (auto& target : selectMS3Targets_(ms2_deconv))
 `selectMS3Targets_` returns up to N fragment ions from `ms2_deconv` that meet MS3 targeting criteria (intensity threshold, charge, m/z range). The selection logic varies by MS3 mode:
 
 - **Mode 1 (Source CID):** Select top-N fragments by intensity from source CID spectrum.
-- **Mode 2 (SPS):** Select top-N fragments for synchronous precursor selection; `buildMS3Command_` sets `num_isolation_stages = 2` with both precursor and fragment isolation windows.
+- **Mode 2 (SPS):** Select top-N fragments for synchronous precursor selection; `buildMS3Command_` sets `num_stages = 2` with both precursor and fragment isolation windows.
 - **Mode 3 (HCD-triggered):** Select fragments that are charge-reduced precursor ions (specific to HCD fragmentation pattern).
 - **Mode 4 (EThcD-triggered):** Select charge-reduced fragments from EThcD spectrum.
 
-`buildMS3Command_` sets:
+`buildMS3Command_` sets (using actual Phase 3 struct field names):
+- `scan_id`: new tracking ID
 - `msn_level = 3`
+- `priority = 3`
+- `is_agc = 0`
+- `num_stages = 2` (MS3 has both precursor and fragment isolation)
 - `stages[0]` from `ctx` (the MS2 precursor)
 - `stages[1]` from `target` (the MS3 precursor)
-- `collision_energy` from MS3 settings in config
-- `activation_type` from MS3 mode settings
+- `stages[*].collision_energy` from MS3 settings in config (**double**, not int)
+- `stages[*].activation_type` from MS3 mode settings (**char[32]**)
 - `scan_description`: new tracking ID for this MS3 command
-- `priority = 3`
+- `enqueue_timestamp_ms`: current time in ms (field added in Phase 4)
 
 Log `[TRACK-CREATE]` for each MS3 command after storing in `pending_scan_map_`.
 
@@ -403,7 +524,7 @@ The shadow validation from Phase 3 (calling both old and new paths in parallel) 
 - AGC scan (`is_agc=1`, `analyzer="IonTrap"`)
 - MS1 fallback (returned when queue is empty)
 
-If any mode requires scan parameters not yet mapped in `BuildFromCommand`, add the necessary mappings. For SPS-MS3, `num_isolation_stages=2` must produce the correct `IFusionCustomScan` with synchronized precursor selection.
+If any mode requires scan parameters not yet mapped in `BuildFromCommand`, add the necessary mappings. For SPS-MS3, `num_stages=2` (note: renamed from `num_isolation_stages` in actual Phase 3 implementation) must produce the correct `IFusionCustomScan` with synchronized precursor selection. Also note that `collision_energy` is `double` in the actual struct (C# property `CollisionEnergy` is also `double`), so the `BuildFromCommand` code that maps `stage.CollisionEnergy` to the Thermo API must handle `double` values, not `int`.
 
 ---
 
@@ -424,6 +545,8 @@ The `cleanupExpiredCommands_()` function is called inside `getNextScanCommand()`
 
 Test P4-U09 feeds 10 MS1 + 10 MS2 scans and verifies that every pushed command has `[TRACK-CREATE]` in the log and every resolved scan has `[TRACK-RESOLVE]`. The test reads log output (redirected to a string stream or file) and counts occurrences.
 
+**CI hard-fail (Phase 3 F-5 fix):** The CI `TRACK-CREATE` check is now a hard-fail gate. Every regression test (P4-R01 through P4-R10) must produce at least one `[TRACK-CREATE]` entry in stdout, or CI will fail the run. This was previously a soft warning. Ensure the `processScan()` implementation emits `[TRACK-CREATE]` for every command it pushes, and that the regression runner captures stdout for the check.
+
 ---
 
 ### Step 7: Thread Safety Verification
@@ -443,46 +566,20 @@ In the C++ implementation, `processScan` must acquire `queue_mutex_` only when p
 
 ---
 
-### Step 8: Capture Phase 4 Golden Files via CI Artifact
+### Step 8: Verify Behavioral Equivalence Against Pre-Switch Golden Files
 
-Before merging, capture golden output for every mode with `UseUnifiedBridge=True`. These are new golden files (not updates to Phase 3 files):
+Golden files were already captured in **Step 0** (before the unified bridge implementation) from the old bridge path. This step verifies that the unified bridge produces identical output.
 
-```
-test-data/golden/phase4_standard_dda.tsv
-test-data/golden/phase4_deep_mode.tsv
-test-data/golden/phase4_inclusion.tsv
-test-data/golden/phase4_exclusion.tsv
-test-data/golden/phase4_tag_targeting.tsv
-test-data/golden/phase4_quant.tsv
-test-data/golden/phase4_ms3_mode1.tsv
-test-data/golden/phase4_ms3_mode2.tsv
-test-data/golden/phase4_ms3_mode3.tsv
-```
+After completing Steps 1-7, push the implementation and verify that all regression tests (P4-R02 through P4-R10) pass — each compares `UseUnifiedBridge=True` output against the pre-switch golden files committed in Step 0. A match proves the unified bridge is behaviorally equivalent to the old path.
 
-The authoritative golden file format (15-column TSV, column definitions, numeric tolerances, line ending normalization) and the inspection checklist are defined in [`../test-file-specification.md §2`](../test-file-specification.md). See §2.1 for the column schema, §2.2 for the complete inventory of Phase 4 golden files and their inputs, §2.3 for the step-by-step capture procedure, and §2.4 for the update procedure when a behavioral change requires a golden file refresh.
-
-Golden files are captured entirely through CI — there is no local `Flash.exe` invocation.
-
-**2-commit minimum (Phase 0 lesson #15):** Golden file capture inherently requires at least 2 commits: the first runs CI and produces the golden artifact; the second includes the captured golden file. With 9 Phase 4 golden files, batch all captures into a single CI run to minimize churn.
+If any regression test fails (output differs from pre-switch baseline):
+1. Inspect the diff in the CI log (`compare_golden.py` output).
+2. Determine if the difference is a bug in the unified bridge (fix it) or an intentional behavioral change (document it in `README.md` and update the golden file with `regression-runner.ps1 -captureMode`).
+3. Intentional differences should be rare — the goal is exact equivalence.
 
 **DLL build cost (Phase 1 lesson #10):** Each push to the `flashida-v9-bridge` branch that changes C++ code triggers a full OpenMS build on `windows-2022` taking ~40 minutes with no ccache hit. Phase 4 has substantial C++ changes (full `processScan` implementation, new private methods, updated bridge return value). Batch all C++ changes into a single push to minimize DLL rebuild cycles. Before pushing, check for obvious MSVC issues: unused parameters (`C4100`) and unused local variables (`C4189`) are errors under `/WX`. Use `(void)param;` suppressions where needed. After the first successful build on a new branch, subsequent builds benefit from ccache.
 
-The capture workflow is:
-
-1. Push the Phase 4 implementation branch to GitHub.
-2. The CI `capture-golden` job (or a manually triggered workflow dispatch) runs the regression suite in golden-capture mode using `regression-runner.ps1 -captureMode` (see `test-file-specification.md §4.2` for script interface): instead of comparing against an existing golden file, it writes the output to a named artifact.
-3. Download the artifact from the GitHub Actions run summary page.
-4. Inspect the downloaded `.tsv` files to confirm correctness per the checklist in `test-file-specification.md §2.3` (header row matches the 15-column format, row count non-zero, float values in plausible ranges). The standard DDA output must match the Phase 3 standard DDA golden; mode-specific files must show expected mode behavior.
-5. Commit the reviewed `.tsv` files to `FlashIDA/test-data/golden/` and push.
-6. Update `FlashIDA/test-data/golden/README.md` to document provenance (branch, CI run URL, OpenMS commit hash, spectrum source) as required by `test-file-specification.md §2.3`.
-
-Subsequent CI runs use the committed files as the comparison baseline for P4-R01 through P4-R10. Comparisons are performed by `compare_golden.py` (see `test-file-specification.md §4.1` for the comparison algorithm, tolerance values, and failure conditions).
-
-**`compare_golden.py` column classification (Phase 0 compliance lesson L-2):** `compare_golden.py` classifies TSV columns into `exact`, `numeric`, and `ignore` categories for comparison. Phase 4 adds mode-specific output fields (e.g., MS3 priority, quant follow-up flags, conditional MS2 markers) that are new columns not present in Phase 3 golden files. Before capturing Phase 4 golden files, update `compare_golden.py`'s column classification table to include these new columns with appropriate comparison types. If a new column is left unclassified, `compare_golden.py` will either skip it silently or raise an error — verify behavior by running it against a test output before committing the golden files. Mode-specific golden files (`phase4_deep_mode.tsv`, `phase4_inclusion.tsv`, etc.) may have different column sets than the standard DDA golden — each file's column set is validated independently.
-
-The regression runner script (`regression-runner.ps1`) must be updated to include Phase 4 configs and golden files, and must support a `-captureMode` switch that writes output files rather than comparing them. The full script interface is defined in `test-file-specification.md §4.2`.
-
-**Submodule batching and pointer updates (Phase 0 lesson #15, Phase 1 lesson #1):** Phase 4 has substantial changes on both C++ and C# sides. Batch all same-side changes before updating the submodule pointer to reduce churn (48% of Phase 0 commits were submodule pointer updates). After pushing to a sub-repo (`OpenMS` or `FlashIDA`), always update the parent repo's submodule pointer immediately (`git add OpenMS FlashIDA` and push); CI checks out submodules at the pointer commit, not at the branch HEAD, so new files pushed to a sub-repo are invisible to CI until the pointer is updated. Recommended commit sequence: (1) all C++ changes to FLASHIda.cpp/h and bridge functions, (2) update submodule pointer, (3) all C# changes to Flash.cs/Parameter.cs/ScanFactory.cs, (4) test data and golden files.
+**Submodule batching and pointer updates (Phase 0 lesson #15, Phase 1 lesson #1):** Phase 4 has substantial changes on both C++ and C# sides. Batch all same-side changes before updating the submodule pointer to reduce churn (48% of Phase 0 commits were submodule pointer updates). After pushing to a sub-repo (`OpenMS` or `FlashIDA`), always update the parent repo's submodule pointer immediately (`git add OpenMS FlashIDA` and push); CI checks out submodules at the pointer commit, not at the branch HEAD, so new files pushed to a sub-repo are invisible to CI until the pointer is updated. Recommended commit sequence: (1) golden files and test data from Step 0, (2) all C++ changes to FLASHIda.cpp/h and bridge functions, (3) update submodule pointer, (4) all C# changes to Flash.cs/Parameter.cs/ScanFactory.cs.
 
 ---
 
@@ -493,9 +590,10 @@ The regression runner script (`regression-runner.ps1`) must be updated to includ
 | File | Change | Description |
 |------|--------|-------------|
 | `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp` | Modify | Full `processScan()` implementation: MS1 path (all 6 scoring branches, filtering, command building), MS2 path (tracking resolution, all routing modes, MS3 targeting). Add `buildMS2Command_()`, `buildMS3Command_()`, `pushCommand_()`, `selectMS3Targets_()`, `processMS2ForTagBasedTargeting()` (absorb from old bridge or refactor in place), `isDifferentiallyAbundant()` (absorb), `pushFollowUpMS2_()`, `pushConditionalFollowUp_()`, `feedExplorationResult_()` (stub), `cleanupExpiredCommands_()` (refine), audit log calls. |
-| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | Declare new private methods added to `FLASHIda.cpp`. No public API change. |
+| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | Declare new private methods added to `FLASHIda.cpp`. No public API change. **Also add `uint64_t enqueue_timestamp_ms` field to `ScanCommand` struct** (deferred from Phase 3) and update `static_assert` for new struct size. Do NOT add `faims_cv` (Phase 6). |
 | `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp` | Modify | `ProcessScan` bridge function returns actual command count from `obj->processScan(...)` instead of 0. |
 | `OpenMS/src/tests/class_tests/openms/source/FLASHIda_ProcessScan_test.cpp` | Create | C++ unit tests P4-U01 through P4-U09. Exercises MS1 path, all 6 scoring branches, mass exclusion, MS2 tracking resolution, MS3 target generation, conditional follow-ups, quant routing, tag targeting, and audit trail completeness. Peak arrays are hard-coded real measured values from characterized experimental data (no file I/O). A provenance comment block at the top of the file documents the source of every embedded array. |
+| `OpenMS/src/tests/class_tests/openms/source/FLASHIdaQueueTracking_test.cpp` | Modify | **Activate P3-U08 and P3-U09 stubs**: replace `NOT_TESTABLE` placeholders with real test assertions. P3-U08 must push commands at all 4 priorities and verify dequeue order 3->2->1->0 (now possible since `processScan()` pushes commands). P3-U09 must verify AGC scan is dequeued first when `needsAGCScan_()` returns true. |
 | `OpenMS/src/tests/class_tests/openms/executables.cmake` | Modify | Uncomment or add entry for `FLASHIda_ProcessScan_test`. (Phase 2 notes that FLASH test entries are currently commented out — they must be active by this phase.) |
 
 ### C# Files (FlashIDA)
@@ -508,7 +606,7 @@ The regression runner script (`regression-runner.ps1`) must be updated to includ
 | `FlashIDA/src/Flash/Flash.cs` | Modify | `ProcessSpectrum` callback: add `UseUnifiedBridge` branch. When true, loop `GetNextScanCommand` and call `SendCustomScan(scanFactory.BuildFromCommand(cmd))` for each returned command. When false, run existing old-path logic unchanged. |
 | `FlashIDA/src/Flash/IDA/IScanProcessor.cs` | Modify | Update implementing classes to call `wrapper.ProcessScan(...)` in the `UseUnifiedBridge=True` path instead of old bridge functions. |
 | `FlashIDA/src/Flash/IDA/ScanFactory.cs` | Modify | Verify and extend `BuildFromCommand()` to handle all mode variants: standard MS2, MS3 (two isolation stages), SPS-MS3, AGC, MS1 fallback. |
-| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | No change | P/Invoke declarations for `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` already added in Phase 3 (DLL import name is `"OpenMS.dll"` with extension — Phase 0 lesson #12). Old bridge declarations remain but are no longer called when `UseUnifiedBridge=True`. |
+| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | Modify | P/Invoke declarations for `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` already added in Phase 3. **Add `public ulong EnqueueTimestampMs` field to C# `ScanCommand` struct** to match C++ addition. Update `Marshal.SizeOf` expectations in layout tests. Old bridge declarations remain but are no longer called when `UseUnifiedBridge=True`. |
 
 ### Test Data Files
 
@@ -527,8 +625,8 @@ Config file format, key parameters per file, and the `UseUnifiedBridge` lifecycl
 | `FlashIDA/test-data/configs/method_ms3_mode1.xml` | Verify/create | MS3 Source CID mode config. See `test-file-specification.md §3.2`. |
 | `FlashIDA/test-data/configs/method_ms3_mode2.xml` | Verify/create | MS3 SPS mode config. See `test-file-specification.md §3.2`. |
 | `FlashIDA/test-data/configs/method_ms3_mode3.xml` | Verify/create | MS3 HCD-triggered mode config. See `test-file-specification.md §3.2`. |
-| `FlashIDA/test-data/golden/phase4_*.tsv` | Create | Per-mode golden output files captured from a verified build (see Step 8; full column schema at `test-file-specification.md §2.1`; provenance table at `test-file-specification.md §2.2`). |
-| `FlashIDA/test-data/golden/README.md` | Modify | Document Phase 4 golden file provenance and the meaning of the `UseUnifiedBridge=True` golden files, following the format described in `test-file-specification.md §2.3`. |
+| `FlashIDA/test-data/golden/phase4_*.tsv` | Create (Step 0) | **Pre-switch golden baselines** captured from the old bridge path BEFORE unified bridge implementation (see Step 0). These serve as behavioral equivalence targets for P4-R02 through P4-R10. Full column schema at `test-file-specification.md §2.1`; provenance table at `test-file-specification.md §2.2`. |
+| `FlashIDA/test-data/golden/README.md` | Modify | Document Phase 4 golden file provenance: captured from old bridge path (pre-switch) to serve as behavioral equivalence baselines. See `test-file-specification.md §2.3`. |
 
 ### CI Files
 
@@ -566,7 +664,7 @@ All 21 tests added in this phase, with full descriptions, expected outcomes, and
 | P4-R06 | Tag-based targeting mode: tag-matched masses appear as MS2 targets even if below the top-N threshold. Confirms the tag targeting route runs within a full `Flash.exe` invocation. |
 | P4-R07 | Isobaric quant mode: differential-abundance gating is reflected in the golden output (follow-up MS2 commands present only for above-threshold spectra). Confirms the quant routing route end-to-end. |
 | P4-R08 | MS3 mode 1 (Source CID): MS3 commands at `priority=3` appear in output for a known MS2 scan. Confirms source-CID MS3 target selection and command generation. |
-| P4-R09 | MS3 mode 2 (SPS): MS3 commands with `num_isolation_stages=2` appear in output. Confirms SPS-specific command building end-to-end. |
+| P4-R09 | MS3 mode 2 (SPS): MS3 commands with `num_stages=2` appear in output. Confirms SPS-specific command building end-to-end. |
 | P4-R10 | MS3 mode 3 (HCD-triggered): MS3 commands targeting charge-reduced precursor ions appear in output. Confirms HCD-triggered MS3 selection logic end-to-end. |
 
 ### Unit Tests — C++ (Tier 1, `ubuntu-latest`)
@@ -608,20 +706,20 @@ These tests load `OpenMS.dll` via P/Invoke and exercise the bridge from the C# s
 
 All regression tests run `Flash.exe <input_file> <output_file> <method.xml>` with a method config and compare output against a committed golden file using `compare_golden.py`. All require Thermo DLLs and OpenMS DLLs.
 
-**Note on golden file provenance:** P4-R02 through P4-R10 golden files are created fresh by running the verified Phase 4 build with `UseUnifiedBridge=True`. They are not updated versions of Phase 3 golden files. If the Phase 4 output for standard DDA differs from Phase 3 output, the difference must be investigated and explained before committing the golden file. In the ideal case, standard DDA output is identical to Phase 3.
+**Note on golden file provenance:** P4-R02 through P4-R10 golden files are captured in **Step 0** from the **old bridge path** (before the unified bridge exists). They represent the pre-switch behavioral baseline. Each regression test then runs the same config with `UseUnifiedBridge=True` and compares against this baseline. A match proves the unified bridge is behaviorally equivalent to the old path. Any difference must be investigated as a potential bug in the unified bridge implementation.
 
 | Test ID | Description | Expected Outcome |
 |---------|-------------|------------------|
-| P4-R01 | Regression gate: `UseUnifiedBridge=False` | `Flash.exe ms1_standard.txt output.tsv method_default.xml` with `UseUnifiedBridge=False`. Output must match the Phase 3 golden file line-for-line (within `compare_golden.py` numeric tolerances). This test confirms the flag gate works and the old path is completely undisturbed by the Phase 4 changes. |
-| P4-R02 | Standard DDA: `UseUnifiedBridge=True` | `Flash.exe ms1_standard.txt output.tsv method_default.xml` with `UseUnifiedBridge=True`. Compare to `phase4_standard_dda.tsv` golden. Row count and deconvolution values must match. This is the primary behavioral equivalence check for the switch-over. |
-| P4-R03 | Deep mode: `UseUnifiedBridge=True` | `Flash.exe ms1_standard.txt output.tsv method_deep.xml` with `UseUnifiedBridge=True`. Compare to `phase4_deep_mode.tsv`. Verify that deep mode produces more precursor targets than standard DDA (expected given lower score threshold). |
-| P4-R04 | Inclusion list mode | `Flash.exe ms1_standard.txt output.tsv method_inclusion.xml` with `UseUnifiedBridge=True`. Compare to `phase4_inclusion.tsv`. Verify only listed masses appear as targets. |
-| P4-R05 | Exclusion list mode | `Flash.exe ms1_standard.txt output.tsv method_exclusion.xml` with `UseUnifiedBridge=True`. Compare to `phase4_exclusion.tsv`. Verify listed masses are absent from targets. |
-| P4-R06 | Tag-based targeting mode | `Flash.exe ms1_standard.txt output.tsv method_tag_targeting.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_tag_targeting.tsv`. Verify tag-matched masses appear in targets. |
-| P4-R07 | Isobaric quant mode | `Flash.exe ms1_standard.txt output.tsv method_quant.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_quant.tsv`. Verify quant routing is reflected in output. |
-| P4-R08 | MS3 mode 1 (Source CID / SPS) | `Flash.exe ms1_standard.txt output.tsv method_ms3_mode1.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode1.tsv`. Verify MS3 commands appear at priority 3 in log. |
-| P4-R09 | MS3 mode 2 | `Flash.exe ms1_standard.txt output.tsv method_ms3_mode2.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode2.tsv`. |
-| P4-R10 | MS3 mode 3 | `Flash.exe ms1_standard.txt output.tsv method_ms3_mode3.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode3.tsv`. |
+| P4-R01 | Regression gate: `UseUnifiedBridge=False` | `Flash.exe ms1_standard.txt output.tsv method_default.xml` with `UseUnifiedBridge=False`. Output must match the Phase 3 golden file line-for-line (within `compare_golden.py` numeric tolerances). This test confirms the flag gate works and the old path is completely undisturbed by the Phase 4 changes. **Depends on P3-R01**: the `baseline_phase3.tsv` golden file must exist (P3-R01 was deferred from Phase 3 and must be implemented as part of Phase 4 prerequisites). |
+| P4-R02 | Standard DDA: `UseUnifiedBridge=True` vs. pre-switch baseline | `Flash.exe ms1_standard.txt output.tsv method_default.xml` with `UseUnifiedBridge=True`. Compare to `phase4_standard_dda.tsv` (captured from old bridge in Step 0). Output must match — proves the unified bridge reproduces old-path behavior for standard DDA. |
+| P4-R03 | Deep mode: `UseUnifiedBridge=True` vs. pre-switch baseline | `Flash.exe ms1_standard.txt output.tsv method_deep.xml` with `UseUnifiedBridge=True`. Compare to `phase4_deep_mode.tsv` (captured from old bridge in Step 0). Output must match — proves deep mode scoring branch works identically through the unified bridge. |
+| P4-R04 | Inclusion list mode vs. pre-switch baseline | `Flash.exe ms1_standard.txt output.tsv method_inclusion.xml` with `UseUnifiedBridge=True`. Compare to `phase4_inclusion.tsv` (captured from old bridge in Step 0). Output must match — proves inclusion filtering works identically. |
+| P4-R05 | Exclusion list mode vs. pre-switch baseline | `Flash.exe ms1_standard.txt output.tsv method_exclusion.xml` with `UseUnifiedBridge=True`. Compare to `phase4_exclusion.tsv` (captured from old bridge in Step 0). Output must match — proves exclusion filtering works identically. |
+| P4-R06 | Tag-based targeting mode vs. pre-switch baseline | `Flash.exe ms1_standard.txt output.tsv method_tag_targeting.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_tag_targeting.tsv` (captured from old bridge in Step 0). Output must match. |
+| P4-R07 | Isobaric quant mode vs. pre-switch baseline | `Flash.exe ms1_standard.txt output.tsv method_quant.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_quant.tsv` (captured from old bridge in Step 0). Output must match. |
+| P4-R08 | MS3 mode 1 vs. pre-switch baseline | `Flash.exe ms1_standard.txt output.tsv method_ms3_mode1.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode1.tsv` (captured from old bridge in Step 0). Output must match. |
+| P4-R09 | MS3 mode 2 vs. pre-switch baseline | `Flash.exe ms1_standard.txt output.tsv method_ms3_mode2.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode2.tsv` (captured from old bridge in Step 0). Output must match. |
+| P4-R10 | MS3 mode 3 vs. pre-switch baseline | `Flash.exe ms1_standard.txt output.tsv method_ms3_mode3.xml ms2_hcd_fragment.txt` with `UseUnifiedBridge=True`. Compare to `phase4_ms3_mode3.tsv` (captured from old bridge in Step 0). Output must match. |
 
 **Timing budget note:** 10 regression configs (P4-R01 through P4-R10) each invoke `Flash.exe` as a separate process. With process startup overhead, this easily reaches 10-20 minutes of the 20-minute Tier 3 budget. Monitor CI wall time on the first run. If the budget is exceeded:
 1. Parallelize: split the 10 configs across two jobs (`windows-tests` and a new `regression-extended` job) using `needs` to share build artifacts.
@@ -720,13 +818,13 @@ All verification is performed by inspecting CI job results — there is no local
 
 Covered by the `regression-core` CI job (test P4-R01). The job runs the regression runner on `windows-latest` with `method_default.xml` (`UseUnifiedBridge=False`) and compares against the Phase 3 golden file using `compare_golden.py`. A green check on P4-R01 confirms the flag gate is functional and the old path is completely undisturbed.
 
-### Verification 2: Standard DDA Equivalence (Flag-On)
+### Verification 2: Standard DDA Equivalence (Flag-On vs. Pre-Switch Baseline)
 
-Covered by the `regression-core` CI job (test P4-R02). A green check confirms that the standard DDA output with `UseUnifiedBridge=True` matches `phase4_standard_dda.tsv`. Any discrepancy indicates a scoring or filtering difference in the new `processScan` path — investigate the CI log diff output before re-running.
+Covered by the `regression-core` CI job (test P4-R02). A green check confirms that the standard DDA output with `UseUnifiedBridge=True` matches the pre-switch golden file `phase4_standard_dda.tsv` (captured from the old bridge in Step 0). Any discrepancy indicates a behavioral difference introduced by the unified bridge — investigate the CI log diff output before re-running.
 
-### Verification 3: Each Mode Works Individually
+### Verification 3: Each Mode Matches Pre-Switch Baseline
 
-Covered by the `regression-core` and `regression-extended` CI jobs (tests P4-R03 through P4-R10). A green check on each test confirms that mode-specific behavior is present. CI log output from each run shows the command count and any golden file diff lines, which can be inspected in the Actions run summary.
+Covered by the `regression-core` and `regression-extended` CI jobs (tests P4-R03 through P4-R10). Each test compares unified bridge output against the corresponding pre-switch golden file. A green check proves the unified bridge is behaviorally equivalent to the old path for that mode. CI log output from each run shows the command count and any golden file diff lines, which can be inspected in the Actions run summary.
 
 ### Verification 4: TRACK Audit Trail
 
@@ -753,28 +851,34 @@ The following checklist must be fully satisfied before Phase 4 is considered com
 - [ ] `pushCommand_()` correctly populates queues at priorities 3, 2, 1, 0.
 - [ ] `cleanupExpiredCommands_()` emits `[TRACK-EXPIRE]` and is called inside `getNextScanCommand()`.
 - [ ] `FLASHIdaBridgeFunctions.cpp::ProcessScan` returns actual command count (not 0).
+- [ ] `ScanCommand` struct has `enqueue_timestamp_ms` field added (C++ `uint64_t`, C# `ulong`), with updated `static_assert` and C# layout test expectations.
+- [ ] `ScanCommand.faims_cv` is NOT added (deferred to Phase 6).
 - [ ] `method.xml` has `<UseUnifiedBridge>False</UseUnifiedBridge>`.
 - [ ] `Parameter.cs` parses `UseUnifiedBridge`.
 - [ ] `Flash.cs::ProcessSpectrum` has `UseUnifiedBridge` branch: old path when false, `GetNextScanCommand` loop when true.
 - [ ] `ScanFactory.BuildFromCommand()` handles all modes: standard MS2, MS3 (2 isolation stages), SPS-MS3, AGC, MS1.
-- [ ] No changes to the 5 bridge function signatures in `FLASHIdaBridgeFunctions.h` — API is frozen for Phase 4.
+- [ ] No changes to the 5 bridge function signatures in `FLASHIdaBridgeFunctions.h` — API is frozen for Phase 4. (The `ScanCommand` struct layout does change to add `enqueue_timestamp_ms`, but the function signatures themselves are unchanged.)
 
 ### Tests
 
 - [ ] P4-U01 through P4-U09 (9 C++ unit tests) all pass on `ubuntu-latest`.
+- [ ] **P3-U08 (priority dequeue) activated** — stub `NOT_TESTABLE` replaced with real assertions verifying dequeue order 3->2->1->0 (deferred from Phase 3).
+- [ ] **P3-U09 (AGC first) activated** — stub `NOT_TESTABLE` replaced with real assertions verifying AGC dequeued before MS2 (deferred from Phase 3).
+- [ ] **P3-R01 regression implemented** — `Flash.exe` run with `ms1_smoke_test.txt` compared against `baseline_phase3.tsv` (deferred from Phase 3).
 - [ ] P4-I01 (feature flag off = old behavior) passes on `windows-latest`.
 - [ ] P4-I02 (feature flag on = new behavior) passes on `windows-latest`.
 - [ ] P4-R01 (flag-off regression) passes — output matches Phase 3 golden.
-- [ ] P4-R02 (standard DDA, flag on) passes — output matches phase4 standard DDA golden.
+- [ ] P4-R02 (standard DDA, flag on) passes — output matches pre-switch golden baseline.
 - [ ] P4-R03 through P4-R10 (deep, inclusion, exclusion, tag, quant, MS3 x3) all pass.
+- [ ] All regression tests produce `[TRACK-CREATE]` entries (CI hard-fail gate — Phase 3 F-5 fix).
 - [ ] P3-I02 (`ProcessScan_StubReturnsZero`) is updated or removed before Phase 4 merges: Phase 4 changes `ProcessScan` to return the actual command count (non-zero), which would break this test's `Assert.AreEqual(0, result)`. Either remove the test, change the assertion to `Assert.Greater(result, -1)`, or supersede it with P4-I02. (See Step 4 callout.)
 - [ ] All P0-* through P3-* tests still pass (full regression suite not broken), including any updated version of P3-I02.
 
 ### Test Data
 
 - [ ] All 9 mode-specific method config files exist in `test-data/configs/`.
-- [ ] All Phase 4 golden files exist in `test-data/golden/`.
-- [ ] `test-data/golden/README.md` documents Phase 4 golden file provenance.
+- [ ] All Phase 4 pre-switch golden baselines exist in `test-data/golden/` (captured from old bridge in Step 0, BEFORE unified bridge implementation).
+- [ ] `test-data/golden/README.md` documents Phase 4 golden file provenance (pre-switch capture from old bridge path).
 
 ### CI
 

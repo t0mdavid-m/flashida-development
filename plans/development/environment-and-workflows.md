@@ -108,9 +108,11 @@ cpp-unit-tests  (ubuntu-latest)       windows-tests  (windows-latest)
 - Sets `OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS` as an environment variable on the NUnit test step. This is required for all steps that invoke OpenMS functionality via P/Invoke; without it the DLL cannot locate chemistry data files (residue masses, isotope distributions, modifications database) and crashes. A DLL rebuild can silently change data path resolution behaviour, making this variable mandatory regardless of whether prior phases needed it. (Phase 1 lesson #5.)
 - Verifies bridge smoke tests passed (inline result check, `if: always()`).
 - In Phase 3+: runs `dumpbin /exports` verification of `OpenMS.dll`.
+- In Phase 3+: verifies `[TRACK-CREATE]` audit entries are present in shadow validation output. **This check now hard-fails** (`exit 1`) if no entries are found, ensuring shadow validation is active. (Updated per Phase 3 compliance report CI-1 fix, 2026-03-29. Previously was warning-only.)
 - Runs regression suite (`regression-runner.ps1`): executes `Flash.exe <input_file> <output_file> <method.xml>` for each config, compares output to golden files via `compare_golden.py`.
-- Runs stress tests (conditional step, activated in Phase 3): reduced iterations (1k ProcessScan calls, 50 FAIMS events) to stay within the 10-minute budget.
+- Runs stress tests (conditional step, activated in Phase 3): reduced iterations (1k ProcessScan calls, 50 FAIMS events) to stay within the 10-minute budget. Note: CT31/CT32 run inside NUnit (not as a separate CI step); the dedicated stress test CI step prints a stub message but the actual tests run within the NUnit step. (CI-3, Phase 3 compliance report, 2026-03-29.)
 - Uploads regression output and NUnit results as artifacts.
+- Note: ScanCommandLayout output is not captured as a separate CI artifact (CI-2 from Phase 3 compliance report — optional per spec, not implemented).
 
 ### Trigger Conditions
 
@@ -279,7 +281,7 @@ Detailed requirements for each file are in the corresponding phase plan.
 | 0 | None | No (`if: false`) | No (`if: false`) | `baseline_phase0.tsv` | First CI run; golden capture artifact needed before second push |
 | 1 | Build #1 (batched) | No | No | `config_default.json`, `config_full.json` | Build #1 DLL must be available before `windows-tests` can run |
 | 2 | Build #1 (batched) | Yes (first activation) | No | None | New test entry added to `executables.cmake`; apt deps include XercesC, liblzma; CMake flags: `-DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`; ccache key hashes `CMakeLists.txt` |
-| 3 | Build #1 | Yes | Yes (first activation) | None | `dumpbin /exports` check added to `windows-tests`; `ScanCommandLayoutTest` cross-artifact from ubuntu to windows |
+| 3 | Build #1 | Yes | Yes (first activation) | None | `dumpbin /exports` check added to `windows-tests`; `ScanCommandLayoutTest` cross-artifact from ubuntu to windows (not implemented; CI-2 — optional per spec) |
 | 4 | Build #2 | Yes | Yes | 9 new mode-specific golden files (`phase4_*.tsv`); P4-R01 reuses `baseline_phase0.tsv` | Regression may approach 20-min budget; monitor and parallelize if needed |
 | 5 | None (reuse Build #2) | Yes (no new C++ tests; existing tests run against Build #2 DLLs) | Yes | `faims_3cv.tsv`, `faims_skip.tsv` | P5-R02 captures FAIMS baselines while `ScanScheduler.cs` is still active; these become Phase 6 regression targets |
 | 6 | Build #3 | Yes | Yes (FAIMS stress) | None (uses Phase 5 FAIMS baselines) | Stress test uses 50 scan events; mutex correctness required |

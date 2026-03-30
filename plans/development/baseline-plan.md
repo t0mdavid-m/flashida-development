@@ -61,9 +61,9 @@ struct IsolationStage
 {
     double precursor_mz;
     double isolation_width;
-    int collision_energy;
+    double collision_energy;    // Updated per Phase 3 compliance report (2026-03-29): double, not int, to support fractional CE values
     int charge;
-    char activation_type[16];
+    char activation_type[32];  // Updated per Phase 3 compliance report (2026-03-29): char[32], not char[16], to accommodate longer names (e.g., EThcD)
     double first_mass;
     double last_mass;
     double reaction_time;
@@ -71,8 +71,13 @@ struct IsolationStage
     int reagent_agc_target;
 };
 
+// Updated per Phase 3 compliance report (2026-03-29):
+// - Field order: scan_id first (cache alignment), not msn_level first
+// - faims_cv: deferred to Phase 6 (FAIMS absorption)
+// - enqueue_timestamp_ms: deferred to Phase 4+
 struct ScanCommand
 {
+    int scan_id;               // Moved first for cache alignment
     int msn_level;
     int num_isolation_stages;
     IsolationStage stages[MAX_ISOLATION_STAGES];
@@ -80,12 +85,11 @@ struct ScanCommand
     int agc_target;
     int orbitrap_resolution;
     char analyzer[32];
-    double faims_cv;
+    // double faims_cv;        // Deferred to Phase 6
     char scan_description[256];
     int priority;
-    uint64_t enqueue_timestamp_ms;
+    // uint64_t enqueue_timestamp_ms;  // Deferred to Phase 4+
     int is_agc;
-    int scan_id;
 };
 ```
 
@@ -582,14 +586,14 @@ for label, ces in results.items():
 - FAIMS absorption is the highest-risk migration step and gets its own isolated phase with dedicated testing.
 - Old bridge functions are removed as soon as their callers are deleted, not kept around as a "just in case" parallel API.
 
-**Implementation status (as of 2026-03-28):**
+**Implementation status (as of 2026-03-29):**
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | Phase 0 | COMPLETE | Baseline captured. 53 tests passing. See Phase 0 compliance report. |
 | Phase 1 | COMPLETE | JSON config fully compliant. 53 tests passing. See Phase 1 compliance report. |
 | Phase 2 | COMPLETE | OptimizationMetadata + GetConfigInt/GetConfigDouble. 6 new tests (cumulative: 59). See Phase 2 compliance report. |
-| Phase 3 | Not started | `ScanSchedulingConfig`/`ParameterOptimizationConfig` deferred from Phase 1 to here. |
+| Phase 3 | COMPLETE | ScanCommand struct (1144 bytes), bridge stubs, shadow validation, priority queue, 16 tests. See Phase 3 compliance report. Deviations: collision_energy is double (not int), activation_type is char[32] (not char[16]), scan_id first in ScanCommand, faims_cv deferred to Phase 6, enqueue_timestamp_ms deferred to Phase 4+. |
 | Phase 4 | Not started | — |
 | Phase 5 | Not started | — |
 | Phase 6 | Not started | — |
@@ -683,6 +687,12 @@ for label, ces in results.items():
 4. Verify tracking ID generation: sequential base-36 IDs, no collisions across 10,000 calls.
 
 **Scope:** L
+
+> **Phase 3 completion notes (2026-03-29):**
+> - Phase 3 is COMPLIANT. 53 NUnit tests + 3 C++ tests passing. See `Phase_3/compliance-report.md`.
+> - Struct sizes: `IsolationStage` = 80 bytes, `ScanCommand` = 1144 bytes (verified by `static_assert` in C++ and `Marshal.SizeOf` in C#).
+> - Documented deviations from spec: `collision_energy` is `double` (supports fractional CE values), `activation_type` is `char[32]` (accommodates longer names like EThcD), `scan_id` is first field in `ScanCommand` (cache alignment), `faims_cv` deferred to Phase 6, `enqueue_timestamp_ms` deferred to Phase 4+. All fields present, just reordered/resized.
+> - Compliance findings F-1 through F-6 all fixed: CT14/CT22 tautological assertions strengthened, P3-I01 marshaling test expanded with 6 additional assertions, P3-I05 tests all 3 DLL exports, CI TRACK-CREATE check now hard-fails, P3-U06 checks base-36 range guard (ID < 1679616).
 
 ---
 

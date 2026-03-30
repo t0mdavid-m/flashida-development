@@ -332,20 +332,23 @@ All golden files are **tab-separated values (TSV)** with the following propertie
 | File | Phase captured | Spectrum input | Config input | Description |
 |------|---------------|---------------|--------------|-------------|
 | `baseline_phase0.tsv` | Phase 0 | `ms1_smoke_test.txt` | `method_default.xml` | Pre-migration baseline. First golden file. Regression anchor for Phases 1–3. |
-| `phase4_standard_dda.tsv` | Phase 4 | `ms1_standard.txt` | `method_default.xml` (`UseUnifiedBridge=True`) | Standard DDA output from the Phase 4 unified bridge. |
-| `phase4_deep_mode.tsv` | Phase 4 | `ms1_standard.txt` | `method_deep.xml` | Deep mode: more precursors, lower score threshold. |
-| `phase4_inclusion.tsv` | Phase 4 | `ms1_standard.txt` | `method_inclusion.xml` | Inclusion list mode: only listed masses targeted. |
-| `phase4_exclusion.tsv` | Phase 4 | `ms1_standard.txt` | `method_exclusion.xml` | Exclusion list mode: listed masses suppressed. |
-| `phase4_tag_targeting.tsv` | Phase 4 | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_tag_targeting.xml` | Tag-based targeting mode. |
-| `phase4_quant.tsv` | Phase 4 | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_quant.xml` | Isobaric quant mode. |
-| `phase4_ms3_mode1.tsv` | Phase 4 | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_ms3_mode1.xml` | MS3 Source CID / SPS mode. |
-| `phase4_ms3_mode2.tsv` | Phase 4 | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_ms3_mode2.xml` | MS3 mode 2. |
-| `phase4_ms3_mode3.tsv` | Phase 4 | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_ms3_mode3.xml` | MS3 mode 3 (HCD-triggered). |
+| `baseline_phase3.tsv` | Phase 3 | `ms1_smoke_test.txt` | `method_default.xml` | Phase 3 zero-behavioral-change baseline. Should match `baseline_phase0.tsv` (same input, no behavioral changes). Used as P4-R01 regression target with `UseUnifiedBridge=False`. Added per Phase 3 compliance report (P3-R01 deferred to Phase 4). |
+| `phase4_standard_dda.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` | `method_default.xml` | **Pre-switch baseline.** Captured from old bridge path before unified bridge implementation. Used as P4-R02 regression target to prove behavioral equivalence. |
+| `phase4_deep_mode.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` | `method_deep.xml` | **Pre-switch baseline.** Deep mode via old bridge. P4-R03 regression target. |
+| `phase4_inclusion.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` | `method_inclusion.xml` | **Pre-switch baseline.** Inclusion list mode via old bridge. P4-R04 regression target. |
+| `phase4_exclusion.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` | `method_exclusion.xml` | **Pre-switch baseline.** Exclusion list mode via old bridge. P4-R05 regression target. |
+| `phase4_tag_targeting.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_tag_targeting.xml` | **Pre-switch baseline.** Tag-based targeting via old bridge. P4-R06 regression target. |
+| `phase4_quant.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_quant.xml` | **Pre-switch baseline.** Isobaric quant via old bridge. P4-R07 regression target. |
+| `phase4_ms3_mode1.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_ms3_mode1.xml` | **Pre-switch baseline.** MS3 Source CID / SPS via old bridge. P4-R08 regression target. |
+| `phase4_ms3_mode2.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_ms3_mode2.xml` | **Pre-switch baseline.** MS3 mode 2 via old bridge. P4-R09 regression target. |
+| `phase4_ms3_mode3.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_ms3_mode3.xml` | **Pre-switch baseline.** MS3 mode 3 (HCD-triggered) via old bridge. P4-R10 regression target. |
 | `faims_3cv.tsv` | Phase 5 (P5-R02) | `ms1_faims_3cv.txt` | `method_faims_3cv.xml` | FAIMS 3-CV cycling baseline captured while `ScanScheduler.cs` is still active. Used as Phase 6 regression target. |
 | `faims_skip.tsv` | Phase 5 (P5-R02) | `ms1_faims_3cv.txt` | `method_faims_skip.xml` | FAIMS adaptive skipping baseline. Used as Phase 6 regression target. |
 | `phase7_exploration.tsv` | Phase 7 | `ms1_standard.txt` | `method_exploration.xml` | Exploration engine active: variant scans present in output. |
 
-**Note on `phase4_standard_dda.tsv` vs. `baseline_phase0.tsv`:** These two golden files use different input spectrum files (`ms1_standard.txt` vs. `ms1_smoke_test.txt`). They are not directly compared against each other. The Phase 4 standard DDA golden is expected to differ from the Phase 0 baseline due to the larger, richer input spectrum.
+**Note on `phase4_standard_dda.tsv` vs. `baseline_phase0.tsv`:** These two golden files use different input spectrum files (`ms1_standard.txt` vs. `ms1_smoke_test.txt`). They are not directly compared against each other. The Phase 4 standard DDA golden uses the larger, richer input spectrum for comprehensive mode coverage.
+
+**Note on Phase 4 golden file capture timing:** All `phase4_*.tsv` files are captured in Phase 4 **Step 0** (before unified bridge implementation) from the old bridge path. This ensures they represent the correct baseline behavior. After the unified bridge is implemented, regression tests P4-R02 through P4-R10 verify that the new path produces identical output. This approach proves behavioral equivalence rather than just capturing "whatever the new code produces."
 
 ### 2.3 How golden files are generated
 
@@ -648,11 +651,11 @@ The production script extends this reference with the options listed above.
 | `AcquisitionLoop/ContinuityTestHarness.cs` | Phase 0 | Pipeline harness for continuity tests |
 | `AcquisitionLoop/ContinuityTests.cs` | Phase 0 | AL-CT01–CT32 (NEVER deleted) |
 | `JsonConfigTests.cs` | Phase 1 | P1-U01 through P1-U05 |
-| `ScanCommandLayoutTests.cs` | Phase 3 | P3-U01 through P3-U04 (struct size and offset validation) |
+| `ScanCommandLayoutTests.cs` | Phase 3 | P3-U01 through P3-U04 (struct size and offset validation: ScanCommand=1144 bytes, IsolationStage=80 bytes, 22 field offsets verified). Updated per Phase 3 compliance report (2026-03-29). |
 | `TrackingIdTests.cs` | Phase 3 | P3-I04 (incrementing tracking IDs) |
 | `MethodParameterTests.cs` | Phase 1 | P1-U03, P1-U05 (round-trip tests) |
 | `DeadCodeTests.cs` | Phase 6 | P6-U07, P6-U08 (grep for deleted class references) |
-| `BridgeTests.cs` | Phase 3–4 | P3-I01 through P3-I05, P4-I01, P4-I02, P6-I01 |
+| `BridgeTests.cs` | Phase 3–4 | P3-I01 through P3-I05, P4-I01, P4-I02, P6-I01. P3-I01 strengthened with 6 additional assertions (F-3); P3-I05 tests all 3 exports via DoesNotThrow (F-4). Updated per Phase 3 compliance report (2026-03-29). |
 | `StressTests.cs` | Phase 3 | P3-S01, P6-S01 |
 
 **Build command (CI):**
@@ -685,11 +688,13 @@ $env:OPENMS_DATA_PATH = "..\OpenMS\share\OpenMS"
 
 C++ unit tests live in the OpenMS submodule under `OpenMS/src/tests/class_tests/openms/source/` and follow the OpenMS `ClassName_test.cpp` naming convention. They are registered in `OpenMS/src/tests/class_tests/openms/executables.cmake`.
 
-**Phase 2 test file:**
+**Phase 2–3 test files:**
 
 | File | Introduced | Contents |
 |------|-----------|---------|
 | `DeconvolvedSpectrum_OptimizationMetadata_test.cpp` | Phase 2 | P2-U01 through P2-U05 (OptimizationMetadata struct tests) |
+| `FLASHIdaQueueTracking_test.cpp` | Phase 3 | P3-U05 through P3-U10 (base-36 encoding, tracking ID uniqueness with range guard ID < 1679616, queue behavior, timeout). Updated per Phase 3 compliance report F-6 (2026-03-29). |
+| `ScanCommandLayout_test.cpp` | Phase 3 | Layout query binary (sizeof/offsetof for ScanCommand and IsolationStage). Not a unit test with assertions — outputs values consumed by C# ScanCommandLayoutTests.cs. Always exits 0. |
 
 **CTest invocation:** Use `-R ClassName` pattern for specific tests (e.g., `ctest -R DeconvolvedSpectrum_OptimizationMetadata`), not `-R FLASH`. Test names follow the OpenMS `ClassName_test.cpp` convention.
 

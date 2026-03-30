@@ -15,7 +15,7 @@
 
 Simplify the C# architecture now that `ProcessScan` and `GetNextScanCommand` handle all scan decision logic. Three existing scan processor classes are replaced by a single `UnifiedScanProcessor`. The `DataPipe` pipeline collapses from three stages to two. The `OutputMS` method and its null-sentinel completion pattern are removed. The `UseUnifiedBridge` feature flag is removed because the unified path is now the only supported path. `QuantScanProcessor.cs` is deleted.
 
-`ScanScheduler` is explicitly retained in this phase. It remains the owner of FAIMS CV cycling until Phase 6 absorbs that responsibility into C++.
+`ScanScheduler` is explicitly retained in this phase. It remains the owner of FAIMS CV cycling until Phase 6 absorbs that responsibility into C++. Phase 5 handles FAIMS entirely at the C# `ScanScheduler` level (CV cycling, FAIMS-aware target lists). The `faims_cv` field on `ScanCommand` is a Phase 6 struct addition — Phase 5 must NOT add it.
 
 No C++ code is touched. The Build #2 artifact (`OpenMS.dll`) from Phase 4 is reused unchanged.
 
@@ -36,9 +36,9 @@ Phase 4 is complete. All Phase 4 work (unified bridge switch-over, `UseUnifiedBr
 
 2. **FAIMS regression passing.** `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml` produces correct output under `UseUnifiedBridge=True`. (FAIMS still runs through `ScanScheduler` at this point; this must be verified before that dependency is removed.) Note: the entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()` — there is no `-t` flag (see Phase 0 lesson #1).
 
-3. **Phase 4 golden files committed.** The golden files produced with `UseUnifiedBridge=True` are the regression baseline for Phase 5. They must be committed to `FlashIDA/test-data/golden/` and referenced by `P5-R01` and `P5-R02`. The specific files are: `phase4_standard_dda.tsv`, `phase4_deep_mode.tsv`, `phase4_inclusion.tsv`, `phase4_exclusion.tsv`, `phase4_tag_targeting.tsv`, `phase4_quant.tsv`, `phase4_ms3_mode1.tsv`, `phase4_ms3_mode2.tsv`, `phase4_ms3_mode3.tsv`. See [test-file-specification.md §2.2](../test-file-specification.md) for the full golden file inventory.
+3. **Phase 4 golden files committed.** The pre-switch golden baselines (captured from the old bridge path in Phase 4 Step 0, before the unified bridge implementation) are the regression baseline for Phase 5. They were verified as behaviorally equivalent to the unified bridge output by P4-R02 through P4-R10. They must be committed to `FlashIDA/test-data/golden/` and referenced by `P5-R01` and `P5-R02`. The specific files are: `phase4_standard_dda.tsv`, `phase4_deep_mode.tsv`, `phase4_inclusion.tsv`, `phase4_exclusion.tsv`, `phase4_tag_targeting.tsv`, `phase4_quant.tsv`, `phase4_ms3_mode1.tsv`, `phase4_ms3_mode2.tsv`, `phase4_ms3_mode3.tsv`. See [test-file-specification.md §2.2](../test-file-specification.md) for the full golden file inventory.
 
-4. **Build #2 OpenMS DLLs available.** The OpenMS DLLs from Build #2 (Phase 4) are committed in `FlashIDA/dll/`. MSBuild copies them to the build output via `CopyToOutputDirectory` in `Flash.csproj` — no CI download or cache step is needed (see Phase 0 lesson #5). No new C++ build is triggered in this phase.
+4. **Build #2 OpenMS DLLs available.** The OpenMS DLLs from Build #2 (Phase 4) are committed in `FlashIDA/dll/`. MSBuild copies them to the build output via `CopyToOutputDirectory` in `Flash.csproj` — no CI download or cache step is needed (see Phase 0 lesson #5). No new C++ build is triggered in this phase. **Note:** The Build #2 DLL includes the `enqueue_timestamp_ms` field added to `ScanCommand` in Phase 4, so the struct size is no longer 1144 bytes — use the Phase 4 `static_assert` value.
 
 5. **All prior phase tests green.** The CI suite for Phases 0–4 must be passing on the branch before Phase 5 work begins. Phase 2 completed with 59 cumulative tests (53 from Phase 0/1, 6 from Phase 2); Phases 3 and 4 add additional tests per the testing-strategy. Confirm the parent repo submodule pointer is up to date with the merged Phase 4 commit (see Phase 1 lesson #1).
 
@@ -46,6 +46,32 @@ Phase 4 is complete. All Phase 4 work (unified bridge switch-over, `UseUnifiedBr
 
 - [ ] `ms1_faims_3cv.txt` — real FAIMS MS1 data with at least 3 CV values; extract from FAIMS .mzML using `prepare-test-data.py --ms-level 1 --include-cv` (see test-file-specification.md §1.4). Required for P5-R02 golden file capture.
 - Note: The CV values in `method_faims_3cv.xml` and `method_faims_skip.xml` must match the actual CV annotations in the provided data.
+
+---
+
+## Phase 3/4 Deviations Impact
+
+Phase 3 compliance review and Phase 4 implementation introduced struct layout deviations and CI changes that carry forward into Phase 5. While Phase 5 makes no C++ changes and does not modify struct layouts, the following context is relevant for any Phase 5 code that references `ScanCommand` or `IsolationStage` (e.g., `ScanFactory.BuildFromCommand()` in P5-R01/R02, `UnifiedScanProcessor` calling `ProcessScan`).
+
+### Struct Layout Context (inherited from Phase 3/4)
+
+**ScanCommand** — field order starts with `scan_id` (not `msn_level` as originally planned). Phase 4 added `enqueue_timestamp_ms` (`uint64_t` / C# `ulong`), changing the struct size from the Phase 3 value of 1144 bytes to a new size (expected ~1152 bytes, depending on placement). The exact size is set by the Phase 4 `static_assert` and C# `Marshal.SizeOf` test. Phase 5 code must use whatever size Phase 4 established — do not hardcode 1144.
+
+**IsolationStage (80 bytes)** — key type deviations from the original plan:
+- `collision_energy` is `double` (not `int`). C# property `CollisionEnergy` is also `double`.
+- `activation_type` is `char[32]` (not `char[16]`). C# uses `SizeConst = 32`.
+- `charge` field is named `charge_state`.
+
+These types are already correct in the Phase 4 C# structs (`FLASHIdaWrapper.cs`). Phase 5 does not modify these structs, but any new code or tests that reference field types must use the actual types above.
+
+**`faims_cv` is NOT in `ScanCommand`** — this field is deferred to Phase 6. Phase 5 handles FAIMS exclusively at the C# `ScanScheduler` level. `FAIMSScanProcessor` delegates CV cycling to `ScanScheduler.AddScan()`, which reads CV values from the method XML config — no struct-level FAIMS field exists yet.
+
+**`enqueue_timestamp_ms`** — added in Phase 4. Phase 5 code that constructs or inspects `ScanCommand` (e.g., in `ScanFactory.BuildFromCommand()`) should be aware this field exists. It is set by C++ at command creation time and is read-only on the C# side.
+
+### CI Changes from Phase 3/4
+
+- **TRACK-CREATE hard-fail**: The CI `TRACK-CREATE` check is now a hard-fail gate (Phase 3 F-5 fix). Phase 5 regression tests (P5-R01, P5-R02) must produce `[TRACK-CREATE]` entries in stdout or CI will fail. Since Phase 5 reuses the Phase 4 code paths unchanged (only removing dead code and the `UseUnifiedBridge` flag), `[TRACK-CREATE]` entries should appear automatically from `processScan()` — but verify in CI output.
+- **CT14/CT22 assertions**: Fixed in Phase 3 to be meaningful (`Count > 0` + exclusion diff for CT14; `ms2Commands.Count > 0` for CT22). Phase 5 tests follow this pattern — no tautological assertions.
 
 ---
 
@@ -163,6 +189,8 @@ The `ProcessSpectrum` event handler already calls `dataPipe.Push(msScan)` and th
 
 `FAIMSScanProcessor` must still implement the simplified `IScanProcessor` interface (one method only). If it currently has additional helper methods, those are unaffected.
 
+**FAIMS scope clarification:** In Phase 5, FAIMS CV values are sourced from the method XML config and managed by `ScanScheduler` in C#. The `ScanCommand` struct does NOT have a `faims_cv` field — that is added in Phase 6 when FAIMS control moves to C++. `FAIMSScanProcessor` does not set any FAIMS field on `ScanCommand`; it only calls `ScanScheduler.AddScan()` which handles CV cycling independently.
+
 **File to modify:** `FlashIDA/src/Flash/IDA/FAIMSScanProcessor.cs`
 
 ---
@@ -207,8 +235,8 @@ These checks are automated by CI test P5-U03. The CI run is the authoritative ve
 | **Modify** | `FlashIDA/src/Flash/etc/method.xml` | Remove `<UseUnifiedBridge>` element |
 
 **Not changed in this phase:**
-- `ScanScheduler.cs` — retained; deletion deferred to Phase 6
-- `FAIMSScanProcessor.cs` FAIMS logic — retained; `ScanScheduler.AddScan()` calls preserved
+- `ScanScheduler.cs` — retained; deletion deferred to Phase 6. Phase 5 handles FAIMS entirely at the C# `ScanScheduler` level (CV cycling, FAIMS-aware target lists). The `faims_cv` field in `ScanCommand` is a Phase 6 struct addition — Phase 5 does NOT add it.
+- `FAIMSScanProcessor.cs` FAIMS logic — retained; `ScanScheduler.AddScan()` calls preserved. FAIMS CV values come from method XML config, not from the `ScanCommand` struct.
 - All C++ files — zero C++ changes in this phase
 - All test data files — reused from Phase 4 (spectrum files `ms1_standard.txt`, `ms2_hcd_fragment.txt`, and `ms1_faims_3cv.txt`). Spectrum files use tab-separated format with RT in seconds (see Phase 0 lesson #2): `Spec scan=N\t<rt_seconds>`. Multi-scan files require parsers to stop at the first scan boundary (see Phase 0 lesson #9)
 - Golden files — Phase 4 golden files (`phase4_standard_dda.tsv` through `phase4_ms3_mode3.tsv`) are the regression baseline for P5-R01; the FAIMS golden files (`faims_3cv.tsv` and `faims_skip.tsv`) are captured during P5-R02 for use as Phase 6 regression targets; golden file changes in this phase are a red flag (see [test-file-specification.md §2.4](../test-file-specification.md)). **Note:** Golden file capture requires a 2-commit minimum — first commit runs CI and produces the golden artifact, second commit includes the captured golden file. Batch captures into a single CI run where possible (see Phase 0 lesson #15)
@@ -223,8 +251,8 @@ These checks are automated by CI test P5-U03. The CI run is the authoritative ve
 | P5-U02 | `IScanProcessor` exposes exactly one method (`ProcessMS`). Guards against accidental re-introduction of `OutputMS` or any other method that would bloat the interface and break the two-stage pipeline contract. |
 | P5-U03 | No production `.cs` file references `QuantScanProcessor`. Verifies that the deleted class has been fully purged from the codebase so no dead import or lingering constructor call can cause a compile or runtime failure. |
 | P5-U04 | `DataPipe` propagates completion end-to-end from `BufferBlock` to `ActionBlock`. Verifies the two-stage pipeline drains all queued items and terminates cleanly — preventing the process hang that the old null-sentinel pattern was meant to avoid. |
-| P5-R01 | All nine acquisition modes (default DDA, deep, inclusion, exclusion, tag-targeting, quant, MS3 modes 1–3) produce output byte-identical to the Phase 4 golden files. Confirms that removing `QuantScanProcessor` and the `UseUnifiedBridge` flag did not change any observable deconvolution results. |
-| P5-R02 | FAIMS mode still works through `ScanScheduler` and the FAIMS golden files (`faims_3cv.tsv`, `faims_skip.tsv`) are captured as the Phase 6 regression baseline. Verifies FAIMS CV cycling is unbroken by the C# simplification and locks in the expected output before Phase 6 moves CV control into C++. |
+| P5-R01 | All nine acquisition modes (default DDA, deep, inclusion, exclusion, tag-targeting, quant, MS3 modes 1–3) produce output byte-identical to the Phase 4 golden files. Confirms that removing `QuantScanProcessor` and the `UseUnifiedBridge` flag did not change any observable deconvolution results. Each run must produce `[TRACK-CREATE]` entries (CI hard-fail gate). |
+| P5-R02 | FAIMS mode still works through `ScanScheduler` and the FAIMS golden files (`faims_3cv.tsv`, `faims_skip.tsv`) are captured as the Phase 6 regression baseline. Verifies FAIMS CV cycling is unbroken by the C# simplification and locks in the expected output before Phase 6 moves CV control into C++. Note: FAIMS in Phase 5 operates entirely at the C# `ScanScheduler` level — the `faims_cv` struct field does not exist until Phase 6. Must produce `[TRACK-CREATE]` entries (CI hard-fail gate). |
 
 ---
 
@@ -238,8 +266,8 @@ All 6 tests run on `windows-latest`. No C++ unit tests exist in this phase. The 
 | P5-U02 | 1 (C#) | `IScanProcessor` interface has exactly one method with the correct signature | Reflection: `typeof(IScanProcessor).GetMethods()` returns exactly 1 entry; method name is `ProcessMS`; parameter type is `IMsScan`; return type is `void` | `InterfaceShapeTests.cs` NUnit test using `System.Reflection` |
 | P5-U03 | 1 (C#) | No production code references `QuantScanProcessor` | Static search over `FlashIDA/src/**/*.cs` excluding the test file itself returns zero matches for the string `QuantScanProcessor` | `DeadCodeTests.cs` NUnit test using `System.IO.Directory.GetFiles` + `File.ReadAllText`; fails if any hit found |
 | P5-U04 | 1 (C#) | `DataPipe` propagates completion from `BufferBlock` to `ActionBlock` | Post 5 synthetic `IMsScan` mocks, call `DataPipe.Complete()`, await `DataPipe.WaitForCompletion()` with a 5-second timeout; assert all 5 items were processed and no timeout occurred | `DataPipeTests.cs` NUnit test with `Moq` or a hand-rolled `IMsScan` stub |
-| P5-R01 | 3 | All acquisition modes produce output identical to Phase 4 golden files | `Flash.exe <input> <output> <method.xml>` with each of the following configs matches the corresponding Phase 4 golden file: `method_default.xml`, `method_deep.xml`, `method_inclusion.xml`, `method_exclusion.xml`, `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`, `method_ms3_mode2.xml`, `method_ms3_mode3.xml` — spectrum inputs are `ms1_standard.txt` (all modes) and `ms2_hcd_fragment.txt` (tag-targeting, quant, MS3 modes); comparison via `compare_golden.py` with default tolerances (see [test-file-specification.md §1.2](../test-file-specification.md), [§1.3](../test-file-specification.md), [§2.2](../test-file-specification.md), [§4.1](../test-file-specification.md)) | `regression-runner.ps1` invoked from CI `windows-tests` job |
-| P5-R02 | 3 | FAIMS mode still works via `ScanScheduler`, and FAIMS golden files are captured for Phase 6 | `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml` matches the existing Phase 4 FAIMS golden output; additionally, the CI capture step writes `faims_3cv.tsv` and `faims_skip.tsv` (using `method_faims_skip.xml`) as the Phase 6 regression baselines; CV transition log entries present; no crash or missing output rows (see [test-file-specification.md §1.4](../test-file-specification.md), [§2.2](../test-file-specification.md), [§3.2](../test-file-specification.md) for `ms1_faims_3cv.txt`, `method_faims_3cv.xml`, `method_faims_skip.xml` format requirements and CV value constraints) | `regression-runner.ps1` FAIMS config entries |
+| P5-R01 | 3 | All acquisition modes produce output identical to Phase 4 golden files | `Flash.exe <input> <output> <method.xml>` with each of the following configs matches the corresponding Phase 4 golden file: `method_default.xml`, `method_deep.xml`, `method_inclusion.xml`, `method_exclusion.xml`, `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`, `method_ms3_mode2.xml`, `method_ms3_mode3.xml` — spectrum inputs are `ms1_standard.txt` (all modes) and `ms2_hcd_fragment.txt` (tag-targeting, quant, MS3 modes); comparison via `compare_golden.py` with default tolerances (see [test-file-specification.md §1.2](../test-file-specification.md), [§1.3](../test-file-specification.md), [§2.2](../test-file-specification.md), [§4.1](../test-file-specification.md)); each run must emit `[TRACK-CREATE]` entries in stdout (CI hard-fail gate — Phase 3 F-5 fix) | `regression-runner.ps1` invoked from CI `windows-tests` job |
+| P5-R02 | 3 | FAIMS mode still works via `ScanScheduler`, and FAIMS golden files are captured for Phase 6 | `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml` matches the existing Phase 4 FAIMS golden output; additionally, the CI capture step writes `faims_3cv.tsv` and `faims_skip.tsv` (using `method_faims_skip.xml`) as the Phase 6 regression baselines; CV transition log entries present; no crash or missing output rows; must emit `[TRACK-CREATE]` entries (CI hard-fail gate). Note: FAIMS CV cycling in Phase 5 is handled entirely by C# `ScanScheduler` — `faims_cv` is not yet a `ScanCommand` struct field (deferred to Phase 6). (See [test-file-specification.md §1.4](../test-file-specification.md), [§2.2](../test-file-specification.md), [§3.2](../test-file-specification.md) for `ms1_faims_3cv.txt`, `method_faims_3cv.xml`, `method_faims_skip.xml` format requirements and CV value constraints) | `regression-runner.ps1` FAIMS config entries |
 
 **Regression inherited from Phases 0–4:** All P0-* through P4-* tests must continue to pass. Phase 2 ended at 59 cumulative; Phases 3 and 4 add their own tests (see testing-strategy.md §4). P5 adds 6 tests on top of the Phase 4 total.
 
@@ -322,11 +350,11 @@ Verify the following in CI. After pushing Phase 5 changes, confirm the `windows-
 
 2. **Test mode runs end-to-end.**
    CI step: `regression-runner.ps1` invokes `Flash.exe ms1_standard.txt output.tsv method_default.xml` and compares output against `phase4_standard_dda.tsv` via `compare_golden.py` (tolerance rules: [test-file-specification.md §4.1](../test-file-specification.md)). Entry point is `FLASHIdaWrapper.Main()` — no `-t` flag (see Phase 0 lesson #1).
-   Expected: Exit code 0, output matches Phase 4 golden file.
+   Expected: Exit code 0, output matches Phase 4 golden file. Stdout must contain `[TRACK-CREATE]` entries (CI hard-fail gate — Phase 3 F-5 fix).
 
 3. **FAIMS mode runs end-to-end.**
-   CI step: `regression-runner.ps1` invokes `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml`; compares output against the existing Phase 4 FAIMS golden and also captures `faims_3cv.tsv` and `faims_skip.tsv` for Phase 6 (spectrum and config format: [test-file-specification.md §1.4](../test-file-specification.md), [§3.2](../test-file-specification.md)). Entry point is `FLASHIdaWrapper.Main()` — no `-t` flag (see Phase 0 lesson #1).
-   Expected: Exit code 0, CV transition log entries present in output, output matches FAIMS golden file.
+   CI step: `regression-runner.ps1` invokes `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml`; compares output against the existing Phase 4 FAIMS golden and also captures `faims_3cv.tsv` and `faims_skip.tsv` for Phase 6 (spectrum and config format: [test-file-specification.md §1.4](../test-file-specification.md), [§3.2](../test-file-specification.md)). Entry point is `FLASHIdaWrapper.Main()` — no `-t` flag (see Phase 0 lesson #1). FAIMS CV cycling operates at the C# `ScanScheduler` level — `faims_cv` is not a `ScanCommand` struct field until Phase 6.
+   Expected: Exit code 0, CV transition log entries present in output, output matches FAIMS golden file, `[TRACK-CREATE]` entries present in stdout (CI hard-fail gate).
 
 4. **DataPipe completion is clean.**
    CI step: NUnit test P5-U04 in `DataPipeTests.cs` posts 5 synthetic `IMsScan` mocks, calls `DataPipe.Complete()`, and awaits `DataPipe.WaitForCompletion()` with a 5-second timeout.
@@ -420,7 +448,10 @@ The following lessons from Phase 0, Phase 1, and Phase 2 are relevant to Phase 5
 - [ ] `ScanScheduler.cs` is still present and still used by `FAIMSScanProcessor`
 - [ ] All 6 Phase 5 tests pass in CI: P5-U01, P5-U02, P5-U03, P5-U04, P5-R01, P5-R02
 - [ ] All prior-phase tests (P0-* through P4-*) continue to pass in CI (Phase 2 ended at 59 cumulative; final count includes Phase 3-4 additions)
+- [ ] All regression tests (P5-R01, P5-R02) produce `[TRACK-CREATE]` entries in stdout (CI hard-fail gate — Phase 3 F-5 fix)
 - [ ] CI `windows-tests` job green on `windows-latest` with Build #2 DLL artifact
 - [ ] `msbuild /warnaserror` succeeds with zero warnings
 - [ ] No process hang on `DataPipe.WaitForCompletion()` in test mode
+- [ ] `ScanCommand` struct size matches Phase 4 value (includes `enqueue_timestamp_ms`; no longer 1144 bytes)
+- [ ] `faims_cv` is NOT present in `ScanCommand` (deferred to Phase 6)
 - [ ] Phase 5 branch merged; ready for Phase 6 (FAIMS Absorption, Build #3)

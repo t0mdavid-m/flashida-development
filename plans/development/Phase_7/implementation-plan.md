@@ -117,6 +117,28 @@ The following lessons from Phase 2 also apply:
 
 ---
 
+## Phase 3–6 Deviations Impact
+
+The following deviations discovered or introduced during Phases 3–6 affect Phase 7 implementation. All code in this phase must use the actual types and sizes listed here, not the original plan values.
+
+1. **ScanCommand field order** — `scan_id` is the first field (not `msn_level`). Done for cache alignment in Phase 3. Phase 7 code must not assume `msn_level` is at offset 0.
+
+2. **`IsolationStage.collision_energy` is `double` (not `int`)** — This is critical for Phase 7's exploration engine. Fractional CE values (e.g., 22.5 NCE) are valid and must be supported. All CE-related variables, parameters, and return types in Phase 7 must use `double`, not `int`. This affects `ExplorationVariant.collision_energy`, `buildCEVariants_()` return type, and the CE config fields (`ms2_ce_min_`, `ms2_ce_max_`, `ms2_ce_step_`, and their MS3 counterparts).
+
+3. **`IsolationStage.activation_type` is `char[32]` (not `char[16]`)** — Accommodates longer activation names like EThcD. Phase 7's multi-activation exploration must use 32-byte buffers when constructing activation type strings for `ScanCommand.stages[].activation_type`.
+
+4. **`IsolationStage` size = 80 bytes** — Unchanged from Phase 3. No impact on Phase 7 beyond awareness.
+
+5. **`ScanCommand.enqueue_timestamp_ms` already present (from Phase 4)** — `uint64_t enqueue_timestamp_ms` was added to `ScanCommand` in Phase 4. Phase 7 exploration commands should populate this field (e.g., via `currentTimeMs_()`) for consistency with the audit trail. The `ExplorationGroup.start_ms` field is separate (group-level timestamp), but each individual `ScanCommand` also carries its own enqueue timestamp.
+
+6. **`ScanCommand.faims_cv` already present (from Phase 6)** — `double faims_cv` was added to `ScanCommand` in Phase 6. Phase 7 exploration commands must populate `faims_cv` via `currentCV_()` (or 0.0 in non-FAIMS mode). The `ExplorationGroup.faims_cv` field already captures this (see Step 4), and child MS3 groups inherit the parent's CV (see Step 8).
+
+7. **ScanCommand size** — The struct size changed twice since Phase 3: Phase 4 added `enqueue_timestamp_ms` (+8 bytes), Phase 6 added `faims_cv` (+8 bytes). Phase 7 must use the current post-Phase-6 size in any size assertions or layout assumptions. Do not hard-code 1144 (the Phase 3 size).
+
+8. **CI `[TRACK-CREATE]` is hard-fail (from Phase 4)** — Every regression test must produce `[TRACK-CREATE]` entries in stdout or CI will fail. Phase 7's exploration commands are pushed via `queues_[0]` with `logTrackCreate_(cmd)` calls (Step 4, Step 8). The `P7-R02` regression test must emit `[TRACK-CREATE]` entries for all exploration variant commands. Failure to emit these entries will cause the CI gate to fail, independent of golden-file comparison.
+
+---
+
 ## Detailed Implementation Steps
 
 ### Step 1: Extend JSON config parsing for full exploration config
@@ -136,9 +158,9 @@ int exploration_max_queue_for_exploration_ = 50;
 // MS2 CE exploration
 bool ms2_exploration_enabled_ = false;
 bool ms2_ce_optimization_enabled_ = false;
-int ms2_ce_min_ = 20;
-int ms2_ce_max_ = 40;
-int ms2_ce_step_ = 5;
+double ms2_ce_min_ = 20.0;   // double: IsolationStage.collision_energy is double (Phase 3 deviation)
+double ms2_ce_max_ = 40.0;   // double: supports fractional CE steps
+double ms2_ce_step_ = 5.0;   // double: e.g., step=2.5 for fine-grained sweeps
 std::string ms2_ce_activation_ = "HCD";
 
 // MS3 CE exploration
@@ -146,9 +168,9 @@ bool ms3_exploration_enabled_ = false;
 bool ms3_trigger_after_ms2_winner_ = true;
 int ms3_max_fragments_to_explore_ = 3;
 bool ms3_ce_optimization_enabled_ = false;
-int ms3_ce_min_ = 15;
-int ms3_ce_max_ = 35;
-int ms3_ce_step_ = 5;
+double ms3_ce_min_ = 15.0;   // double: matches IsolationStage.collision_energy type
+double ms3_ce_max_ = 35.0;
+double ms3_ce_step_ = 5.0;
 std::string ms3_ce_activation_ = "CID";
 ```
 
@@ -167,9 +189,9 @@ if (j.contains("exploration")) {
         if (m2.contains("ce")) {
             auto& ce = m2["ce"];
             ms2_ce_optimization_enabled_ = ce.value("enabled", true);
-            ms2_ce_min_ = ce.value("min", 20);
-            ms2_ce_max_ = ce.value("max", 40);
-            ms2_ce_step_ = ce.value("step", 5);
+            ms2_ce_min_ = ce.value("min", 20.0);    // double: fractional CE support
+            ms2_ce_max_ = ce.value("max", 40.0);
+            ms2_ce_step_ = ce.value("step", 5.0);
             ms2_ce_activation_ = ce.value("activation", std::string("HCD"));
         }
     }
@@ -181,9 +203,9 @@ if (j.contains("exploration")) {
         if (m3.contains("ce")) {
             auto& ce = m3["ce"];
             ms3_ce_optimization_enabled_ = ce.value("enabled", true);
-            ms3_ce_min_ = ce.value("min", 15);
-            ms3_ce_max_ = ce.value("max", 35);
-            ms3_ce_step_ = ce.value("step", 5);
+            ms3_ce_min_ = ce.value("min", 15.0);    // double: fractional CE support
+            ms3_ce_max_ = ce.value("max", 35.0);
+            ms3_ce_step_ = ce.value("step", 5.0);
             ms3_ce_activation_ = ce.value("activation", std::string("CID"));
         }
     }
@@ -204,8 +226,8 @@ Add these structs inside the `FLASHIda` class as private nested types (or as fil
 struct ExplorationVariant
 {
     int variant_index = -1;       // 0-based position in the CE sweep
-    int collision_energy = 0;     // the CE value for this variant
-    std::string activation_type;  // "HCD", "CID", etc.
+    double collision_energy = 0.0; // the CE value for this variant (double: matches IsolationStage.collision_energy, Phase 3 deviation)
+    std::string activation_type;  // "HCD", "CID", etc. (note: IsolationStage.activation_type is char[32], Phase 3 deviation)
     std::string tracking_id;      // 4-char base-36 tracking ID of the submitted scan command
     double fragmentation_quality_score = -1.0; // -1 = not yet received
     float tic_coverage = 0.0f;
@@ -249,13 +271,13 @@ Both maps are accessed only inside `queue_mutex_`-protected regions (either with
 
 **File:** `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp`
 
-Add a private helper `buildCEVariants_()` that generates the list of collision energy values for a CE sweep:
+Add a private helper `buildCEVariants_()` that generates the list of collision energy values for a CE sweep. **Uses `double` throughout** because `IsolationStage.collision_energy` is `double` (Phase 3 deviation), enabling fractional CE steps (e.g., step=2.5):
 
 ```cpp
-std::vector<int> FLASHIda::buildCEVariants_(int ce_min, int ce_max, int ce_step) const
+std::vector<double> FLASHIda::buildCEVariants_(double ce_min, double ce_max, double ce_step) const
 {
-    std::vector<int> ces;
-    for (int ce = ce_min; ce <= ce_max; ce += ce_step)
+    std::vector<double> ces;
+    for (double ce = ce_min; ce <= ce_max + 1e-9; ce += ce_step)  // epsilon guard for floating-point
         ces.push_back(ce);
     // Guard: never exceed max_variants_per_precursor_
     if ((int)ces.size() > exploration_max_variants_per_precursor_)
@@ -264,7 +286,7 @@ std::vector<int> FLASHIda::buildCEVariants_(int ce_min, int ce_max, int ce_step)
 }
 ```
 
-For CE 20-40 step 5 this produces {20, 25, 30, 35, 40} — exactly 5 variants.
+For CE 20.0-40.0 step 5.0 this produces {20.0, 25.0, 30.0, 35.0, 40.0} — exactly 5 variants. Fractional steps (e.g., CE 20.0-30.0 step 2.5) produce {20.0, 22.5, 25.0, 27.5, 30.0}.
 
 ---
 
@@ -285,8 +307,8 @@ void FLASHIda::initiateMS2Exploration_(
     for (int p = 0; p <= 3; p++) total_queued += (int)queues_[p].size();
     if (total_queued >= exploration_max_queue_for_exploration_) return;
 
-    // (2) Build CE variants
-    std::vector<int> ces = buildCEVariants_(
+    // (2) Build CE variants (double: fractional CE support, Phase 3 deviation)
+    std::vector<double> ces = buildCEVariants_(
         ms2_ce_min_, ms2_ce_max_, ms2_ce_step_);
     if (ces.empty()) return;
 
@@ -312,6 +334,10 @@ void FLASHIda::initiateMS2Exploration_(
         ScanCommand cmd = buildMS2Command_(peak_group, charge, ces[i],
                                           ms2_ce_activation_);
         cmd.priority = 0;
+        // Note: buildMS2Command_ already populates cmd.faims_cv via currentCV_()
+        // (Phase 6) and cmd.enqueue_timestamp_ms via currentTimeMs_() (Phase 4).
+        // These fields are inherited from the standard command-building path.
+
         // Embed group_id and variant_index in scan_description so ProcessScan
         // can route the returning scan back to the correct group.
         // Format: "EXPL:<group_id>:<variant_index>:<base36_tracking_id>"
@@ -323,7 +349,7 @@ void FLASHIda::initiateMS2Exploration_(
         group.variants.push_back(v);
         variant_tracking_to_group_[track_id] = group.group_id;
         queues_[0].push_back(cmd);
-        logTrackCreate_(cmd);
+        logTrackCreate_(cmd);  // CI TRACK-CREATE hard-fail: must emit for every exploration command
     }
 
     active_exploration_groups_[group.group_id] = std::move(group);
@@ -545,7 +571,7 @@ void FLASHIda::initiateMS3Exploration_(
 
     int num_frags = std::min((int)fragments.size(), ms3_max_fragments_to_explore_);
 
-    std::vector<int> ms3_ces = buildCEVariants_(
+    std::vector<double> ms3_ces = buildCEVariants_(
         ms3_ce_min_, ms3_ce_max_, ms3_ce_step_);
 
     for (int fi = 0; fi < num_frags; fi++) {
@@ -571,6 +597,8 @@ void FLASHIda::initiateMS3Exploration_(
             ScanCommand cmd = buildMS3Command_(parent_group, frag_mz, ms3_ces[i],
                                               ms3_ce_activation_);
             cmd.priority = 0;
+            // cmd.faims_cv and cmd.enqueue_timestamp_ms are populated by
+            // buildMS3Command_() (Phase 6, Phase 4 fields respectively)
             std::string track_id = generateTrackingId_();
             v.tracking_id = track_id;
             snprintf(cmd.scan_description, sizeof(cmd.scan_description),
@@ -579,7 +607,7 @@ void FLASHIda::initiateMS3Exploration_(
             child.variants.push_back(v);
             variant_tracking_to_group_[track_id] = child.group_id;
             queues_[0].push_back(cmd);
-            logTrackCreate_(cmd);
+            logTrackCreate_(cmd);  // CI TRACK-CREATE hard-fail: must emit for every exploration command
         }
 
         active_exploration_groups_[child.group_id] = std::move(child);
@@ -717,8 +745,8 @@ The regression golden file for `P7-R01` (exploration disabled) is the existing `
 
 | File | Action | Description |
 |------|--------|-------------|
-| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | Add `ExplorationGroup`, `ExplorationVariant` nested structs; add all exploration config member variables; add `active_exploration_groups_`, `variant_tracking_to_group_`, `next_exploration_group_id_`; declare new private methods |
-| `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp` | Modify | Implement `buildCEVariants_()`, `initiateMS2Exploration_()`, `feedExplorationResult_()`, `initiateMS3Exploration_()`, `computeFragmentationQuality_()`, `computeTICCoverage_()`; extend JSON config parsing; modify `processScan()` MS2 path; modify `getNextScanCommand()` MS1 suppression |
+| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | Add `ExplorationGroup`, `ExplorationVariant` nested structs (note: `collision_energy` fields are `double`, matching `IsolationStage` Phase 3 deviation); add all exploration config member variables (CE fields are `double`); add `active_exploration_groups_`, `variant_tracking_to_group_`, `next_exploration_group_id_`; declare new private methods. **Do not modify `ScanCommand`** — `enqueue_timestamp_ms` (Phase 4) and `faims_cv` (Phase 6) are already present. |
+| `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp` | Modify | Implement `buildCEVariants_()` (returns `vector<double>`), `initiateMS2Exploration_()`, `feedExplorationResult_()`, `initiateMS3Exploration_()`, `computeFragmentationQuality_()`, `computeTICCoverage_()`; extend JSON config parsing; modify `processScan()` MS2 path; modify `getNextScanCommand()` MS1 suppression. All `logTrackCreate_()` calls required for CI hard-fail gate. |
 | `OpenMS/src/tests/class_tests/openms/source/FLASHIda_exploration_test.cpp` | Create | C++ unit tests P7-U01 through P7-U10 (see Test Cases section) |
 | `OpenMS/src/tests/class_tests/openms/executables.cmake` | Modify | Uncomment or add entry for `FLASHIda_exploration_test` so CTest discovers it |
 
@@ -761,7 +789,7 @@ All 12 tests for Phase 7 are listed below with full descriptions, expected outco
 
 | Test ID | What it verifies and why |
 |---------|--------------------------|
-| P7-U01 | `initiateMS2Exploration_()` creates an `ExplorationGroup` with exactly the expected CE variants (20, 25, 30, 35, 40) and correct initial state (`complete=false`, `winner_index=-1`). Validates the core group-construction path before any results arrive. |
+| P7-U01 | `initiateMS2Exploration_()` creates an `ExplorationGroup` with exactly the expected CE variants (20.0, 25.0, 30.0, 35.0, 40.0 — `double`, Phase 3 deviation) and correct initial state (`complete=false`, `winner_index=-1`). Validates the core group-construction path before any results arrive. |
 | P7-U02 | All five exploration variant commands are enqueued at priority 0, leaving higher-priority queues untouched. Confirms the priority-0 reservation is honoured so exploration scans never preempt urgent follow-up scans. |
 | P7-U03 | `feedExplorationResult_()` selects the variant with the highest `FragmentationQuality` score as the winner. Exercises the end-to-end scoring and winner-selection logic with deterministic synthetic scores. |
 | P7-U04 | Queue overflow guard: when total queued commands already reach `MaxQueueForExploration`, `initiateMS2Exploration_()` aborts without adding any commands or groups. Prevents runaway queue growth during dense precursor bursts. |
@@ -778,8 +806,8 @@ All 12 tests for Phase 7 are listed below with full descriptions, expected outco
 
 **Tier:** 1 (C++ unit test)
 **CI runner:** `ubuntu-latest`, `cpp-unit-tests` job
-**Description:** Configure CE min=20, max=40, step=5. Call `initiateMS2Exploration_()` for a synthetic high-scoring precursor. Inspect the resulting `ExplorationGroup` stored in `active_exploration_groups_`.
-**Expected outcome:** Exactly 5 `ExplorationVariant` entries with `collision_energy` values {20, 25, 30, 35, 40}. `group_id` is non-zero. `complete == false`. `winner_index == -1`. `variants[i].received == false` for all i.
+**Description:** Configure CE min=20.0, max=40.0, step=5.0 (all `double`). Call `initiateMS2Exploration_()` for a synthetic high-scoring precursor. Inspect the resulting `ExplorationGroup` stored in `active_exploration_groups_`.
+**Expected outcome:** Exactly 5 `ExplorationVariant` entries with `collision_energy` values {20.0, 25.0, 30.0, 35.0, 40.0} (double, not int — Phase 3 deviation). `group_id` is non-zero. `complete == false`. `winner_index == -1`. `variants[i].received == false` for all i.
 
 ### P7-U02 — Exploration variants pushed at priority 0
 
@@ -792,8 +820,8 @@ All 12 tests for Phase 7 are listed below with full descriptions, expected outco
 
 **Tier:** 1 (C++ unit test)
 **CI runner:** `ubuntu-latest`, `cpp-unit-tests` job
-**Description:** Create an `ExplorationGroup` with 5 variants (CE 20-40). Call `feedExplorationResult_()` for each variant with synthetic `DeconvolvedSpectrum` objects whose `computeFragmentationQuality_()` returns known scores: {1.0, 3.5, 2.2, 4.8, 0.5}. Check the group after all 5 have been received.
-**Expected outcome:** `group.complete == true`. `group.winner_index == 3` (score 4.8, CE=35). `logInfo_` output contains `EXPL-WINNER` with `winner_idx=3` and `CE=35`.
+**Description:** Create an `ExplorationGroup` with 5 variants (CE 20.0-40.0, step 5.0). Call `feedExplorationResult_()` for each variant with synthetic `DeconvolvedSpectrum` objects whose `computeFragmentationQuality_()` returns known scores: {1.0, 3.5, 2.2, 4.8, 0.5}. Check the group after all 5 have been received.
+**Expected outcome:** `group.complete == true`. `group.winner_index == 3` (score 4.8, CE=35.0). `logInfo_` output contains `EXPL-WINNER` with `winner_idx=3` and `CE=35.0` (note: `std::to_string(double)` output).
 
 ### P7-U04 — Queue overflow protection
 
@@ -834,8 +862,8 @@ All 12 tests for Phase 7 are listed below with full descriptions, expected outco
 
 **Tier:** 1 (C++ unit test)
 **CI runner:** `ubuntu-latest`, `cpp-unit-tests` job
-**Description:** Create an exploration group with 2 variants (CE 20, CE 25). Call `feedExplorationResult_()` for variant 0 with a synthetic `DeconvolvedSpectrum`. Inspect the metadata on the spectrum after the call.
-**Expected outcome:** `ms2_deconv.hasOptimizationMetadata() == true`. `meta.group_id == <expected group id>`. `meta.variant_index == 0`. `meta.total_variants == 2`. `meta.collision_energy == 20`. `meta.activation_type == "HCD"`. `meta.is_best_variant == false` (winner not determined yet — only 1 of 2 received). `meta.fragmentation_quality_score > -1.0`. `meta.start_ms > 0`. `meta.exploration_scans == 2`.
+**Description:** Create an exploration group with 2 variants (CE 20.0, CE 25.0 — `double`). Call `feedExplorationResult_()` for variant 0 with a synthetic `DeconvolvedSpectrum`. Inspect the metadata on the spectrum after the call.
+**Expected outcome:** `ms2_deconv.hasOptimizationMetadata() == true`. `meta.group_id == <expected group id>`. `meta.variant_index == 0`. `meta.total_variants == 2`. `meta.collision_energy == 20.0` (double, not int — Phase 3 deviation). `meta.activation_type == "HCD"`. `meta.is_best_variant == false` (winner not determined yet — only 1 of 2 received). `meta.fragmentation_quality_score > -1.0`. `meta.start_ms > 0`. `meta.exploration_scans == 2`.
 
 ### P7-U10 — Metadata serialized to MSSpectrum via setMetaValue
 
@@ -856,7 +884,7 @@ All 12 tests for Phase 7 are listed below with full descriptions, expected outco
 **Tier:** 3 (regression)
 **CI runner:** `windows-latest`, `windows-tests` job
 **Description:** Run `Flash.exe ms1_standard.txt output.tsv method_exploration.xml` (CE 20-40 step 5, `MaxVariantsPerPrecursor=5`). Entry point is `FLASHIdaWrapper.Main()` — there is no `-t` flag (Phase 0 lesson #1). Spectrum input: `ms1_standard.txt` (see [../test-file-specification.md](../test-file-specification.md) §1.2). Config file format and key parameters for `method_exploration.xml` are specified in [../test-file-specification.md](../test-file-specification.md) §3.2. Comparison is performed by `compare_golden.py` using the standard tolerances from [../test-file-specification.md](../test-file-specification.md) §2.1.
-**Expected outcome:** Output file matches the committed golden file `test-data/golden/phase7_exploration.tsv`. The golden file contains more rows than `phase4_standard_dda.tsv` — specifically, for each selected precursor there are up to 5 exploration variant scan records in addition to the standard MS2 record. `EXPL-WINNER` log entries appear in console output. `OptimizationMetadata` fields appear as metavalues in the output (verifiable from the TSV columns, if the test mode serializes them, or from inspecting mzML output if `Flash.exe` produces mzML). This is a new golden file created fresh at this phase, not a comparison against a prior phase.
+**Expected outcome:** Output file matches the committed golden file `test-data/golden/phase7_exploration.tsv`. The golden file contains more rows than `phase4_standard_dda.tsv` — specifically, for each selected precursor there are up to 5 exploration variant scan records in addition to the standard MS2 record. `EXPL-WINNER` log entries appear in console output. `OptimizationMetadata` fields appear as metavalues in the output (verifiable from the TSV columns, if the test mode serializes them, or from inspecting mzML output if `Flash.exe` produces mzML). This is a new golden file created fresh at this phase, not a comparison against a prior phase. **CI hard-fail gate:** `[TRACK-CREATE]` entries must appear in stdout for every exploration variant command (Phase 4 F-5 fix). The regression runner checks this independently of golden-file comparison.
 
 ---
 
@@ -970,6 +998,7 @@ This is also verified structurally by P7-U07 and P7-U08 in the `cpp-unit-tests` 
 - [ ] `.github/workflows/flashida-ci.yml` regression runner includes `method_exploration.xml` with golden file `phase7_exploration.tsv` (entry name `p7_exploration`, per [../test-file-specification.md](../test-file-specification.md) §4.2 config array).
 - [ ] `Flash.exe ms1_standard.txt output.tsv method_default.xml` with exploration disabled produces output identical to `phase4_standard_dda.tsv` (P7-R01 passes in CI (`windows-tests` job); comparison uses `compare_golden.py` tolerances from [../test-file-specification.md](../test-file-specification.md) §2.1).
 - [ ] `Flash.exe ms1_standard.txt output.tsv method_exploration.xml` produces EXPL-WINNER log entries and variant rows in output matching `phase7_exploration.tsv` (P7-R02 passes in CI).
+- [ ] All regression tests (P7-R01, P7-R02) produce `[TRACK-CREATE]` entries in stdout (CI hard-fail gate — Phase 4 F-5 fix).
 - [ ] MS3 recursive exploration creates child groups and respects `MaxExplorationDepth` (P7-U07, P7-U08 pass in CI (`cpp-unit-tests` job)).
 - [ ] No new C++ compiler warnings introduced (existing `/Wall` or `-Wall` build flags must remain clean).
 - [ ] Code review complete: `ExplorationGroup` / `ExplorationVariant` structs, `feedExplorationResult_()` winner logic, depth-limit check, and MS1 suppression logic reviewed by at least one other developer.
@@ -977,9 +1006,9 @@ This is also verified structurally by P7-U07 and P7-U08 in the `cpp-unit-tests` 
 
 ---
 
-## Phase 0–2 Lessons Applied
+## Phase 0–6 Lessons Applied
 
-This section records which Phase 0, Phase 1, and Phase 2 lessons are directly reflected in this implementation plan, so future plan reviews can verify coverage.
+This section records which Phase 0–6 lessons are directly reflected in this implementation plan, so future plan reviews can verify coverage.
 
 | Lesson | Source | Where Applied in This Plan |
 |--------|--------|---------------------------|
@@ -1014,3 +1043,11 @@ This section records which Phase 0, Phase 1, and Phase 2 lessons are directly re
 | ccache key uses `hashFiles('OpenMS/CMakeLists.txt')` | Phase 2 #7 | Cross-References item 29 |
 | `(void)var;` for MSVC `/WX` in test code | Phase 2 #8 | Cross-References item 30; P7-U10 description; Test Cases preamble |
 | Phase 2 cumulative: 59 tests | Phase 2 #9 | Cross-References item 31 |
+| `ScanCommand.scan_id` is first field (not `msn_level`) | Phase 3 deviation | Phase 3–6 Deviations Impact §1 |
+| `IsolationStage.collision_energy` is `double` (not `int`) | Phase 3 deviation | Phase 3–6 Deviations Impact §2; Step 1 (CE config fields); Step 2 (`ExplorationVariant.collision_energy`); Step 3 (`buildCEVariants_` signature); Step 4 (CE vector type); Step 8 (MS3 CE vector); P7-U01, P7-U03, P7-U09 expected outcomes |
+| `IsolationStage.activation_type` is `char[32]` (not `char[16]`) | Phase 3 deviation | Phase 3–6 Deviations Impact §3; Step 2 (`ExplorationVariant.activation_type` comment) |
+| `IsolationStage` size = 80 bytes | Phase 3 | Phase 3–6 Deviations Impact §4 |
+| `ScanCommand.enqueue_timestamp_ms` added in Phase 4 | Phase 4 | Phase 3–6 Deviations Impact §5; Step 4 (command-building comment) |
+| `ScanCommand.faims_cv` added in Phase 6 | Phase 6 | Phase 3–6 Deviations Impact §6; Step 4 (command-building comment); Step 8 (MS3 command comment) |
+| ScanCommand size changed twice (Phase 4 + Phase 6) | Phase 3–6 | Phase 3–6 Deviations Impact §7 |
+| CI `[TRACK-CREATE]` is hard-fail | Phase 4 (F-5 fix) | Phase 3–6 Deviations Impact §8; Step 4 (`logTrackCreate_` comment); Step 8 (`logTrackCreate_` comment); P7-R02 expected outcome; DoD checklist |
