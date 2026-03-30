@@ -202,6 +202,8 @@ jobs:
       # --- Regression tests ---
       - name: Run regression tests
         shell: powershell
+        env:
+          OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
         run: |
           powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output 2>&1 | Tee-Object -FilePath FlashIDA\test-output\regression-stdout.txt
 
