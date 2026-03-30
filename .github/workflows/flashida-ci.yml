@@ -139,6 +139,8 @@ jobs:
       # --- Phase 4: Golden capture for all 9 mode configs ---
       - name: Phase 4 golden capture (all modes)
         shell: powershell
+        env:
+          OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
         run: |
           powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output\phase4-golden -captureMode
 
