@@ -262,7 +262,7 @@ jobs:
               $trackLines = Select-String -Path $regressionLog -Pattern "\[TRACK-CREATE\]"
               Write-Host "Found $($trackLines.Count) [TRACK-CREATE] entries in regression output."
               if ($trackLines.Count -eq 0) {
-                  Write-Host "FAIL: zero [TRACK-CREATE] entries — unified bridge should produce tracking entries."
+                  Write-Host "FAIL: zero [TRACK-CREATE] entries - unified bridge should produce tracking entries."
                   exit 1
               }
           } else {
