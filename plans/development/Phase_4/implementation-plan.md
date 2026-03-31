@@ -2,6 +2,7 @@
 
 **Build produced:** Build #2
 **Date:** 2026-03-21
+**Implementation status (2026-03-31):** Batches A-E complete. All C++ (processScan, helpers, tests) and C# (struct update, UseUnifiedBridge, switch-over, harness, CI) implemented. Pending: DLL rebuild, copy to FlashIDA/dll/, test activation, and CI verification.
 **Source documents:**
 - [../baseline-plan.md](../baseline-plan.md) — Issues 1 (completion) and 5 (Scoring in Unified Architecture)
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 4 section, CI Environment Requirements
@@ -583,6 +584,82 @@ If any regression test fails (output differs from pre-switch baseline):
 
 ---
 
+### Step 9: Switch Continuity Test Harness to Unified Bridge
+
+**Files:** `FlashIDA/src/Flash.Tests/Mocks/ContinuityTestHarness.cs`
+
+**Rationale:** The acquisition loop continuity tests (CT01–CT46) currently call `Processor.ProcessMS(msScan)` which runs the OLD multi-step bridge path through the C# processor layer (`IDAScanProcessor`, `QuantScanProcessor`, `FAIMSScanProcessor`). After the switch-over, this is dead code. The test harness must be updated to call the unified bridge directly so tests validate the active code path.
+
+**Prerequisite:** Steps 1–8 complete. `ProcessScan` returns real command counts, `GetNextScanCommand` dequeues real commands, and behavioral equivalence is verified against pre-switch golden baselines.
+
+All building blocks already exist:
+- `FLASHIdaWrapper.ProcessScan(mzs, ints, rt, msLevel, scanDesc)` — line 769
+- `FLASHIdaWrapper.GetNextScanCommand(ref ScanCommand cmd)` — line 785
+- `ScanFactory.BuildFromCommand(ScanCommand cmd)` — line 152, virtual, inherits through `MockScanFactory` → calls overridden `CreateFusionCustomScan` → adds to `CreatedScans`
+
+#### Step 9a: Replace `PushScan` Implementation
+
+Replace the body of `ContinuityTestHarness.PushScan(IMsScan)` to call the unified bridge instead of `Processor.ProcessMS`:
+
+```csharp
+public List<IFusionCustomScan> PushScan(IMsScan msScan)
+{
+    // Extract spectrum data from IMsScan
+    int msLevel = int.Parse(msScan.Header["MSOrder"]);
+    double rt = double.Parse(msScan.Header["StartTime"]);
+    double[] mzs = msScan.Centroids.Select(c => c.Mz).ToArray();
+    double[] ints = msScan.Centroids.Select(c => c.Intensity).ToArray();
+
+    // Scan description: MS2+ uses tracking ID from trailer, MS1 uses scan number
+    string scanDesc = msScan.Header["Scan"];
+    if (msLevel >= 2)
+    {
+        msScan.Trailer.TryGetValue("Scan Description", out var desc);
+        if (!string.IsNullOrEmpty(desc)) scanDesc = desc;
+    }
+
+    // Call unified bridge
+    Wrapper.ProcessScan(mzs, ints, rt, msLevel, scanDesc);
+
+    // Drain command queue
+    var scanList = new List<IFusionCustomScan>();
+    var cmd = new ScanCommand();
+    while (Wrapper.GetNextScanCommand(ref cmd) == 1)
+    {
+        scanList.Add(Factory.BuildFromCommand(cmd));
+        cmd = new ScanCommand();
+    }
+
+    return scanList;
+}
+```
+
+No `Processor.ProcessMS`, no `OutputMS`, no `ScanScheduler` involvement. The C++ engine handles all routing.
+
+#### Step 9b: Simplify Constructor
+
+Remove from the constructor:
+- AGC scan creation, default scan creation, FAIMS per-CV scan creation
+- `ScanScheduler` instantiation
+- `IScanProcessor` instantiation (`IDAScanProcessor`, `FAIMSScanProcessor`, `QuantScanProcessor`)
+
+Keep:
+- `MethodParameters.Load(methodXmlPath)` + file path resolution
+- `MockScanFactory` creation
+- `FLASHIdaWrapper(MethodParams)` creation
+- `Factory.CreatedScans.Clear()`
+
+The `Processor`, `Scheduler`, and `UseFaimsCycling` properties can be removed or nulled. Any test code that accessed `harness.Processor` directly (CT22 accesses `harness.Factory.CreatedScans` which is unaffected) needs review.
+
+#### What Changes for Existing Tests
+
+- **CT01–CT42**: Zero test code changes. They call `PushScan` / `PushSmokeSpectrumAndCollect` / `PushStandardSpectrumAndCollect` which all route through the updated `PushScan`.
+- **CollectResults / CollectAllResults**: Unchanged — reads `Factory.CreatedScans` populated by `BuildFromCommand`.
+- **Golden file assertions**: Unchanged — same comparison logic.
+- **Structural assertions** (CT34 follow-up check, CT42 deep mode comparison): Unchanged — they inspect `ScanCommandRecord` fields which `BuildFromCommand` populates identically.
+
+---
+
 ## Files to Create or Modify
 
 ### C++ Files (OpenMS submodule)
@@ -607,6 +684,7 @@ If any regression test fails (output differs from pre-switch baseline):
 | `FlashIDA/src/Flash/IDA/IScanProcessor.cs` | Modify | Update implementing classes to call `wrapper.ProcessScan(...)` in the `UseUnifiedBridge=True` path instead of old bridge functions. |
 | `FlashIDA/src/Flash/IDA/ScanFactory.cs` | Modify | Verify and extend `BuildFromCommand()` to handle all mode variants: standard MS2, MS3 (two isolation stages), SPS-MS3, AGC, MS1 fallback. |
 | `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | Modify | P/Invoke declarations for `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId` already added in Phase 3. **Add `public ulong EnqueueTimestampMs` field to C# `ScanCommand` struct** to match C++ addition. Update `Marshal.SizeOf` expectations in layout tests. Old bridge declarations remain but are no longer called when `UseUnifiedBridge=True`. |
+| `FlashIDA/src/Flash.Tests/Mocks/ContinuityTestHarness.cs` | Modify | **Step 9:** Replace `PushScan` to call `Wrapper.ProcessScan` + `GetNextScanCommand` loop + `Factory.BuildFromCommand`. Remove AGC/default/FAIMS scan creation, ScanScheduler, and IScanProcessor from constructor. |
 
 ### Test Data Files
 
@@ -861,6 +939,7 @@ The following checklist must be fully satisfied before Phase 4 is considered com
 
 ### Tests
 
+- [ ] **Step 9 (continuity harness switch-over):** `ContinuityTestHarness.PushScan` calls `ProcessScan` + `GetNextScanCommand` instead of `Processor.ProcessMS`. All 63 existing continuity tests pass with the unified bridge (golden files unchanged — behavioral equivalence already verified in Step 8).
 - [ ] P4-U01 through P4-U09 (9 C++ unit tests) all pass on `ubuntu-latest`.
 - [ ] **P3-U08 (priority dequeue) activated** — stub `NOT_TESTABLE` replaced with real assertions verifying dequeue order 3->2->1->0 (deferred from Phase 3).
 - [ ] **P3-U09 (AGC first) activated** — stub `NOT_TESTABLE` replaced with real assertions verifying AGC dequeued before MS2 (deferred from Phase 3).
@@ -897,6 +976,73 @@ The following checklist must be fully satisfied before Phase 4 is considered com
 - [ ] `OpenMS.dll` from Build #2 is available as a CI artifact keyed to the Phase 4 OpenMS submodule commit hash.
 - [ ] Build #2 DLL is used for all Phase 4 regression and integration tests.
 - [ ] Phase 5 may begin once all items above are checked off and the PR is merged to `flashida-v9-migration`.
+
+---
+
+## Implementation Progress (2026-03-30)
+
+### Batch A: Test Data & Config Files — COMPLETE
+
+**Commits:** `912f9e3`, `1b73ce9` on `flashida-v9-migration`
+
+- Extracted `ms1_standard.txt` (50 MS1 scans, E. coli top-down, 488 KB) from `Eclipse_20251016_Original_EcoliRedAlkMCWFA_60min_2ul_R1.mzML`
+- Extracted `ms2_hcd_fragment.txt` (CytC HCD MS2, 3516 peaks, precursor 12358 Da, 72 KB) from `20250121_CytC_MS2HCD_MS3HCDCID_Mode2_MS2CE40_MS3CID27.mzML`
+- Extracted `ms2_quant_tmt.txt` (iodoTMT MS2 with 10 reporter ions at 126-131 Da, 4 KB) from `FLASHIda_methodQuant_Ecoli_Glucose_vs_Acetat_iodoTMT_FC0_only1Cond_1ul.mzML`
+- Added CytC to `test_fasta.fasta`, updated MS3 configs with CytC protein sequence
+- Added 9 Phase 4 configs to `regression-runner.ps1`
+
+### Batch B: Golden File Capture — COMPLETE
+
+**CI runs:** `23737573239`, `23738550840`, `23739338211` on `phase-4`
+
+- All 9 golden files captured from old bridge path via CI (Flash.exe test mode)
+- Each has 1 header + 6 data rows, 15-column TSV format
+- Fixed regression runner to copy supporting files (inclusion list, FASTA, TargetLog) to working directory for bare filename resolution
+- Fixed TRACK-CREATE check to warning (old bridge test path doesn't call ProcessScan)
+- Captured `phase4_inclusion.tsv` re-captured after fixing inclusion list format
+
+### Batch B2: Golden File Verification & Mode Coverage Fixes — COMPLETE
+
+**CI run:** `23741455500`, `23742235949` on `phase-4`
+
+Verification found all 9 original golden files were functionally identical to standard DDA (modes not exercised). All 4 issues fixed:
+
+1. **Inclusion list**: Changed from integer masses to monoisotopic masses (2063.606, 2277.254, 4297.177, 5315.129, 12358.31) for 20 ppm matching
+2. **Strict inclusion**: Added `phase4_inclusion_strict` entry to regression runner. Golden shows 4 of 6 masses (only target-matched masses survive)
+3. **Deep/exclusion TargetLogs**: Created `test_target_log.log` with 3 of 6 standard DDA masses. Deep golden now has 3 data rows (3 masses deprioritized). Exclusion loads TargetLog.
+4. **Quant/MS3 test harness**: Extended `FLASHIdaWrapper.ProcessScan` to call `IsDifferentiallyAbundant` (quant), `GetBestMS2Masses` + `GetTopFragmentMatches` (MS3). Set `OPENMS_DATA_PATH` in CI for `ModificationsDB` (required by `FLASHExtenderAlgorithm`).
+
+**Final golden file status (10 files):**
+
+| File | Rows | Mode exercised? | Differs from DDA? |
+|------|------|-----------------|-------------------|
+| `phase4_standard_dda.tsv` | 6 | Yes (baseline) | N/A |
+| `phase4_deep_mode.tsv` | 3 | Yes | Yes — 3 TargetLog masses excluded |
+| `phase4_inclusion.tsv` | 6 | Yes | FP differences (non-strict fills) |
+| `phase4_inclusion_strict.tsv` | 4 | Yes | Yes — 2 non-target masses removed |
+| `phase4_exclusion.tsv` | 6 | Partially | FP only (qscore threshold not exceeded) |
+| `phase4_tag_targeting.tsv` | 6 | Partially | FP only (tagger runs, no visible effect in TSV) |
+| `phase4_quant.tsv` | 6 | Yes (stdout) | FP only (IsDifferentiallyAbundant logged) |
+| `phase4_ms3_mode1.tsv` | 6 | Yes (stdout) | FP only (fragment matching: CytC b/y ions) |
+| `phase4_ms3_mode2.tsv` | 6 | Yes (stdout) | FP only |
+| `phase4_ms3_mode3.tsv` | 6 | Yes (stdout) | FP only |
+
+### Batch B3: End-to-End Acquisition Loop Verification — COMPLETE
+
+All 30 AL-CT continuity tests pass (CI run `23742235949`, 53/53 tests green). B2 config changes don't break continuity golden files because smoke test CytC mass (12351.33 Da) doesn't overlap with B2 target masses (2063-5315 Da range).
+
+**Coverage gap identified:** Continuity tests have significant gaps in MS2 return pathways:
+- MS3: PARTIAL — MS2 pushed back, but MS3 generation not asserted
+- Tag targeting: NOT COVERED — no MS2 pushed back, follow-up scheduling untested
+- Conditional MS2: NOT COVERED — conditional decision never runs
+- Quant: NOT COVERED — IsDifferentiallyAbundant never called in continuity tests
+- These gaps exist since Phase 0. Phase 4 C++ unit tests (P4-U04–U09) will cover at C++ level.
+
+### Remaining Work
+
+- **Batch C**: C++ implementation (processScan full routing, helpers, tests) — PENDING
+- **Batch D**: C# implementation (UseUnifiedBridge, switch-over) — PENDING
+- **Batch E**: CI & regression runner updates — PENDING
 
 ---
 
