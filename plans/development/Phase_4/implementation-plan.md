@@ -1090,3 +1090,47 @@ This section records which Phase 0, Phase 1, and Phase 2 lessons were applied du
 | L2-7: ccache key uses `hashFiles('OpenMS/CMakeLists.txt')`, not `executables.cmake` | Phase 2 | CI Configuration §5 (cache key unchanged note) |
 | L2-8: MSVC `/WX` — use `(void)var;` to suppress unused variable warnings in test code | Phase 2 | Step 8 "DLL build cost" callout (applies to all C++ test code); C++ unit test section — any variable used only in `TEST_EQUAL` assertions must have `(void)var;` after the assertion to suppress MSVC `C4189` |
 | L2-9: Phase 2 delivered `OptimizationMetadata` struct, `GetConfigInt`/`GetConfigDouble` bridge functions, 5 C++ unit tests, `cpp-unit-tests` CI job active | Phase 2 | Prerequisites §1 (Phase 2 deliverables listed explicitly) |
+
+---
+
+## Compliance Audit Outcomes (2026-03-31)
+
+Phase 4 compliance audit identified 11 weak tests across 4 files. All were addressed in two batches.
+
+### Batch 1 (Rec 1-6) — COMPLETE
+
+| Rec | Fix | File |
+|-----|-----|------|
+| 1 | Removed dead-code `Flash.Tests.csproj` reference | `Flash.Tests.csproj` |
+| 2 | Fixed scan description field path (`Trailer["Scan Description"]`) | `ContinuityTestHarness.cs` |
+| 3 | Made TRACK-CREATE check hard-fail in regression runner | `regression-runner.ps1` |
+| 4 | Made regression runner fail on missing golden files | `regression-runner.ps1` |
+| 5 | Strengthened P3-I01 with 6 additional ScanCommand field checks | `BridgePhase3Tests.cs` |
+| 6 | Strengthened CT14 exclusion with `Count > 0` + set-diff assertions | `ContinuityTests.cs` |
+
+### Batch 2 (Weak Test Strengthening) — COMPLETE
+
+| Test | Fix | File |
+|------|-----|------|
+| CT08 | Added `Assert.That(results.Count > 0)` — zero results can't vacuously pass `<=` check | `ContinuityTests.cs` |
+| CT09 | Replaced `if (results.Count > 0)` guard with `Assume.That` + distinct-CV check | `ContinuityTests.cs` |
+| CT10 | Added `Assume.That(results.Count > 0)` + distinct-CV check after foreach | `ContinuityTests.cs` |
+| CT18 | Replaced `if` guard with `Assume.That` for both preconditions; assertion always runs | `ContinuityTests.cs` |
+| CT22 | Added `Assume.That(ms2Commands.Count > 0)` before existing `if` guard | `ContinuityTests.cs` |
+| CT27 | Added audit comment — identical spectra defeat adaptive skip (Phase 6) | `ContinuityTests.cs` |
+| P1-I03 | Changed `TestContext.WriteLine` to `Assert.Ignore` — silent skip now visible | `BridgeSmokeTests.cs` |
+| P3-I03 | Added 6 complementary ScanCommand field checks (ScanId, Priority, IsAgc, AgcTarget, LastMass, MaxIt) | `BridgePhase3Tests.cs` |
+| CaptureConfigDefault | Replaced `StartsWith("{")` with JSON parse + key assertions | `GoldenCaptureTests.cs` |
+| CaptureConfigFull | Replaced `Assert.Ignore` with `Assume.That` + JSON parse + key assertions | `GoldenCaptureTests.cs` |
+
+### Deferred Items
+
+These items were identified in the compliance audit but deferred to later phases:
+
+| Item | Reason | Target Phase |
+|------|--------|-------------|
+| C3: MS3 command priority | Requires `processScan()` C++ routing (not yet implemented) | Phase 4 Batch C |
+| S1: `UseUnifiedBridge` default value | Feature flag default must be `False` until switch-over is verified | Phase 4 Batch D |
+| S3-S5: C++ scoring/routing implementation | Core C++ implementation items | Phase 4 Batch C |
+| CT27: FAIMS adaptive skip data | Needs per-CV test data with distinct precursor counts | Phase 6 |
+| CT28: FAIMS skip behavioral reference | Depends on CT27 data fix | Phase 6 |
