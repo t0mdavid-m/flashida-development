@@ -58,6 +58,8 @@ jobs:
           cmake --build OpenMS/build --target DeconvolvedSpectrum_OptimizationMetadata_test FLASHIdaQueueTracking_test FLASHIda_ProcessScan_test ScanCommandLayout_test
 
       - name: Run FLASH C++ unit tests
+        env:
+          OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
         run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout" --output-on-failure
 
   # ----------------------------------------------------------------
