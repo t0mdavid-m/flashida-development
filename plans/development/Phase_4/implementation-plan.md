@@ -1134,3 +1134,71 @@ These items were identified in the compliance audit but deferred to later phases
 | S3-S5: C++ scoring/routing implementation | Core C++ implementation items | Phase 4 Batch C |
 | CT27: FAIMS adaptive skip data | Needs per-CV test data with distinct precursor counts | Phase 6 |
 | CT28: FAIMS skip behavioral reference | Depends on CT27 data fix | Phase 6 |
+
+---
+
+## Compliance Remediation (2026-04-04)
+
+Based on compliance-report.md audit findings. Addresses CRIT-01, HIGH-01, HIGH-03, D1-D6, C1-C4, B1-B2, and scoring coverage.
+
+### Accept-and-Document (no code changes)
+- **D3**: UseUnifiedBridge default=true — correct for Phase 4 post-switchover
+- **D4**: use_unified_bridge not in JSON — C++ doesn't need it (C#-only flag)
+- **D7**: tracking_id_counter_ plain int under mutex — functionally equivalent to std::atomic
+- **HIGH-02**: getNextScanCommand returns 0 when empty — intentional; C# ScanScheduler provides fallback MS1
+
+### C++ Changes (OpenMS — requires DLL rebuild)
+
+| Item | Fix | Files |
+|------|-----|-------|
+| HIGH-01 | Cycle time enforcement: `msSinceLastMS1_()` helper, `last_ms1_time_` update in processScan, cycle time check in getNextScanCommand | FLASHIda.cpp, FLASHIda.h |
+| HIGH-03 | AGC command uses ms1 config values (`ms1_agc_target_`, `ms1_max_it_`) | FLASHIda.cpp |
+| D1 | Scan descriptions use base-36 `XXXX|payload` format everywhere (MS2, MS3, follow-up, conditional, MS1, AGC). Parser updated to decode base-36 (no underscore prefix) | FLASHIda.cpp |
+| D2 | Conditional MS2 gated on `tags_found = processMS2ForTagBasedTargeting()` | FLASHIda.cpp |
+| D6 | MS3 commands stored in `pending_scan_map_` | FLASHIda.cpp |
+| 1G | TRACK-CREATE logging for AGC commands | FLASHIda.cpp |
+| MS3 | `selectMS3Targets_` returns `MS3Target` struct with ion_type/frag_index; `buildMS3Command_` accepts ion annotation | FLASHIda.h, FLASHIda.cpp |
+
+### C++ Test Changes
+
+| Item | Fix | Description |
+|------|-----|-------------|
+| C1 | `ms2_result >= 0` → `ms2_result == 0` | tag_targeting: no quant/conditional → 0 follow-ups |
+| C2 | `<= total_pass1` → `< total_pass1` | mass_exclusion: strict reduction |
+| C3 | Hard positive MS3 test | Removed silent else branch, assert ms3_count > 0 |
+| C4 | `quant_sensitive_json` (threshold=0.01) | Hard positive quant follow-up assertions |
+| P4-U14 | New: cycle_time_enforcement | Verifies cycle-time forced MS1 |
+| P4-U15 | New: agc_command_values | Verifies AGC uses ms1 config values |
+| P4-U17 | New: conditional_ms2_requires_tags | Negative test — no FASTA → no conditional |
+| P4-U19 | New: tag_targeting_produces_followups | Positive test — FASTA + conditional → follow-ups |
+| D1 format | Extended P4-U03, P4-U06, P4-U07 | Verify base-36 `XXXX|` format in scan descriptions |
+
+### C# Changes (FlashIDA)
+
+| Item | Fix | Files |
+|------|-----|-------|
+| CRIT-01 | FAIMS harness drain: when UseUnifiedBridge, drain GetNextScanCommand in else branch | ContinuityTestHarness.cs |
+| D5 | CollisionEnergy rounding: `(int)Math.Round()` instead of `(int)` truncation | ScanFactory.cs |
+| B1 | Legacy bridge uses ms1_standard.txt (50 scans), hard Assert > 0 | BridgePhase4Tests.cs |
+| B2 | GetBestMS2Masses: Assert > 0, validation loop for masses/windows | BridgeMS2Tests.cs |
+| CT09 | Real peaks from ms1_standard.txt, hard Assert | ContinuityTests.cs |
+| CT10 | ms1_standard.txt peaks (not smoke), hard Assert | ContinuityTests.cs |
+
+### Scoring Field Coverage
+
+| Item | Fix | Files |
+|------|-----|-------|
+| 4A | 11 scoring properties + FromScanCommand factory + JSON round-trip | ScanCommandRecord.cs |
+| 4B | CapturedRecords in harness (unified + FAIMS paths) | ContinuityTestHarness.cs |
+| P4-I02 | CE rounding test (29.5 → 30) | ScanCommandLayoutTests.cs |
+| P4-I04 | Scoring fields JSON round-trip | ScanCommandLayoutTests.cs |
+| P4-I05 | Backward-compat: old JSON without scoring parses with 0 defaults | ScanCommandLayoutTests.cs |
+| P4-I06 | Scoring fields non-zero for MS2 commands | ContinuityTests.cs |
+
+### Remaining Steps
+
+1. Push OpenMS changes → wait for `build-dlls` workflow
+2. Download DLL artifacts to `FlashIDA/dll/`
+3. Run C# tests (golden file re-capture needed — scoring fields added)
+4. Diff golden files: verify only ScanDescription format changed + scoring fields added
+5. Update parent submodule pointers
