@@ -1049,3 +1049,74 @@ with open(sys.argv[2], 'w') as f:
 > **Phase 0 lesson #2/8:** The header line uses **tab separation** and RT in **seconds** (bare numeric, no `rt=` prefix). The C# parser (`FLASHIdaWrapper.cs`) splits on `\t` and divides by 60. See `test-file-specification.md` Section 1 for the authoritative format description.
 
 This script is run once to create the initial test data files, then the outputs are committed.
+
+---
+
+## Phase 4 Addendum (2026-04-04)
+
+*Corrections and clarifications discovered during Phase 4 implementation. The original spec text above is preserved as-is.*
+
+### Hard assertion policy
+
+All tests must use hard assertions with proper test data:
+- **No** `NOT_TESTABLE` guards, `Assume.That`, or `if`-guards that skip assertions
+- Positive tests that verify real results are preferred over negative/crash-only tests
+- Testing that no crash occurs with empty input is not considered a meaningful test
+
+### NUnit runner requirements
+
+- **Working directory** MUST be `FlashIDA/bin/` (not the test project directory)
+- Required flags: `--agents=1 --timeout=300000` (cold-cache averagine initialization takes ~3.5 min)
+- `OPENMS_DATA_PATH` environment variable must be set to locate OpenMS share data
+
+### CTest specifics
+
+- Runs from `OpenMS/build/` directory
+- Test naming: `-R FLASHIda_ProcessScan` (not `-R FLASH` which matches too broadly)
+- Relative paths to FlashIDA test data: `../../FlashIDA/test-data/...`
+
+### P/Invoke struct changes — 5-file lockstep
+
+Any change to the P/Invoke struct layout requires updating all 5 files in lockstep:
+
+1. `OpenMS/.../FLASHIda.h` — C++ struct definition + `static_assert(sizeof)`
+2. `OpenMS/.../FLASHIda.cpp` — populate new fields in bridge function
+3. `OpenMS/.../ScanCommandLayout_test.cpp` — C++ `offsetof` printer (easy to forget)
+4. `FlashIDA/.../FLASHIdaWrapper.cs` — C# `[StructLayout]` struct
+5. `FlashIDA/.../ScanCommandLayoutTests.cs` — C# size + offset assertions
+
+### P/Invoke commit sequence
+
+Struct changes must be staged across commits to avoid CI failures:
+
+1. Commit + push C++ changes to OpenMS submodule
+2. Wait for `build-dlls` workflow to succeed (~40 min)
+3. Download DLL artifacts: `gh run download <id> -R t0mdavid-m/OpenMS -n selected-bin-artifacts`
+4. Commit C# changes + updated DLLs in FlashIDA
+5. Update parent repo submodule pointers
+
+### Golden file diff procedure
+
+Before overwriting any golden file:
+1. Diff old vs new output
+2. Categorize changes: ID rebase, format change, structural addition
+3. Verify that non-changing fields are identical
+4. Unexpected structural changes (e.g., new records appearing) may be correct but require explicit verification
+
+### Engine state accumulation
+
+The C++ `SpectralDeconvolution` engine needs multiple MS1 scans to accumulate state before producing results. A single scan (even with hundreds of peaks) returns 0 commands. Test data should push all available scans (~50 from `ms1_standard.txt`).
+
+### Conditional MS2 testing
+
+Conditional MS2 tests require a FASTA file with matching protein sequences plus successful tag detection. Configs without a FASTA file path cannot produce positive conditional MS2 results.
+
+### Phase 4 test counts
+
+- **C++ unit tests**: 12+ test sections in `FLASHIda_ProcessScan_test`
+- **C# NUnit tests**: 20+ test methods across `BridgeTests.cs`, `ContinuityTests.cs`, `ScanCommandLayoutTests.cs`
+- **Golden files**: 17 total (10 TSV + 7 continuity JSON from earlier phases, plus new Phase 4 additions)
+
+### FAIMS limitation
+
+The per-CV wrapper architecture means the continuity test harness cannot fully drain C++ queues across CV boundaries. FAIMS-specific tests (CT09/CT10, CT27/CT28) use conditional validation. Full FAIMS testing deferred to Phase 6 when the per-CV wrapper is unified.

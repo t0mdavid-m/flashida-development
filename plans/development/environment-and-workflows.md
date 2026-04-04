@@ -291,3 +291,48 @@ Detailed requirements for each file are in the corresponding phase plan.
 **`cpp-unit-tests` activation:** Remove `if: false` from the job in `flashida-ci.yml` when Phase 2 begins. Once active, the job runs on every push for all subsequent phases. Phase 2 requires the full apt dependency list (see Section 1) and CMake flags `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja` for efficient test-only builds.
 
 **Stress test step activation:** Remove `if: false` from the stress test step inside `windows-tests` when Phase 3 begins. Once active, it runs on every push for all subsequent phases.
+
+---
+
+## Phase 4 Addendum (2026-04-04)
+
+*Corrections and clarifications discovered during Phase 4 implementation. The original spec text above is preserved as-is.*
+
+### build-dlls workflow location
+
+The `build-dlls` workflow lives in the **OpenMS submodule repo** (`OpenMS/.github/workflows/build_dlls.yml`), NOT in the FlashIDA repo. It auto-triggers on push to the `flashida-v9-bridge` branch.
+
+### DLL artifact download
+
+```bash
+gh run download <run-id> -R t0mdavid-m/OpenMS -n selected-bin-artifacts
+```
+
+The `-R` flag is required because the workflow runs in the OpenMS repo, not the FlashIDA parent repo.
+
+### Workflow activation status (as of Phase 4)
+
+| Workflow/Step | Status | Since |
+|---------------|--------|-------|
+| `cpp-unit-tests` | ACTIVE | Phase 2 |
+| Stress tests | Run within NUnit (not a separate CI step) | Phase 3 |
+| `build-dlls` (OpenMS repo) | ACTIVE | Phase 3 |
+
+### Additional CI steps not in original spec
+
+The following CI steps were added during implementation but not specified in the original environment doc:
+
+- **Phase 4 golden capture**: Captures process-scan TSV golden files as CI artifacts
+- **Phase 1 JSON golden capture**: Captures JSON config golden files
+- **Test data directory verification**: Validates that all expected test data files exist before running tests
+- **Continuity golden artifact uploads**: Uploads continuity JSON golden files for cross-platform comparison
+
+### cpp-unit-tests targets
+
+The C++ test job runs a hardcoded pattern filter:
+
+```
+ctest -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout"
+```
+
+New C++ test classes must be added to this pattern in `flashida-ci.yml` to be picked up by CI.

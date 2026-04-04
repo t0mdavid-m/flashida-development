@@ -895,3 +895,65 @@ for label, ces in results.items():
 8. **Thread safety:** `queue_mutex_` protects ProcessScan (TPL) + GetNextScanCommand (instrument).
 9. **Old bridge functions survive through Phase 4**, removed in Phase 8.
 10. **ScanScheduler eliminated** in Phase 6 (FAIMS absorption).
+
+---
+
+## Phase 4 Addendum (2026-04-04)
+
+*Corrections and clarifications discovered during Phase 4 implementation. The original spec text above is preserved as-is.*
+
+### ScanCommand struct update
+
+The ScanCommand struct is now **1240 bytes** (up from the original 1152-byte target). It carries 11 scoring fields beyond the original layout:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| Qscore | double | Quality score |
+| MonoMass | double | Monoisotopic mass |
+| ChargeCos | double | Charge cosine similarity |
+| ChargeSnr | double | Charge signal-to-noise |
+| IsoCos | double | Isotope cosine similarity |
+| Snr | double | Signal-to-noise ratio |
+| ChargeScore | double | Charge score |
+| PpmError | double | Parts-per-million mass error |
+| PrecursorIntensity | double | Per-charge intensity (`PeakGroup::getChargeIntensity(charge)`) |
+| PeakgroupIntensity | double | Total peakgroup intensity (`PeakGroup::getIntensity()`) |
+| HcdEnergy | double | HCD collision energy |
+| Pad2 | byte[8] | Alignment padding |
+
+### GetNextScanCommand pseudocode corrections
+
+- **Cycle time enforcement**: Implemented via `msSinceLastMS1_()` helper using `steady_clock`, not a simple counter
+- **Empty queue behavior**: Returns 0 (not an MS1 scan); the C# `ScanScheduler` provides the MS1 fallback. This is accepted deviation HIGH-02.
+- **AGC command fields**: Uses `ms1_agc_target_` and `ms1_max_it_` from JSON config, not hardcoded values
+
+### Scan description format
+
+Base-36 encoded tracking IDs with `XXXX|payload` format:
+
+| Scan type | Example |
+|-----------|---------|
+| MS2 | `00ab\|1999.50@4` |
+| MS3 | `00ac\|MS3 mz=500.50 z=3` |
+| Conditional MS2 | `00ae\|conditional mz=500.50` |
+| AGC calibration | `00b0\|AGC calibration` |
+| MS1 survey | `00af\|MS1 survey` |
+
+### Conditional MS2 gating
+
+Conditional MS2 now requires `processMS2ForTagBasedTargeting()` to return true before firing. It no longer fires unconditionally when tag targeting is enabled.
+
+### Accepted deviations from original spec
+
+| ID | Description |
+|----|-------------|
+| D3 | `UseUnifiedBridge=true` is the default post-switchover |
+| D4 | `use_unified_bridge` config flag is C#-only (not passed to C++) |
+| D7 | Plain `int` under mutex instead of `Interlocked` / `atomic<int>` |
+| HIGH-02 | `GetNextScanCommand` returns 0 when queue is empty (not MS1) |
+
+### Other corrections
+
+- **Feature flag default**: `UseUnifiedBridge` defaults to `true` in production (post-switchover verified)
+- **CollisionEnergy rounding**: C# uses `Math.Round()`, not truncation
+- **Phase 4 status**: COMPLETE

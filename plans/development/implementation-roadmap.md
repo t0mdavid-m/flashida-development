@@ -441,3 +441,45 @@ Phase 8 (cleanup)     ---+---- Build #4
 | 7 | P/Invoke Declarations (5 total) | Phase 3 (add new), Phase 8 (remove old) | Phase 8 |
 | 8 | JSON Configuration | Phase 1 | Phase 1 |
 | 9 | OptimizationMetadata | Phase 2 (struct), Phase 7 (populated) | Phase 7 |
+
+---
+
+## Phase 4 Addendum (2026-04-04)
+
+*Corrections and clarifications discovered during Phase 4 implementation. The original spec text above is preserved as-is.*
+
+### Phase 4 status
+
+**COMPLETE** — all compliance remediation done, all tests passing.
+
+### ScanCommand final size
+
+1240 bytes (11 scoring fields added beyond the original 1152-byte target): Qscore, MonoMass, ChargeCos, ChargeSnr, IsoCos, Snr, ChargeScore, PpmError, PrecursorIntensity, PeakgroupIntensity, HcdEnergy + Pad2.
+
+### DLL build batching workflow
+
+The actual commit sequence for P/Invoke changes:
+
+1. Push C++ changes to OpenMS submodule branch (`flashida-v9-bridge`)
+2. `build-dlls` workflow auto-triggers (~40 min build time)
+3. Download artifacts: `gh run download <id> -R t0mdavid-m/OpenMS -n selected-bin-artifacts`
+4. Update DLLs in `FlashIDA/dll/`, commit C# changes + DLLs in FlashIDA
+5. Update parent repo submodule pointers
+
+### 5-file lockstep requirement
+
+Any P/Invoke struct change requires updating 5 files in lockstep (not just the obvious 3): FLASHIda.h, FLASHIda.cpp, ScanCommandLayout_test.cpp, FLASHIdaWrapper.cs, ScanCommandLayoutTests.cs.
+
+### Golden file re-capture
+
+Golden files must be re-captured whenever struct fields are added or the bridge format changes. Phase 4 has 17 golden files (10 TSV process-scan files + 7+ continuity JSON files). Always diff old vs new before overwriting.
+
+### Phase 4 test counts (corrected)
+
+~31 new tests in Phase 4 (not the 21 originally estimated). Cumulative total: ~70 tests across all phases.
+
+### Deferred to Phase 6
+
+- CT27/CT28 FAIMS adaptive skip tests (need per-CV test data)
+- FAIMS per-CV wrapper unification
+- CRIT-01 full resolution (full queue draining across CV boundaries)

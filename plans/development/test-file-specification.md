@@ -807,3 +807,125 @@ FlashIDA/src/Flash.Tests/
     ├── ContinuityTestHarness.cs    # Phase 0: pipeline harness
     └── ContinuityTests.cs          # Phase 0: AL-CT01–CT32 (NEVER deleted)
 ```
+
+---
+
+## Phase 4 Addendum (2026-04-04)
+
+*Corrections and clarifications discovered during Phase 4 implementation. The original spec text above is preserved as-is.*
+
+### New spectrum file
+
+| File | Description |
+|------|-------------|
+| `spectra/ms2_quant_tmt.txt` | TMT quantification MS2 fragment data |
+
+### New config files
+
+| File | Description |
+|------|-------------|
+| `configs/method_default_legacy.xml` | Default config with `UseUnifiedBridge=false` for legacy bridge tests |
+| `configs/method_inclusion_strict.xml` | Strict inclusion list matching mode |
+| `configs/method_ms3_mode1_hcd.xml` | MS3 mode 1 with HCD fragmentation |
+| `configs/method_ms3_mode2_hcd.xml` | MS3 mode 2 with HCD fragmentation |
+| `configs/method_ms3_mode3_hcd.xml` | MS3 mode 3 with HCD fragmentation |
+
+### New golden files
+
+**TSV process-scan golden files:**
+
+| File | Description |
+|------|-------------|
+| `golden/phase4_inclusion_strict.tsv` | Strict inclusion mode output |
+
+**Continuity JSON golden files:**
+
+| File | Description |
+|------|-------------|
+| `golden/continuity_inclusion_matching.json` | Inclusion list matching results |
+| `golden/continuity_inclusion_strict_matching.json` | Strict inclusion list matching results |
+| `golden/continuity_ms3_mode1_real.json` | MS3 mode 1 with HCD results |
+| `golden/continuity_ms3_mode2_real.json` | MS3 mode 2 with HCD results |
+| `golden/continuity_ms3_mode3_real.json` | MS3 mode 3 with HCD results |
+| `golden/continuity_quant_ms2return.json` | Quant mode MS2 return results |
+| `golden/continuity_standard_dda_rich.json` | Standard DDA with rich peak data |
+| `golden/continuity_tag_ms2return.json` | Tag targeting MS2 return results |
+
+### Scan description format in golden files
+
+Changed from `_N|mass@charge` (0-based integer tracking IDs) to `XXXX|mass@charge` (base-36 encoded tracking IDs). Examples:
+- MS2: `00ab|1999.50@4`
+- MS3: `00ac|MS3 mz=500.50 z=3`
+- AGC: `00b0|AGC calibration`
+
+### Golden file schema update
+
+The 11 scoring fields (Qscore, MonoMass, ChargeCos, ChargeSnr, IsoCos, Snr, ChargeScore, PpmError, PrecursorIntensity, PeakgroupIntensity, HcdEnergy) are now populated for MS2 commands in golden files. Previously these were 0 in all golden files.
+
+### Updated directory layout
+
+```
+FlashIDA/test-data/
+├── spectra/
+│   ├── ms1_smoke_test.txt
+│   ├── ms1_standard.txt
+│   ├── ms2_smoke_test.txt
+│   ├── ms2_hcd_fragment.txt
+│   └── ms2_quant_tmt.txt              # NEW Phase 4
+├── configs/
+│   ├── method_default.xml
+│   ├── method_default_topn5.xml
+│   ├── method_default_legacy.xml       # NEW Phase 4
+│   ├── method_deep.xml
+│   ├── method_exclusion.xml
+│   ├── method_faims_3cv.xml
+│   ├── method_faims_skip.xml
+│   ├── method_inclusion.xml
+│   ├── method_inclusion_strict.xml     # NEW Phase 4
+│   ├── method_json_roundtrip.xml
+│   ├── method_ms3_mode1.xml
+│   ├── method_ms3_mode1_hcd.xml        # NEW Phase 4
+│   ├── method_ms3_mode2.xml
+│   ├── method_ms3_mode2_hcd.xml        # NEW Phase 4
+│   ├── method_ms3_mode3.xml
+│   ├── method_ms3_mode3_hcd.xml        # NEW Phase 4
+│   ├── method_quant.xml
+│   ├── method_tag_targeting.xml
+│   ├── test_fasta.fasta
+│   ├── test_inclusion_list.txt
+│   └── test_target_log.log
+├── golden/
+│   ├── README.md
+│   ├── baseline_phase0.tsv
+│   ├── baseline_phase3.tsv
+│   ├── phase4_deep_mode.tsv
+│   ├── phase4_exclusion.tsv
+│   ├── phase4_inclusion.tsv
+│   ├── phase4_inclusion_strict.tsv     # NEW Phase 4
+│   ├── phase4_ms3_mode1.tsv
+│   ├── phase4_ms3_mode2.tsv
+│   ├── phase4_ms3_mode3.tsv
+│   ├── phase4_quant.tsv
+│   ├── phase4_standard_dda.tsv
+│   ├── phase4_tag_targeting.tsv
+│   ├── continuity_exclusion.json
+│   ├── continuity_faims_skip.json
+│   ├── continuity_inclusion.json
+│   ├── continuity_inclusion_matching.json      # NEW Phase 4
+│   ├── continuity_inclusion_strict_matching.json  # NEW Phase 4
+│   ├── continuity_ms3_mode1.json
+│   ├── continuity_ms3_mode1_real.json          # NEW Phase 4
+│   ├── continuity_ms3_mode2.json
+│   ├── continuity_ms3_mode2_real.json          # NEW Phase 4
+│   ├── continuity_ms3_mode3.json
+│   ├── continuity_ms3_mode3_real.json          # NEW Phase 4
+│   ├── continuity_quant.json
+│   ├── continuity_quant_ms2return.json         # NEW Phase 4
+│   ├── continuity_standard_dda.json
+│   ├── continuity_standard_dda_rich.json       # NEW Phase 4
+│   ├── continuity_tag_ms2return.json           # NEW Phase 4
+│   └── continuity_tag_targeting.json
+└── json/
+    ├── config_default.json
+    └── config_full.json
+```

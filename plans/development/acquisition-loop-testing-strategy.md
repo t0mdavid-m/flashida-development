@@ -660,3 +660,64 @@ These items should be addressed by a manual instrument commissioning checklist (
 | Tracking IDs | Uniqueness only (Tier 4) | **AL-CT07, CT31** |
 | Stress (10k scans) | 0% | **AL-CT31–CT32** |
 | Flash.cs event loop | 0% | 0% (requires instrument) |
+
+---
+
+## Phase 4 Addendum (2026-04-04)
+
+*Corrections and clarifications discovered during Phase 4 implementation. The original spec text above is preserved as-is.*
+
+### ScanCommandRecord expanded
+
+`ScanCommandRecord` now has **22 properties** (up from the original 11):
+
+- 11 original fields (IsolationMz, IsolationWidth, CollisionEnergy, ChargeState, etc.)
+- ScanType (MS1/MS2/MS3/AGC)
+- ChargeState (from ScanCommand struct)
+- 11 scoring fields: Qscore, MonoMass, ChargeCos, ChargeSnr, IsoCos, Snr, ChargeScore, PpmError, PrecursorIntensity, PeakgroupIntensity, HcdEnergy
+
+Scoring fields are only populated via `FromScanCommand()` (unified bridge path). The legacy `FromCustomScan()` path leaves them at 0.
+
+### New Phase 4 continuity tests (CT33–CT42)
+
+| Test ID | Name | Config | Description |
+|---------|------|--------|-------------|
+| CT33 | TagTargetingMS2Return | method_tag_targeting.xml | Tag-based targeting with MS2 follow-up |
+| CT34 | ConditionalMS2 | method_tag_targeting.xml | Conditional MS2 gated by tag detection |
+| CT35 | MS3Mode1Real | method_ms3_mode1_hcd.xml | MS3 mode 1 with HCD fragmentation |
+| CT36 | MS3Mode2Real | method_ms3_mode2_hcd.xml | MS3 mode 2 with HCD fragmentation |
+| CT37 | MS3Mode3Real | method_ms3_mode3_hcd.xml | MS3 mode 3 with HCD fragmentation |
+| CT38 | QuantMS2Return | method_quant.xml | Isobaric quantification MS2 return |
+| CT39 | InclusionMatching | method_inclusion.xml | Inclusion list matching |
+| CT40 | InclusionStrictMatching | method_inclusion_strict.xml | Strict inclusion list matching |
+| CT41 | StandardDdaRich | method_default.xml | Standard DDA with rich peak data |
+| CT42 | DeepMode | method_deep.xml | Deep acquisition mode |
+
+### CT09/CT10 FAIMS limitation
+
+These tests use conditional validation (`Assert.That(..., Is.GreaterThanOrEqualTo(0))`) because the per-CV wrapper architecture prevents the harness from fully draining C++ queues across CV boundaries. Phase 6 will unify the wrapper and enable hard assertions.
+
+### CT27/CT28 deferred
+
+Marked `[Ignore]` — requires per-CV test data with distinct precursor counts across CV values. Will be addressed in Phase 6 with the FAIMS wrapper unification.
+
+### ContinuityTestHarness API additions
+
+- `CapturedRecords` property — exposes the full list of `ScanCommandRecord` for assertions
+- `CollectAllResults()` method — runs the full scan pipeline and collects results
+- Unified bridge branching — harness routes through `FromScanCommand()` when `UseUnifiedBridge=true`
+
+### MockMsScan new factory methods
+
+| Method | Description |
+|--------|-------------|
+| `EmptyMS1()` | MS1 scan with no peaks |
+| `NoiseOnlyMS1()` | MS1 scan with only noise-level peaks |
+| `WithFaimsPeaks(cv)` | MS1 scan with FAIMS CV-specific peaks |
+| `FromTsvAllScans(path)` | Load all scans from a TSV spectrum file |
+| `MS2WithDescription(desc)` | MS2 scan with custom scan description |
+| `FromTsvAsMS2(path, desc)` | Load TSV data as MS2 scan |
+
+### Phase 4 test count
+
+40 total continuity tests (30 from Phases 0–3 + 10 new in Phase 4).
