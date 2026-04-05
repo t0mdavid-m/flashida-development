@@ -24,7 +24,7 @@ The following must be complete and verified before starting Phase 7:
 
 1. **Phase 6 delivered and all tests passing.** C++ fully owns the scan queue including FAIMS CV cycling. `ScanScheduler.cs` and `FAIMSScanProcessor.cs` have been deleted. `GetNextScanCommand` is the sole source of all scan commands including CV injection.
 
-2. **`OptimizationMetadata` struct exists** (delivered in Phase 2, Build #1). `OptimizationMetadata.h` is already present in the OpenMS source tree with 18 fields. `DeconvolvedSpectrum` already carries `std::optional<OptimizationMetadata> opt_metadata_` and the accessor methods `getOrCreateOptimizationMetadata()`, `getOptimizationMetadata()`, `hasOptimizationMetadata()`. The `toSpectrum()` method already serializes metadata fields via `setMetaValue()` when present. Phase 2 also delivered `GetConfigInt`/`GetConfigDouble` bridge functions and 5 C++ unit tests (cumulative: 59 tests after Phase 2). Key Phase 2 API details that Phase 7 must respect:
+2. **`OptimizationMetadata` struct exists** (delivered in Phase 2, Build #1). `OptimizationMetadata.h` is already present in the OpenMS source tree with 18 fields. `DeconvolvedSpectrum` already carries `std::optional<OptimizationMetadata> opt_metadata_` and the accessor methods `getOrCreateOptimizationMetadata()`, `getOptimizationMetadata()`, `hasOptimizationMetadata()`. The `toSpectrum()` method already serializes metadata fields via `setMetaValue()` when present. Phase 2 also delivered `GetConfigInt`/`GetConfigDouble` bridge functions and 5 C++ unit tests (cumulative: 59 tests after Phase 2; ~70 after Phase 4, ~76 after Phase 5, ~89 after Phase 6). Key Phase 2 API details that Phase 7 must respect:
    - **`toSpectrum()` returns `MSSpectrum` by value** (`MSSpectrum toSpectrum(int to_charge, double tol = 10.0, bool retain_undeconvolved = false)`), NOT void with an out-parameter. All code must use `MSSpectrum out = ds.toSpectrum(1);`.
    - **`DeconvolvedSpectrum` constructor takes `scan_number`** (`explicit DeconvolvedSpectrum(int scan_number)`), NOT `ms_level`.
    - **`toSpectrum()` requires at least one PeakGroup** — it unconditionally accesses `peak_groups_[0].isPositive()`. Any test calling `toSpectrum()` must push a default `PeakGroup` first to avoid undefined behavior.
@@ -113,7 +113,7 @@ The following lessons from Phase 2 also apply:
 
 30. **`(void)var;` for MSVC `/WX` compliance in test code (Phase 2 lesson #8):** When a variable is used only in a `TEST_EQUAL` assertion but not otherwise referenced, MSVC will warn about unused variables under `/WX`. Use `(void)var;` after the assertion to suppress the warning. This applies to all Phase 7 C++ unit tests (P7-U01 through P7-U10). Example: `(void)meta;` after asserting on metadata fields.
 
-31. **Phase 2 cumulative test count (Phase 2 lesson #9):** After Phase 2, there are 59 cumulative tests. Phase 7 adds 12 tests (P7-U01 through P7-U10 + P7-R01, P7-R02), bringing the cumulative total to 91 (after Phases 3-6 add their tests).
+31. **Cumulative test counts (Phase 2 lesson #9, updated with Phase 4 actuals):** After Phase 2, there were 59 cumulative tests. Actual counts after subsequent phases: Phase 4 ~70, Phase 5 ~76, Phase 6 ~89. Phase 7 adds 12 tests (P7-U01 through P7-U10 + P7-R01, P7-R02), bringing the cumulative total to ~101.
 
 ---
 
@@ -129,11 +129,11 @@ The following deviations discovered or introduced during Phases 3–6 affect Pha
 
 4. **`IsolationStage` size = 80 bytes** — Unchanged from Phase 3. No impact on Phase 7 beyond awareness.
 
-5. **`ScanCommand.enqueue_timestamp_ms` already present (from Phase 4)** — `uint64_t enqueue_timestamp_ms` was added to `ScanCommand` in Phase 4. Phase 7 exploration commands should populate this field (e.g., via `currentTimeMs_()`) for consistency with the audit trail. The `ExplorationGroup.start_ms` field is separate (group-level timestamp), but each individual `ScanCommand` also carries its own enqueue timestamp.
+5. **`ScanCommand.enqueue_timestamp_ms` already present (from Phase 4)** — `uint64_t enqueue_timestamp_ms` was added to `ScanCommand` in Phase 4, along with 11 scoring fields that brought the struct from 1144 bytes (Phase 3) to **1240 bytes**. Phase 7 exploration commands should populate this field (e.g., via `currentTimeMs_()`) for consistency with the audit trail. The `ExplorationGroup.start_ms` field is separate (group-level timestamp), but each individual `ScanCommand` also carries its own enqueue timestamp.
 
 6. **`ScanCommand.faims_cv` already present (from Phase 6)** — `double faims_cv` was added to `ScanCommand` in Phase 6. Phase 7 exploration commands must populate `faims_cv` via `currentCV_()` (or 0.0 in non-FAIMS mode). The `ExplorationGroup.faims_cv` field already captures this (see Step 4), and child MS3 groups inherit the parent's CV (see Step 8).
 
-7. **ScanCommand size** — The struct size changed twice since Phase 3: Phase 4 added `enqueue_timestamp_ms` (+8 bytes), Phase 6 added `faims_cv` (+8 bytes). Phase 7 must use the current post-Phase-6 size in any size assertions or layout assumptions. Do not hard-code 1144 (the Phase 3 size).
+7. **ScanCommand size** — The struct size progression: 1144 (Phase 3) -> **1240** (Phase 4, added `enqueue_timestamp_ms` + 11 scoring fields) -> **~1248** (Phase 6, added `faims_cv`). Phase 7 must use the current post-Phase-6 size (~1248) in any size assertions or layout assumptions. Do not hard-code 1144 (Phase 3) or 1240 (Phase 4).
 
 8. **CI `[TRACK-CREATE]` is hard-fail (from Phase 4)** — Every regression test must produce `[TRACK-CREATE]` entries in stdout or CI will fail. Phase 7's exploration commands are pushed via `queues_[0]` with `logTrackCreate_(cmd)` calls (Step 4, Step 8). The `P7-R02` regression test must emit `[TRACK-CREATE]` entries for all exploration variant commands. Failure to emit these entries will cause the CI gate to fail, independent of golden-file comparison.
 
@@ -985,7 +985,7 @@ This is also verified structurally by P7-U07 and P7-U08 in the `cpp-unit-tests` 
 ## Definition of Done
 
 - [ ] All 12 Phase 7 tests pass: P7-U01 through P7-U10 (C++, `ubuntu-latest`) and P7-R01, P7-R02 (`windows-latest`).
-- [ ] All prior phase tests (P0 through P6, cumulative total 79 tests) continue to pass — no regressions introduced.
+- [ ] All prior phase tests (P0 through P6, cumulative total ~89 tests) continue to pass — no regressions introduced.
 - [ ] `ExplorationGroup` and `ExplorationVariant` structs are defined in `FLASHIda.h`.
 - [ ] `initiateMS2Exploration_()`, `feedExplorationResult_()`, `initiateMS3Exploration_()`, `computeFragmentationQuality_()`, `buildCEVariants_()` are implemented in `FLASHIda.cpp`.
 - [ ] `getNextScanCommand()` suppresses MS1 cycle time injection when `active_exploration_groups_` is non-empty.
@@ -1042,12 +1042,12 @@ This section records which Phase 0–6 lessons are directly reflected in this im
 | CMake flags for test-only builds | Phase 2 #6 | Cross-References item 28 |
 | ccache key uses `hashFiles('OpenMS/CMakeLists.txt')` | Phase 2 #7 | Cross-References item 29 |
 | `(void)var;` for MSVC `/WX` in test code | Phase 2 #8 | Cross-References item 30; P7-U10 description; Test Cases preamble |
-| Phase 2 cumulative: 59 tests | Phase 2 #9 | Cross-References item 31 |
+| Cumulative test counts (59 after P2, ~70 P4, ~76 P5, ~89 P6) | Phase 2 #9 + Phase 4 actuals | Cross-References item 31 |
 | `ScanCommand.scan_id` is first field (not `msn_level`) | Phase 3 deviation | Phase 3–6 Deviations Impact §1 |
 | `IsolationStage.collision_energy` is `double` (not `int`) | Phase 3 deviation | Phase 3–6 Deviations Impact §2; Step 1 (CE config fields); Step 2 (`ExplorationVariant.collision_energy`); Step 3 (`buildCEVariants_` signature); Step 4 (CE vector type); Step 8 (MS3 CE vector); P7-U01, P7-U03, P7-U09 expected outcomes |
 | `IsolationStage.activation_type` is `char[32]` (not `char[16]`) | Phase 3 deviation | Phase 3–6 Deviations Impact §3; Step 2 (`ExplorationVariant.activation_type` comment) |
 | `IsolationStage` size = 80 bytes | Phase 3 | Phase 3–6 Deviations Impact §4 |
 | `ScanCommand.enqueue_timestamp_ms` added in Phase 4 | Phase 4 | Phase 3–6 Deviations Impact §5; Step 4 (command-building comment) |
 | `ScanCommand.faims_cv` added in Phase 6 | Phase 6 | Phase 3–6 Deviations Impact §6; Step 4 (command-building comment); Step 8 (MS3 command comment) |
-| ScanCommand size changed twice (Phase 4 + Phase 6) | Phase 3–6 | Phase 3–6 Deviations Impact §7 |
+| ScanCommand size: 1144 -> 1240 (P4) -> ~1248 (P6) | Phase 3–6 | Phase 3–6 Deviations Impact §7 |
 | CI `[TRACK-CREATE]` is hard-fail | Phase 4 (F-5 fix) | Phase 3–6 Deviations Impact §8; Step 4 (`logTrackCreate_` comment); Step 8 (`logTrackCreate_` comment); P7-R02 expected outcome; DoD checklist |

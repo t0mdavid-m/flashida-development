@@ -16,10 +16,10 @@
 This plan has been updated to reflect actual Phase 4 outcomes. Key changes from original estimates:
 - **ScanCommand struct size**: 1240 bytes (was "expected ~1152"), with 11 scoring fields added
 - **GetNextScanCommand**: Returns 0 when queue is empty (accepted deviation HIGH-02); C# ScanScheduler provides MS1 fallback
-- **Test counts**: Phase 4 delivered ~31 tests (not 21), cumulative ~70 (not 60); Phase 5 target is ~76
+- **Test counts**: Phase 4 delivered ~31 tests (not 21), cumulative ~70 (not 60); Phase 5 actual: 77 (CT27/CT28 activated)
 - **Scan descriptions**: Base-36 encoded tracking IDs (`XXXX|mass@charge`), not sequential (`_N|mass@charge`)
 - **ScanCommandRecord**: Expanded to 22 properties (11 original + ScanType + ChargeState + 11 scoring)
-- **CT27/CT28 FAIMS tests**: `[Ignore]`d in Phase 4, deferred to Phase 6
+- **CT27/CT28 FAIMS tests**: Were `[Ignore]`d in Phase 4; **activated in Phase 5** with real per-CV data (300 scans from `ms1_faims_3cv.txt`). CT28 golden file captured via legacy bridge.
 - **UseUnifiedBridge**: Defaults to `true` in production (post-switchover, accepted deviation D3)
 - **Phase 4 status**: COMPLETE in baseline-plan.md
 
@@ -50,7 +50,7 @@ Phase 4 is complete. All Phase 4 work (unified bridge switch-over, `UseUnifiedBr
 
 2. **FAIMS regression passing.** `Flash.exe ms1_faims_3cv.txt output.tsv method_faims_3cv.xml` produces correct output under `UseUnifiedBridge=True`. (FAIMS still runs through `ScanScheduler` at this point; this must be verified before that dependency is removed.) Note: the entry point is `FLASHIdaWrapper.Main()`, not `Flash.Main()` — there is no `-t` flag (see Phase 0 lesson #1).
 
-3. **Phase 4 golden files committed.** The pre-switch golden baselines (captured from the old bridge path in Phase 4 Step 0, before the unified bridge implementation) are the regression baseline for Phase 5. They were verified as behaviorally equivalent to the unified bridge output by P4-R02 through P4-R10. They must be committed to `FlashIDA/test-data/golden/` and referenced by `P5-R01` and `P5-R02`. The specific files are: `phase4_standard_dda.tsv`, `phase4_deep_mode.tsv`, `phase4_inclusion.tsv`, `phase4_exclusion.tsv`, `phase4_tag_targeting.tsv`, `phase4_quant.tsv`, `phase4_ms3_mode1.tsv`, `phase4_ms3_mode2.tsv`, `phase4_ms3_mode3.tsv`. See [test-file-specification.md §2.2](../test-file-specification.md) for the full golden file inventory.
+3. **Phase 4 golden files committed.** The pre-switch golden baselines (captured from the old bridge path in Phase 4 Step 0, before the unified bridge implementation) are the regression baseline for Phase 5. They were verified as behaviorally equivalent to the unified bridge output by P4-R02 through P4-R10. They must be committed to `FlashIDA/test-data/golden/` and referenced by `P5-R01`. The specific files are: `phase4_standard_dda.tsv`, `phase4_deep_mode.tsv`, `phase4_inclusion.tsv`, `phase4_exclusion.tsv`, `phase4_tag_targeting.tsv`, `phase4_quant.tsv`, `phase4_ms3_mode1.tsv`, `phase4_ms3_mode2.tsv`, `phase4_ms3_mode3.tsv`. See [test-file-specification.md §2.2](../test-file-specification.md) for the full golden file inventory.
 
 4. **Build #2 OpenMS DLLs available.** The OpenMS DLLs from Build #2 (Phase 4) are committed in `FlashIDA/dll/`. MSBuild copies them to the build output via `CopyToOutputDirectory` in `Flash.csproj` — no CI download or cache step is needed (see Phase 0 lesson #5). No new C++ build is triggered in this phase. **Note:** The Build #2 DLL includes the `enqueue_timestamp_ms` field and 11 scoring fields added to `ScanCommand` in Phase 4. The Phase 4 `static_assert` confirms the struct size is **1240 bytes**.
 
@@ -296,7 +296,7 @@ All 5 tests run on `windows-latest`. No C++ unit tests exist in this phase. The 
 | P5-R01 | 3 | All acquisition modes produce output identical to Phase 4 golden files | `Flash.exe <input> <output> <method.xml>` with each of the following configs matches the corresponding Phase 4 golden file: `method_default.xml`, `method_deep.xml`, `method_inclusion.xml`, `method_exclusion.xml`, `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`, `method_ms3_mode2.xml`, `method_ms3_mode3.xml` — spectrum inputs are `ms1_standard.txt` (all modes) and `ms2_hcd_fragment.txt` (tag-targeting, quant, MS3 modes); comparison via `compare_golden.py` with default tolerances (see [test-file-specification.md §1.2](../test-file-specification.md), [§1.3](../test-file-specification.md), [§2.2](../test-file-specification.md), [§4.1](../test-file-specification.md)); each run must emit `[TRACK-CREATE]` entries in stdout (CI hard-fail gate — Phase 3 F-5 fix) | `regression-runner.ps1` invoked from CI `windows-tests` job |
 | ~~P5-R02~~ | ~~3~~ | **REMOVED** — `Flash.exe` test mode ignores CVs; FAIMS coverage is via continuity tests (CT09, CT10, CT11) only | N/A | N/A |
 
-**Regression inherited from Phases 0–4:** All P0-* through P4-* tests must continue to pass. Phase 4 ended at ~70 cumulative tests (~31 new in Phase 4, including 10 continuity tests CT33–CT42). P5 adds 5 tests for a cumulative total of ~75.
+**Regression inherited from Phases 0–4:** All P0-* through P4-* tests must continue to pass. Phase 4 ended at ~70 cumulative tests (~31 new in Phase 4, including 10 continuity tests CT33–CT42). P5 adds 5 new tests + activates CT27/CT28 for a cumulative total of 77.
 
 ---
 
@@ -392,7 +392,7 @@ Verify the following in CI. After pushing Phase 5 changes, confirm the `windows-
 
 6. **NUnit suite passes.**
    CI step: NUnit console runner invoked by full NuGet packages path from working directory `FlashIDA/bin/` with `--agents=1 --timeout=300000` and `OPENMS_DATA_PATH` set (see Phase 0 lesson #12, Phase 1 lessons #5 and #8). Run by the `windows-tests` job.
-   Expected: All prior-phase tests plus 5 Phase 5 tests pass, 0 failures, 0 errors. (Phase 4 ended at ~70 cumulative; Phase 5 target is ~75 cumulative.)
+   Expected: All 77 tests pass, 0 failures, 0 errors. (Phase 4 ended at ~70 cumulative; Phase 5 actual: 77 including activated CT27/CT28.)
 
 ---
 
@@ -473,7 +473,8 @@ The following lessons from Phase 0, Phase 1, and Phase 2 are relevant to Phase 5
 - [ ] `method.xml` no longer contains `<UseUnifiedBridge>` element
 - [ ] `ScanScheduler.cs` is still present and still used by `FAIMSScanProcessor`
 - [ ] All 5 Phase 5 tests pass in CI: P5-U01, P5-U02, P5-U03, P5-U04, P5-R01
-- [ ] All prior-phase tests (P0-* through P4-*) continue to pass in CI (Phase 4 ended at ~70 cumulative; Phase 5 target is ~75 cumulative)
+- [ ] CT27/CT28 FAIMS tests pass (activated from `[Ignore]` with real per-CV data and golden file)
+- [ ] All 77 tests pass in CI (Phase 4: ~70 + Phase 5: 5 new + CT27/CT28 activated)
 - [ ] P5-R01 produces `[TRACK-CREATE]` entries in stdout (CI hard-fail gate — Phase 3 F-5 fix)
 - [ ] CI `windows-tests` job green on `windows-latest` with Build #2 DLL artifact
 - [ ] `msbuild /warnaserror` succeeds with zero warnings
@@ -481,3 +482,32 @@ The following lessons from Phase 0, Phase 1, and Phase 2 are relevant to Phase 5
 - [ ] `ScanCommand` struct size matches Phase 4 value of **1240 bytes** (includes `enqueue_timestamp_ms` and 11 scoring fields; no longer 1144 bytes)
 - [ ] `faims_cv` is NOT present in `ScanCommand` (deferred to Phase 6)
 - [ ] Phase 5 branch merged; ready for Phase 6 (FAIMS Absorption, Build #3)
+
+---
+
+## Implemented: FAIMS Continuity Test Updates (2026-04-05)
+
+The following changes were implemented as part of Phase 5 FAIMS test infrastructure work. CI run 24005836764 confirmed all 77 tests pass (0 failures, 0 inconclusive).
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `FlashIDA/src/Flash.Tests/Mocks/MockMsScan.cs` | `FromTsvAllScans` parses optional `cv=` field from TSV headers, sets `FAIMS CV` and `FAIMS Voltage On` trailer values |
+| `FlashIDA/src/Flash.Tests/AcquisitionLoop/ContinuityTests.cs` | CT09/CT10: 3→5 CVs, use real per-CV scans from `ms1_faims_3cv.txt` (50 scans), removed incorrect per-CV wrapper comments |
+| `FlashIDA/src/Flash.Tests/AcquisitionLoop/ContinuityTests.cs` | CT27: un-ignored, hard assertions, pushes all 300 FAIMS scans through legacy bridge |
+| `FlashIDA/src/Flash.Tests/AcquisitionLoop/ContinuityTests.cs` | CT28: un-ignored, golden file captured via legacy bridge (CI run 24005043203), committed as `continuity_faims_skip.json` |
+| `FlashIDA/test-data/spectra/ms1_faims_3cv.txt` | Committed: 300 real FAIMS MS1 scans, 5 CVs (-10, -30, -40, -50, -60), ~772KB |
+| `FlashIDA/test-data/golden/continuity_faims_skip.json` | Re-captured: 6 MS2 commands across CVs -30, -10, -50 showing adaptive skip behavior |
+| `FlashIDA/test-data/configs/method_faims_3cv.xml` | Removed `<UseUnifiedBridge>` (legacy bridge for golden capture) |
+| `FlashIDA/test-data/configs/method_faims_skip.xml` | Removed `<UseUnifiedBridge>` (legacy bridge for golden capture) |
+| `plans/development/Phase_5/implementation-plan.md` | Removed P5-R02, updated test counts, documented CT27/CT28 activation |
+| `plans/development/Phase_5/lessons-learned.md` | Added lessons 2-4: single wrapper architecture, TDD golden timing, adaptive skip data needs |
+| `plans/development/Phase_6/implementation-plan.md` | Flagged P6-R02/R03 as broken, updated CT27/CT28/CT09/CT10 status, corrected per-CV wrapper myth |
+
+### Key Findings
+
+1. **"Per-CV wrapper" was a myth.** `FAIMSScanProcessor` uses a single shared `FLASHIdaWrapper`. The supposed architectural limitation preventing FAIMS test draining never existed.
+2. **Legacy bridge path for golden capture.** Removing `<UseUnifiedBridge>` from FAIMS configs causes `MethodParameters.UseUnifiedBridge` to default to `false`, routing through `ProcessMS`/`OutputMS` (legacy path).
+3. **Adaptive skip needs 300 scans.** 50 scans across 5 CVs with MaxCVSkip=2 only produces results for 1 CV. All 300 scans are needed for meaningful multi-CV results.
+4. **P5-R02 is pointless.** `Flash.exe` test mode ignores CVs entirely — FAIMS is only testable through continuity tests.

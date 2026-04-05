@@ -47,7 +47,8 @@ The following must be true before starting Phase 8:
 
 3. **All prior regression tests pass.** Every test from P0 through P7 passes on the
    Build #4 artifact. No test regressions are open. (Phase 2 delivered 59 cumulative
-   tests; the count grows through subsequent phases.)
+   tests; Phase 4 brought the count to ~70; Phase 5 to ~76; Phase 6 to ~89; Phase 7
+   to ~101. Phase 8 adds 7 more, bringing the final cumulative count to ~108.)
 
 4. **No callers of the old bridge functions remain.** Phase 4 (ProcessScan full routing),
    Phase 5 (C# simplification), and Phase 6 (FAIMS absorption) must have removed all C#-side
@@ -60,7 +61,9 @@ The following must be true before starting Phase 8:
 
 6. **ScanCommand struct is in its final form.** The struct includes all fields accumulated
    through Phases 3-6: `scan_id` as the first field (Phase 3 cache alignment deviation),
-   `uint64_t enqueue_timestamp_ms` (added in Phase 4), `double faims_cv` (added in Phase 6).
+   `uint64_t enqueue_timestamp_ms` and 11 scoring fields (added in Phase 4, total +96 bytes
+   over Phase 3, bringing ScanCommand from 1144 to 1240 bytes), `double faims_cv` (added
+   in Phase 6, bringing ScanCommand to ~1248 bytes).
    `IsolationStage` has `collision_energy` as `double` (not `int`) and `activation_type` as
    `char[32]` (not `char[16]`), totaling 80 bytes. Both C++ `static_assert` values and C#
    `Marshal.SizeOf` expectations reflect the final sizes. See "Phase 3-7 Deviations Impact"
@@ -91,7 +94,7 @@ Phase 8 inherits accumulated struct changes and CI policy changes from Phases 3-
 | `charge_state` | int32_t | Renamed from `charge` |
 | `activation_type` | **char[32]** | Was `char[16]` in original plan; accommodates longer names like EThcD |
 
-**ScanCommand (final size, verified by `static_assert`):** The struct size is NOT the original 1144 bytes. It changed in Phase 4 (added `uint64_t enqueue_timestamp_ms`, 8 bytes) and Phase 6 (added `double faims_cv`, 8 bytes). The Phase 8 `static_assert` and C# `Marshal.SizeOf` tests must verify the final size that includes both additions. Key field order and additions:
+**ScanCommand (final size, verified by `static_assert`):** The struct size is NOT the original 1144 bytes (nor 1152). Phase 4 added `uint64_t enqueue_timestamp_ms` (8 bytes) AND 11 scoring fields (totaling 88 bytes of data + `Pad2` for alignment), bringing the struct from 1144 to **1240 bytes**. Phase 6 added `double faims_cv` (8 bytes), bringing the struct to **~1248 bytes**. The Phase 8 `static_assert` and C# `Marshal.SizeOf` tests must verify the final size that includes all additions. Key field order and additions:
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -108,6 +111,18 @@ Phase 8 inherits accumulated struct changes and CI policy changes from Phases 3-
 | `priority` | int32_t | |
 | `enqueue_timestamp_ms` | **uint64_t** | **Added in Phase 4** |
 | `is_agc` | int32_t | |
+| `quality_score` | **double** | **Added in Phase 4** (scoring field) |
+| `total_snr` | **double** | **Added in Phase 4** (scoring field) |
+| `monoisotopic_snr` | **double** | **Added in Phase 4** (scoring field) |
+| `charge_score` | **double** | **Added in Phase 4** (scoring field) |
+| `isotope_cosine` | **double** | **Added in Phase 4** (scoring field) |
+| `avg_mass_ppm_error` | **double** | **Added in Phase 4** (scoring field) |
+| `mass_count` | **int32_t** | **Added in Phase 4** (scoring field) |
+| `avg_mass` | **double** | **Added in Phase 4** (scoring field) |
+| `charge_range_low` | **int32_t** | **Added in Phase 4** (scoring field) |
+| `charge_range_high` | **int32_t** | **Added in Phase 4** (scoring field) |
+| `representative_charge` | **int32_t** | **Added in Phase 4** (scoring field) |
+| `Pad2` | **int32_t** | **Added in Phase 4** (alignment padding) |
 
 Note: The exact field order and offsets within `ScanCommand` may differ from the table above due to alignment padding. Consult the Phase 4 and Phase 6 implementation plans for the authoritative field order. The key invariant is that Phase 8 verification tests must use the actual final layout, not any intermediate version.
 
@@ -451,9 +466,10 @@ list of expected absent names, add all 13 removed function names to it. See Sect
 assert absence.
 
 **Note:** The 5 keeper exports use the final struct layouts (including `enqueue_timestamp_ms`
-from Phase 4 and `faims_cv` from Phase 6). The `dumpbin` check verifies symbol presence
-only, not struct ABI — struct size verification is handled by `static_assert` in C++ and
-`Marshal.SizeOf` in C# (P3-U01/P3-U02, updated in Phases 4 and 6 to reflect the final sizes).
++ 11 scoring fields from Phase 4 [1240 bytes] and `faims_cv` from Phase 6 [~1248 bytes]).
+The `dumpbin` check verifies symbol presence only, not struct ABI — struct size verification
+is handled by `static_assert` in C++ and `Marshal.SizeOf` in C# (P3-U01/P3-U02, updated in
+Phases 4 and 6 to reflect the final sizes).
 
 ```cmd
 dumpbin /exports FlashIDA\dll\OpenMS.dll > exports.txt
@@ -565,8 +581,8 @@ extensions, but this must be checked if the file list changes.
 ## Test Cases
 
 All 7 tests added in this phase. They run as part of the full cumulative suite (including
-all prior phases; 59 cumulative tests were delivered through Phase 2, with subsequent phases
-adding more).
+all prior phases; ~101 cumulative tests were delivered through Phase 7. Phase 8 adds 7,
+bringing the cumulative total to ~108).
 
 **Tier convention (Phase 0 lesson #12):** Tests that load `OpenMS.dll` (via P/Invoke or
 bridge calls) are Tier 2, not Tier 1. Pure C# tests without DLL dependencies are Tier 1.
@@ -947,10 +963,11 @@ Phase 8 is complete when all of the following are true:
 - [ ] P8-R01 passes: all 12+ method configuration variants produce output matching Phase 7
       golden files. All runs emit `[TRACK-CREATE]` entries (CI hard-fail gate).
 
-- [ ] All prior tests P0 through P7 continue to pass. No regressions introduced. In
-      particular, struct size tests (P3-U01/P3-U02, updated in Phases 4 and 6) still pass
-      with the final `ScanCommand` and `IsolationStage` sizes (including `enqueue_timestamp_ms`
-      from Phase 4 and `faims_cv` from Phase 6).
+- [ ] All prior tests P0 through P7 continue to pass (~101 cumulative). No regressions
+      introduced. In particular, struct size tests (P3-U01/P3-U02, updated in Phases 4 and 6)
+      still pass with the final `ScanCommand` and `IsolationStage` sizes (including
+      `enqueue_timestamp_ms` + 11 scoring fields from Phase 4 [1240 bytes] and `faims_cv`
+      from Phase 6 [~1248 bytes]).
 
 - [ ] The `flashida-ci.yml` CI workflow changes (DLL export verification extension, zero-
       warnings build step, Phase 8 C++ test registration) are committed and passing in CI.
@@ -996,6 +1013,6 @@ plan. Each entry identifies where the lesson is reflected.
 | `IsolationStage.activation_type` is `char[32]`, not `char[16]` | Phase 3 | Phase 3-7 Deviations Impact section |
 | `IsolationStage` size = 80 bytes | Phase 3 | Phase 3-7 Deviations Impact section |
 | CI TRACK-CREATE check is hard-fail | Phase 3 F-5 | Phase 3-7 Deviations Impact section; P8-R01 CI gate note |
-| `enqueue_timestamp_ms` (uint64_t) added to ScanCommand | Phase 4 | Phase 3-7 Deviations Impact section; struct size is not 1144 |
-| `faims_cv` (double) added to ScanCommand | Phase 6 | Phase 3-7 Deviations Impact section; struct size is not 1144 |
+| `enqueue_timestamp_ms` (uint64_t) + 11 scoring fields + Pad2 added to ScanCommand (1144 → 1240 bytes) | Phase 4 | Phase 3-7 Deviations Impact section; struct size is not 1144 (nor 1152) |
+| `faims_cv` (double) added to ScanCommand (1240 → ~1248 bytes) | Phase 6 | Phase 3-7 Deviations Impact section; struct size is not 1144 |
 | Phase 7 exploration engine uses fractional CE values | Phase 7 | P8-R01 fractional CE note; `method_exploration.xml` regression config |

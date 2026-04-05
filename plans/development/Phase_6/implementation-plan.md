@@ -16,11 +16,11 @@
 This plan has been updated to reflect actual Phase 4 outcomes. Key changes from original estimates:
 - **ScanCommand struct size**: 1240 bytes (was "1144 + 8 for timestamp"). Phase 4 added 11 scoring fields (Qscore, MonoMass, ChargeCos, ChargeSnr, IsoCos, Snr, ChargeScore, PpmError, PrecursorIntensity, PeakgroupIntensity, HcdEnergy + Pad2[8]) plus `enqueue_timestamp_ms`. Adding `faims_cv` (double, 8 bytes) in Phase 6 increases from this 1240-byte baseline.
 - **GetNextScanCommand returns 0 when empty** (accepted deviation HIGH-02): The C++ function does NOT return an MS1 fallback; it returns 0. The C# `ScanScheduler` currently provides the MS1 fallback. **CRITICAL for Phase 6**: Since Phase 6 deletes `ScanScheduler`, the empty-queue fallback behavior must be addressed — either update C++ to return MS1 when empty, or add a fallback in `Flash.cs`.
-- **Test counts**: Phase 4 cumulative ~70 (not ~60). Phase 5 adds 6 → ~76. Phase 6 adds 13 → ~89.
+- **Test counts**: Phase 4 cumulative ~70 (not ~60). Phase 5 actual: 77 (5 new + CT27/CT28 activated). Phase 6 adds 13 → ~90.
 - **Scan descriptions**: Base-36 encoded tracking IDs (`XXXX|mass@charge`), not sequential (`_N|mass@charge`). Phase 6 golden files and test assertions must use this format.
 - **ScanCommandRecord**: Expanded to 22 properties (11 original + ScanType + ChargeState + 11 scoring). Phase 6's `FromScanCommand()` path must include the `faims_cv` field.
-- **CT27/CT28 FAIMS adaptive skip tests**: `[Ignore]`d in Phase 4 — Phase 6 must activate them with proper per-CV test data.
-- **CT09/CT10 FAIMS limitation**: Conditional validation due to per-CV wrapper architecture. Phase 6 must resolve this by unifying the wrapper, enabling hard assertions.
+- **CT27/CT28 FAIMS adaptive skip tests**: **Activated in Phase 5** (not deferred to Phase 6). Use real per-CV data from `ms1_faims_3cv.txt` (300 scans). CT28 golden file `continuity_faims_skip.json` committed — Phase 6 must match this baseline.
+- **CT09/CT10 FAIMS**: Use real per-CV data since Phase 5. Conditional validation retained (legacy bridge may not always produce results). No "per-CV wrapper" limitation exists — there is a single shared `FLASHIdaWrapper`.
 - **CollisionEnergy rounding**: C# uses `Math.Round()` (banker's rounding), not truncation.
 
 ---
@@ -90,11 +90,11 @@ Phase 6 inherits several deviations from earlier phases that affect struct layou
 **GetNextScanCommand returns 0 when empty (Phase 4 deviation HIGH-02):**
 - The C++ `GetNextScanCommand` returns 0 (no command available) when the queue is empty. It does NOT return an MS1 fallback command. The C# `ScanScheduler` currently provides the MS1 fallback behavior when `GetNextScanCommand` returns 0. **CRITICAL for Phase 6**: Since Phase 6 deletes `ScanScheduler.cs`, the empty-queue MS1 fallback must be addressed. Options: (a) update the C++ `getNextScanCommand()` to return an MS1 when the queue is empty (restoring the original spec behavior from Step 6 item (6)), or (b) add a fallback in `Flash.cs` that submits a default MS1 scan when `GetNextScanCommand` returns 0. Option (a) is preferred since it keeps scan logic in C++. Step 6 of this plan already shows the MS1 fallback in item (6) of `getNextScanCommand()` — verify during implementation that this matches the actual C++ code or add it if missing.
 
-**CT27/CT28 FAIMS tests must be activated (from Phase 4):**
-- CT27 (FAIMS adaptive skip) and CT28 (FAIMS skip limit) are `[Ignore]`d in Phase 4 because per-CV test data was not available. Phase 6 must remove the `[Ignore]` attributes and provide proper per-CV test data via `ms1_faims_3cv.txt` to enable hard assertions.
+**CT27/CT28 FAIMS tests already activated (Phase 5, not Phase 6):**
+- CT27 and CT28 were activated in Phase 5 with real per-CV data from `ms1_faims_3cv.txt` (300 scans, 5 CVs). CT28's golden file `continuity_faims_skip.json` was captured via the legacy bridge and committed. Phase 6 must ensure the C++ FAIMS state machine produces output matching this golden file. No `[Ignore]` removal needed — already done.
 
-**CT09/CT10 FAIMS conditional validation (from Phase 4):**
-- CT09 and CT10 use conditional validation due to the per-CV wrapper architecture. Phase 6 unifies the wrapper by moving FAIMS CV control into C++, which should enable unconditional hard assertions on these tests. Verify and update after the FAIMS state machine is implemented.
+**CT09/CT10 FAIMS — no "per-CV wrapper" limitation (Phase 5 finding):**
+- Investigation in Phase 5 revealed `FAIMSScanProcessor` uses a single shared `FLASHIdaWrapper`, not per-CV wrappers. The conditional validation in CT09/CT10 is retained because the legacy bridge path may not always produce results (depends on engine state accumulation), not due to an architectural limitation. Phase 6 moving FAIMS to C++ should make these unconditional since the unified path drains `GetNextScanCommand` directly.
 
 **FAIMS handled at C# level only (from Phase 5):**
 - Phase 5 preserved `ScanScheduler.cs` and `FAIMSScanProcessor.cs` for C#-only FAIMS CV cycling. The `faims_cv` field was explicitly NOT added to `ScanCommand` in Phase 5. Phase 6 absorbs FAIMS into C++ by: (1) adding `faims_cv` to the C++ and C# `ScanCommand` structs, (2) implementing the FAIMS state machine in C++, and (3) deleting `ScanScheduler.cs` and `FAIMSScanProcessor.cs`.
@@ -1066,8 +1066,8 @@ All of the following must be true before Phase 6 is considered complete:
 - [ ] P6-S01 passes in the stress test step in `windows-tests` within the 10-minute budget with no deadlock, no data corruption, and no access violations.
 - [ ] Build #3 `OpenMS.dll` artifact is stored in CI with cache key matching the Phase 6 OpenMS submodule commit hash.
 - [ ] Phase 6 golden files (`faims_3cv.tsv`, `faims_skip.tsv`) are committed to `FlashIDA/test-data/golden/` and the `golden/README.md` is updated to document their provenance.
-- [ ] CT27/CT28 FAIMS adaptive skip tests activated (remove `[Ignore]` attributes) with proper per-CV test data from `ms1_faims_3cv.txt`.
-- [ ] CT09/CT10 FAIMS tests updated with hard assertions (replacing conditional validation) now that the unified wrapper eliminates the per-CV architecture limitation.
+- [ ] CT27/CT28 FAIMS tests still pass after Phase 6 changes (already activated in Phase 5 with real per-CV data). CT28 golden file `continuity_faims_skip.json` must match Phase 5 baseline.
+- [ ] CT09/CT10 FAIMS tests updated with hard assertions (replacing conditional validation) now that the unified bridge path drains `GetNextScanCommand` directly.
 - [ ] Empty-queue MS1 fallback behavior verified: after `ScanScheduler` deletion, `getNextScanCommand()` returns an MS1 command (not 0) when the queue is empty, or `Flash.cs` provides an equivalent fallback (Phase 4 deviation HIGH-02).
 - [ ] Scan description format uses base-36 tracking IDs (`XXXX|mass@charge`) in all golden files and test assertions (not `_N|mass@charge`).
 - [ ] The written behavioral audit from Step 1 is preserved (as a comment block in `FLASHIda.cpp` or as a committed document in `plans/development/Phase_6/`) for future reference.
@@ -1117,8 +1117,8 @@ This section records which Phase 0 through Phase 5 lessons were incorporated int
 | CI TRACK-CREATE check is now hard-fail (compliance finding F-5) | Phase 3 compliance | Phase 3-5 Deviations Impact section; Step 6 TRACK-CREATE log; Definition of Done |
 | Phase 4 added `enqueue_timestamp_ms` + 11 scoring fields; struct size is **1240 bytes** (not 1144) | Phase 4 | Phase 4 Addendum; Phase 3-5 Deviations Impact section; Step 2a struct layout and `static_assert` note |
 | `GetNextScanCommand` returns 0 when empty (deviation HIGH-02); C# ScanScheduler provides fallback | Phase 4 | Phase 4 Addendum; Phase 3-5 Deviations Impact (new HIGH-02 paragraph); Step 6 empty-queue note; Definition of Done |
-| CT27/CT28 `[Ignore]`d in Phase 4; must be activated in Phase 6 with per-CV test data | Phase 4 | Phase 4 Addendum; Phase 3-5 Deviations Impact (new CT27/CT28 paragraph); Definition of Done |
-| CT09/CT10 conditional validation; Phase 6 must resolve with unified wrapper | Phase 4 | Phase 4 Addendum; Phase 3-5 Deviations Impact (new CT09/CT10 paragraph); Definition of Done |
+| CT27/CT28 activated in Phase 5 with real per-CV data; CT28 golden file committed as Phase 6 regression baseline | Phase 5 | Phase 4 Addendum (updated); Phase 3-5 Deviations Impact; Definition of Done |
+| CT09/CT10 conditional validation retained; no per-CV wrapper limitation (single shared wrapper) | Phase 5 | Phase 4 Addendum (updated); Phase 3-5 Deviations Impact; Definition of Done |
 | Scan descriptions use base-36 `XXXX|mass@charge` format (not `_N|mass@charge`) | Phase 4 | Phase 4 Addendum; Definition of Done |
 | ScanCommandRecord expanded to 22 properties; Phase 6 `FromScanCommand()` must include `faims_cv` | Phase 4 | Phase 4 Addendum |
 | CollisionEnergy rounding uses `Math.Round()` (banker's rounding), not truncation | Phase 4 | Phase 4 Addendum |
