@@ -11,6 +11,20 @@
 
 ---
 
+## Phase 4 Addendum (2026-04-04)
+
+This plan has been updated to reflect actual Phase 4 outcomes. Key changes from original estimates:
+- **ScanCommand struct size**: 1240 bytes (was "1144 + 8 for timestamp"). Phase 4 added 11 scoring fields (Qscore, MonoMass, ChargeCos, ChargeSnr, IsoCos, Snr, ChargeScore, PpmError, PrecursorIntensity, PeakgroupIntensity, HcdEnergy + Pad2[8]) plus `enqueue_timestamp_ms`. Adding `faims_cv` (double, 8 bytes) in Phase 6 increases from this 1240-byte baseline.
+- **GetNextScanCommand returns 0 when empty** (accepted deviation HIGH-02): The C++ function does NOT return an MS1 fallback; it returns 0. The C# `ScanScheduler` currently provides the MS1 fallback. **CRITICAL for Phase 6**: Since Phase 6 deletes `ScanScheduler`, the empty-queue fallback behavior must be addressed — either update C++ to return MS1 when empty, or add a fallback in `Flash.cs`.
+- **Test counts**: Phase 4 cumulative ~70 (not ~60). Phase 5 adds 6 → ~76. Phase 6 adds 13 → ~89.
+- **Scan descriptions**: Base-36 encoded tracking IDs (`XXXX|mass@charge`), not sequential (`_N|mass@charge`). Phase 6 golden files and test assertions must use this format.
+- **ScanCommandRecord**: Expanded to 22 properties (11 original + ScanType + ChargeState + 11 scoring). Phase 6's `FromScanCommand()` path must include the `faims_cv` field.
+- **CT27/CT28 FAIMS adaptive skip tests**: `[Ignore]`d in Phase 4 — Phase 6 must activate them with proper per-CV test data.
+- **CT09/CT10 FAIMS limitation**: Conditional validation due to per-CV wrapper architecture. Phase 6 must resolve this by unifying the wrapper, enabling hard assertions.
+- **CollisionEnergy rounding**: C# uses `Math.Round()` (banker's rounding), not truncation.
+
+---
+
 ## Goal
 
 Port FAIMS CV cycling logic from `ScanScheduler.cs` / `FAIMSScanProcessor.cs` to a C++ state machine inside `FLASHIda`. After this phase, `GetNextScanCommand` is the sole authority over FAIMS CV state: it stamps every command with the current CV and manages CV transitions without any C#-side knowledge of CV scheduling. `FAIMSScanProcessor.cs` and `ScanScheduler.cs` are permanently deleted. This completes Issue 3 (C++ Owns the Scan Queue) from `baseline-plan.md`.
@@ -28,7 +42,7 @@ The following must be in place before starting Phase 6 work. Phase 5 is complete
 - `GetConfigInt`/`GetConfigDouble` bridge functions for diagnostic config readback.
 - 5 C++ unit tests (P2-U01 through P2-U05) passing in the `cpp-unit-tests` CI job.
 - `cpp-unit-tests` CI job active on `ubuntu-latest` with full apt dependency list, CMake flags `-DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja`, and ccache keyed on `hashFiles('OpenMS/CMakeLists.txt')`.
-- Cumulative test count at Phase 2 completion: 59.
+- Cumulative test count at Phase 2 completion: 59. Phase 4 delivered ~31 tests (cumulative ~70, including 10 continuity tests CT33–CT42). Phase 5 adds 6 (cumulative ~76).
 
 **Phase 5 is complete — all Phase 5 tests pass in CI:**
 - `UnifiedScanProcessor.cs` is the only scan processor.
@@ -46,8 +60,7 @@ The following must be in place before starting Phase 6 work. Phase 5 is complete
 
 **Phase 5 golden files exist:**
 - `FlashIDA/test-data/golden/phase4_standard_dda.tsv` (and all other mode golden files from Phase 4/5).
-- `FlashIDA/test-data/golden/faims_3cv.tsv` (FAIMS 3-CV cycling, captured during Phase 5 P5-R02 verification). Used as regression baseline for P6-R02.
-- `FlashIDA/test-data/golden/faims_skip.tsv` (FAIMS adaptive skip, captured during Phase 5 P5-R02 verification). Used as regression baseline for P6-R03.
+- **WARNING (Phase 5 update):** `faims_3cv.tsv` and `faims_skip.tsv` were NOT captured in Phase 5. P5-R02 was removed because `Flash.exe` test mode ignores CVs — both FAIMS configs produce identical output (see `Phase_5/lessons-learned.md` Lesson 1). P6-R02 and P6-R03 cannot regress against Phase 5 golden files that don't exist. These tests must either: (a) capture golden files from the continuity test harness (which exercises real FAIMS pipeline), or (b) update `Flash.exe`'s test-mode parser to pass CVs to the C++ engine before capturing regression golden files. Option (a) is recommended — continuity tests CT09/CT10 already produce `ScanCommandRecord` output with real CV annotations.
 - Both FAIMS method configs committed: `method_faims_3cv.xml` and `method_faims_skip.xml`.
 
 **Test data must be committed:**
@@ -71,8 +84,17 @@ Phase 6 inherits several deviations from earlier phases that affect struct layou
 - **`IsolationStage.activation_type` is `char[32]`** (not `char[16]`). Accommodates longer names like EThcD. `IsolationStage` size = 80 bytes.
 - **`ScanCommand.faims_cv` was deferred FROM Phase 3 TO Phase 6.** This is a Phase 6 deliverable. Adding `faims_cv` (a `double`, 8 bytes) to `ScanCommand` changes the struct size. The `static_assert` in C++ and `Marshal.SizeOf` test in C# must be updated to the new size in the same commit.
 
-**`enqueue_timestamp_ms` already present (from Phase 4):**
-- Phase 4 added `uint64_t enqueue_timestamp_ms` to `ScanCommand`. The struct size changed from 1144 bytes (Phase 3) to account for this 8-byte field. Phase 6 inherits whatever size Phase 4 settled on, and adds `faims_cv` on top of that. The Phase 6 `static_assert` must reflect the size after both `enqueue_timestamp_ms` and `faims_cv` are present.
+**`enqueue_timestamp_ms` and scoring fields already present (from Phase 4):**
+- Phase 4 added `uint64_t enqueue_timestamp_ms` **and** 11 scoring fields (Qscore, MonoMass, ChargeCos, ChargeSnr, IsoCos, Snr, ChargeScore, PpmError, PrecursorIntensity, PeakgroupIntensity, HcdEnergy + Pad2[8]) to `ScanCommand`. The struct size went from 1144 bytes (Phase 3) to **1240 bytes** (confirmed by Phase 4 `static_assert` and C# `Marshal.SizeOf` test). Phase 6 adds `faims_cv` (double, 8 bytes) on top of the 1240-byte baseline. The Phase 6 `static_assert` must reflect the size after `enqueue_timestamp_ms`, all scoring fields, and `faims_cv` are all present. Compute and verify the exact new size accounting for alignment.
+
+**GetNextScanCommand returns 0 when empty (Phase 4 deviation HIGH-02):**
+- The C++ `GetNextScanCommand` returns 0 (no command available) when the queue is empty. It does NOT return an MS1 fallback command. The C# `ScanScheduler` currently provides the MS1 fallback behavior when `GetNextScanCommand` returns 0. **CRITICAL for Phase 6**: Since Phase 6 deletes `ScanScheduler.cs`, the empty-queue MS1 fallback must be addressed. Options: (a) update the C++ `getNextScanCommand()` to return an MS1 when the queue is empty (restoring the original spec behavior from Step 6 item (6)), or (b) add a fallback in `Flash.cs` that submits a default MS1 scan when `GetNextScanCommand` returns 0. Option (a) is preferred since it keeps scan logic in C++. Step 6 of this plan already shows the MS1 fallback in item (6) of `getNextScanCommand()` — verify during implementation that this matches the actual C++ code or add it if missing.
+
+**CT27/CT28 FAIMS tests must be activated (from Phase 4):**
+- CT27 (FAIMS adaptive skip) and CT28 (FAIMS skip limit) are `[Ignore]`d in Phase 4 because per-CV test data was not available. Phase 6 must remove the `[Ignore]` attributes and provide proper per-CV test data via `ms1_faims_3cv.txt` to enable hard assertions.
+
+**CT09/CT10 FAIMS conditional validation (from Phase 4):**
+- CT09 and CT10 use conditional validation due to the per-CV wrapper architecture. Phase 6 unifies the wrapper by moving FAIMS CV control into C++, which should enable unconditional hard assertions on these tests. Verify and update after the FAIMS state machine is implemented.
 
 **FAIMS handled at C# level only (from Phase 5):**
 - Phase 5 preserved `ScanScheduler.cs` and `FAIMSScanProcessor.cs` for C#-only FAIMS CV cycling. The `faims_cv` field was explicitly NOT added to `ScanCommand` in Phase 5. Phase 6 absorbs FAIMS into C++ by: (1) adding `faims_cv` to the C++ and C# `ScanCommand` structs, (2) implementing the FAIMS state machine in C++, and (3) deleting `ScanScheduler.cs` and `FAIMSScanProcessor.cs`.
@@ -124,7 +146,7 @@ Record all answers. If the existing code is ambiguous, verify against actual ins
 
 **File:** `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h`
 
-This is the core Phase 6 struct change — deferred from Phase 3. Add `double faims_cv;` to the `ScanCommand` struct. Place it after the existing fields but before `scan_description` (or at the position that maintains alignment). The `enqueue_timestamp_ms` field (added in Phase 4) is already present.
+This is the core Phase 6 struct change — deferred from Phase 3. Add `double faims_cv;` to the `ScanCommand` struct. Place it after the existing fields but before `scan_description` (or at the position that maintains alignment). The `enqueue_timestamp_ms` field and 11 scoring fields (added in Phase 4) are already present. The struct is currently **1240 bytes** (Phase 4 baseline).
 
 ```cpp
 struct ScanCommand
@@ -142,12 +164,27 @@ struct ScanCommand
     int priority;
     uint64_t enqueue_timestamp_ms;  // Added in Phase 4
     int is_agc;
+    // Phase 4 scoring fields (11 fields):
+    double Qscore;
+    double MonoMass;
+    double ChargeCos;
+    double ChargeSnr;
+    double IsoCos;
+    double Snr;
+    double ChargeScore;
+    double PpmError;
+    double PrecursorIntensity;
+    double PeakgroupIntensity;
+    double HcdEnergy;
+    char Pad2[8];
 };
 ```
 
+**Note:** The exact field order above is illustrative — the actual Phase 4 field order is authoritative. Consult the current `FLASHIda.h` `ScanCommand` struct for the definitive layout before adding `faims_cv`. Place `faims_cv` at a position that maintains 8-byte alignment.
+
 **Field type notes (Phase 3 deviations):** `IsolationStage.collision_energy` is `double` (not `int`), `IsolationStage.activation_type` is `char[32]` (not `char[16]`). These are already in place from Phase 3. Do not change them.
 
-**Update `static_assert`:** The ScanCommand size changes when `faims_cv` is added. Update the `static_assert(sizeof(ScanCommand) == ...)` to the new computed size. The Phase 4 size (after `enqueue_timestamp_ms` was added) is the baseline; adding `double faims_cv` (8 bytes) increases it further (exact value depends on alignment — compute and verify).
+**Update `static_assert`:** The ScanCommand size changes when `faims_cv` is added. Update the `static_assert(sizeof(ScanCommand) == ...)` to the new computed size. The Phase 4 baseline is **1240 bytes**; adding `double faims_cv` (8 bytes) increases it to **1248 bytes** (or different due to alignment — compute and verify with `offsetof` checks). Do NOT use the old 1144 or 1152 values.
 
 **Update C# struct:** In `FLASHIdaWrapper.cs`, add `public double FaimsCv;` to the C# `ScanCommand` struct at the matching offset. The `[StructLayout(LayoutKind.Sequential)]` attribute ensures field order matters. The field must be at the same position as in the C++ struct.
 
@@ -395,7 +432,12 @@ int FLASHIda::getNextScanCommand(ScanCommand& out)
     }
   }
 
-  // (6) Empty -> MS1 (unchanged, add CV injection)
+  // (6) Empty -> MS1 (add CV injection)
+  // IMPORTANT (Phase 4 deviation HIGH-02): The current C++ code returns 0 when the
+  // queue is empty, and C# ScanScheduler provides the MS1 fallback. Since Phase 6
+  // deletes ScanScheduler, this fallback MUST be implemented here in C++.
+  // Verify the actual C++ behavior during implementation: if it already returns MS1
+  // (as shown below), no change is needed. If it returns 0, add this MS1 fallback.
   out = makeMS1Command_();
   injectCVIntoCommand_(out);
   return 1;
@@ -403,6 +445,8 @@ int FLASHIda::getNextScanCommand(ScanCommand& out)
 ```
 
 The critical invariant: `injectCVIntoCommand_()` is called on every command before returning, without exception. There must be no early-return code path that bypasses it.
+
+**Empty-queue behavior (Phase 4 deviation HIGH-02):** The current C++ `getNextScanCommand()` returns 0 when the queue is empty. The C# `ScanScheduler` currently provides the MS1 fallback. Phase 6 deletes `ScanScheduler`, so this fallback must move into C++. During implementation, verify the actual behavior and either: (a) add the MS1 fallback in item (6) above if it does not already exist, or (b) confirm it already exists and document. This is a **must-fix** — without the fallback, the instrument will stall when the queue is empty after `ScanScheduler` deletion.
 
 ---
 
@@ -528,7 +572,10 @@ public void FAIMSScanProcessor_HasNoRemainingReferences()
 
 ### Step 12: Capture golden files for FAIMS regression tests
 
-Before triggering the C++ build, capture the Phase 5 FAIMS golden files that Phase 6 will regress against. The P6-R02 and P6-R03 tests compare Phase 6 output to these files.
+> **WARNING (Phase 5 update):** The original plan assumed P5-R02 would capture `faims_3cv.tsv` and `faims_skip.tsv` via the regression runner. P5-R02 was removed because `Flash.exe` test mode ignores CVs entirely — both configs produce identical non-FAIMS output. The golden files do NOT exist. This step must be redesigned before Phase 6 implementation begins. Options:
+> 1. **(Recommended)** Replace P6-R02/R03 with continuity tests that capture golden output from `ContinuityTestHarness` (which exercises real FAIMS pipeline). CT09/CT10 already produce `ScanCommandRecord` output with real CV annotations.
+> 2. Update `FLASHIdaWrapper.Main()` test-mode parser to pass `cv=` values from TSV headers to `ProcessScan`, then capture golden files via `Flash.exe` as originally planned.
+> Either option requires implementation work before golden file capture is possible.
 
 **Golden file format and general capture procedure:** See `../test-file-specification.md` Sections 2.1 (TSV format and column definitions), 2.2 (inventory entry for `faims_3cv.tsv` and `faims_skip.tsv`), and 2.3 (CI artifact download and review steps). Golden files are never constructed manually.
 
@@ -544,12 +591,10 @@ Before triggering the C++ build, capture the Phase 5 FAIMS golden files that Pha
 Both golden files must be committed before the Phase 6 C++ build is triggered in CI.
 
 **P6-R02 golden file: `faims_3cv.tsv`**
-- Captured from the Phase 5 CI run with `method_faims_3cv.xml` and `ms1_faims_3cv.txt` (spec: `../test-file-specification.md` Section 2.2).
-- Must record the expected CV transition log entries alongside the deconvolution output.
+- ~~Captured from the Phase 5 CI run with `method_faims_3cv.xml` and `ms1_faims_3cv.txt`.~~ **Not available — see WARNING above.**
 
 **P6-R03 golden file: `faims_skip.tsv`**
-- Captured from the Phase 5 CI run with `method_faims_skip.xml` and `ms1_faims_3cv.txt` (spec: `../test-file-specification.md` Section 2.2).
-- Must contain log entries showing CV skip events (the skip count in the log must be non-zero).
+- ~~Captured from the Phase 5 CI run with `method_faims_skip.xml` and `ms1_faims_3cv.txt`.~~ **Not available — see WARNING above.**
 
 ---
 
@@ -613,7 +658,7 @@ The existing `FAIMSScanProcessor.ProcessMS` calls `scanScheduler.AddScan()` insi
 
 | File | Change type | Description |
 |------|-------------|-------------|
-| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | **Step 2a:** Add `double faims_cv` field to `ScanCommand` struct (deferred from Phase 3); update `static_assert` for new struct size (accounts for both `enqueue_timestamp_ms` from Phase 4 and `faims_cv` from Phase 6). **Step 2b:** Add FAIMS state machine member variables (`faims_cv_values_`, `current_cv_index_`, `cv_skip_count_`, `precursor_count_for_cv_`, `cv_transition_pending_`, `max_cv_skip_`, `cv_precursor_threshold_`) and private method declarations (`isFAIMS_`, `currentCV_`, `updateCV_`, `shouldSkipCV_`, `injectCVIntoCommand_`) |
+| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | **Step 2a:** Add `double faims_cv` field to `ScanCommand` struct (deferred from Phase 3); update `static_assert` for new struct size (Phase 4 baseline is **1240 bytes**; adding `faims_cv` increases to ~1248 — compute and verify). **Step 2b:** Add FAIMS state machine member variables (`faims_cv_values_`, `current_cv_index_`, `cv_skip_count_`, `precursor_count_for_cv_`, `cv_transition_pending_`, `max_cv_skip_`, `cv_precursor_threshold_`) and private method declarations (`isFAIMS_`, `currentCV_`, `updateCV_`, `shouldSkipCV_`, `injectCVIntoCommand_`) |
 | `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp` | Modify | Implement FAIMS helper methods, add CV cycling call in `processScan()` MS1 path, add CV transition injection and universal CV stamping in `getNextScanCommand()`, add `faims` JSON section parsing in constructor |
 | `OpenMS/src/tests/class_tests/openms/source/FLASHIdaFAIMS_test.cpp` | Create | C++ unit tests P6-U01 through P6-U06 for the FAIMS state machine |
 | `OpenMS/src/tests/class_tests/openms/executables.cmake` | Modify | Add or uncomment `FLASHIdaFAIMS_test` test binary entry |
@@ -622,7 +667,7 @@ The existing `FAIMSScanProcessor.ProcessMS` calls `scanScheduler.AddScan()` insi
 
 | File | Change type | Description |
 |------|-------------|-------------|
-| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | Modify | **Step 2a:** Add `public double FaimsCv;` to C# `ScanCommand` struct at the matching offset; update `Marshal.SizeOf` test expectation to new struct size |
+| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | Modify | **Step 2a:** Add `public double FaimsCv;` to C# `ScanCommand` struct at the matching offset; update `Marshal.SizeOf` test expectation from 1240 to the new struct size (~1248) |
 | `FlashIDA/src/Flash/IDA/MethodConfig.cs` | Modify | Add `cv_precursor_threshold` field to `FaimsConfig` class |
 | `FlashIDA/src/Flash/IDA/Parameter.cs` | Modify | Serialize `cv_precursor_threshold` in `ToJSON()` FAIMS section |
 | `FlashIDA/src/Flash/etc/method.xml` | Modify | Add `<CVPrecursorThreshold>` element to FAIMS section if not already present |
@@ -810,6 +855,8 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 
 ### P6-R02 — FAIMS 3-CV cycling output matches Phase 5 golden file
 
+> **WARNING (Phase 5 update):** This test as written is broken. `Flash.exe` test mode ignores CVs — there is no Phase 5 `faims_3cv.tsv` golden file to regress against. Options: (a) replace with a continuity test that captures golden output from the real FAIMS pipeline via `ContinuityTestHarness`, or (b) update the test-mode parser in `FLASHIdaWrapper.Main()` to parse `cv=` from TSV headers and pass CVs to `ProcessScan`. Option (a) is recommended. See `Phase_5/lessons-learned.md` Lesson 1.
+
 **Tier:** 3 (regression, `windows-latest`)
 
 **Description:** Run `Flash.exe ms1_faims_3cv.txt <output_file> method_faims_3cv.xml`. Compare the full output (deconvolution results + CV transition log entries) to the Phase 5 `faims_3cv.tsv` golden file.
@@ -821,6 +868,8 @@ Total: 13 tests (6 C++ unit, 2 C# unit, 1 integration, 3 regression, 1 stress).
 ---
 
 ### P6-R03 — FAIMS adaptive skipping output matches Phase 5 golden file
+
+> **WARNING (Phase 5 update):** Same issue as P6-R02. No Phase 5 `faims_skip.tsv` golden file exists. Must be replaced with continuity test approach or test-mode parser fix. See `Phase_5/lessons-learned.md` Lesson 1.
 
 **Tier:** 3 (regression, `windows-latest`)
 
@@ -965,7 +1014,7 @@ P6-S01 runs as the stress test step in `windows-tests`. If P6-S01 reports a dead
 
 ### 7. Full prior-phase regression
 
-Confirmed by the full CI run. All prior-phase tests must still pass (the cumulative count before Phase 6 depends on Phases 3-5 deliverables; Phase 2 ended at 59 cumulative tests). (Automated: all P0-P5 test IDs in the full CI run.)
+Confirmed by the full CI run. All prior-phase tests must still pass (Phase 4 cumulative: ~70; Phase 5 cumulative: ~76). (Automated: all P0-P5 test IDs in the full CI run.)
 
 ### Debugging guide
 
@@ -996,7 +1045,7 @@ The C++ deconvolution engine returns 0 results without an error code when input 
 All of the following must be true before Phase 6 is considered complete:
 
 - [ ] `double faims_cv` field added to C++ `ScanCommand` struct (Step 2a). This was deferred from Phase 3.
-- [ ] `static_assert(sizeof(ScanCommand) == ...)` updated in C++ to reflect the new size (includes both `enqueue_timestamp_ms` from Phase 4 and `faims_cv` from Phase 6).
+- [ ] `static_assert(sizeof(ScanCommand) == ...)` updated in C++ to reflect the new size (Phase 4 baseline was **1240 bytes**; adding `faims_cv` increases to ~1248 — compute and verify).
 - [ ] `public double FaimsCv` field added to C# `ScanCommand` struct in `FLASHIdaWrapper.cs` at the matching offset.
 - [ ] `Marshal.SizeOf<ScanCommand>()` test assertion updated to the new struct size (P3-U01 update).
 - [ ] P3-I01 marshaling round-trip test extended to verify `faims_cv` field (C# writes known CV value, C++ reads back correctly).
@@ -1009,7 +1058,7 @@ All of the following must be true before Phase 6 is considered complete:
 - [ ] `FAIMSScanProcessor.cs` is deleted (`git rm`), removed from `Flash.csproj`, with zero remaining references in C# source files.
 - [ ] `ScanScheduler.cs` is deleted (`git rm`), removed from `Flash.csproj`, with zero remaining references in C# source files.
 - [ ] All 13 Phase 6 tests pass in CI: P6-U01 through P6-U08, P6-I01, P6-R01 through P6-R03, P6-S01.
-- [ ] All prior-phase tests (P0 through P5) still pass in CI without modification. (The cumulative count before Phase 6 depends on Phases 3-5 deliverables; Phase 2 ended at 59.)
+- [ ] All prior-phase tests (P0 through P5) still pass in CI without modification. (Phase 4 cumulative: ~70; Phase 5 cumulative: ~76. Phase 6 adds 13 → ~89 cumulative.)
 - [ ] P6-R02 CI run: `Flash.exe ms1_faims_3cv.txt <output_file> method_faims_3cv.xml` produces CV transition log entries matching the Phase 5 golden file exactly.
 - [ ] P6-R03 CI run: `Flash.exe ms1_faims_3cv.txt <output_file> method_faims_skip.xml` produces skip event log entries matching the Phase 5 golden file exactly.
 - [ ] P6-R01 CI run: `Flash.exe <input_file> <output_file> method_default.xml` (non-FAIMS) produces output matching the Phase 5 standard DDA golden file exactly.
@@ -1017,6 +1066,10 @@ All of the following must be true before Phase 6 is considered complete:
 - [ ] P6-S01 passes in the stress test step in `windows-tests` within the 10-minute budget with no deadlock, no data corruption, and no access violations.
 - [ ] Build #3 `OpenMS.dll` artifact is stored in CI with cache key matching the Phase 6 OpenMS submodule commit hash.
 - [ ] Phase 6 golden files (`faims_3cv.tsv`, `faims_skip.tsv`) are committed to `FlashIDA/test-data/golden/` and the `golden/README.md` is updated to document their provenance.
+- [ ] CT27/CT28 FAIMS adaptive skip tests activated (remove `[Ignore]` attributes) with proper per-CV test data from `ms1_faims_3cv.txt`.
+- [ ] CT09/CT10 FAIMS tests updated with hard assertions (replacing conditional validation) now that the unified wrapper eliminates the per-CV architecture limitation.
+- [ ] Empty-queue MS1 fallback behavior verified: after `ScanScheduler` deletion, `getNextScanCommand()` returns an MS1 command (not 0) when the queue is empty, or `Flash.cs` provides an equivalent fallback (Phase 4 deviation HIGH-02).
+- [ ] Scan description format uses base-36 tracking IDs (`XXXX|mass@charge`) in all golden files and test assertions (not `_N|mass@charge`).
 - [ ] The written behavioral audit from Step 1 is preserved (as a comment block in `FLASHIda.cpp` or as a committed document in `plans/development/Phase_6/`) for future reference.
 
 ---
@@ -1062,6 +1115,12 @@ This section records which Phase 0 through Phase 5 lessons were incorporated int
 | `faims_cv` deferred from Phase 3 to Phase 6 | Phase 3 deviation | Phase 3-5 Deviations Impact section; Step 2a; Definition of Done |
 | `IsolationStage` = 80 bytes (verified by `static_assert`) | Phase 3 compliance | Step 2a field type notes |
 | CI TRACK-CREATE check is now hard-fail (compliance finding F-5) | Phase 3 compliance | Phase 3-5 Deviations Impact section; Step 6 TRACK-CREATE log; Definition of Done |
-| `enqueue_timestamp_ms` added to `ScanCommand` in Phase 4; struct size changed from 1144 | Phase 4 | Phase 3-5 Deviations Impact section; Step 2a struct layout and `static_assert` note |
+| Phase 4 added `enqueue_timestamp_ms` + 11 scoring fields; struct size is **1240 bytes** (not 1144) | Phase 4 | Phase 4 Addendum; Phase 3-5 Deviations Impact section; Step 2a struct layout and `static_assert` note |
+| `GetNextScanCommand` returns 0 when empty (deviation HIGH-02); C# ScanScheduler provides fallback | Phase 4 | Phase 4 Addendum; Phase 3-5 Deviations Impact (new HIGH-02 paragraph); Step 6 empty-queue note; Definition of Done |
+| CT27/CT28 `[Ignore]`d in Phase 4; must be activated in Phase 6 with per-CV test data | Phase 4 | Phase 4 Addendum; Phase 3-5 Deviations Impact (new CT27/CT28 paragraph); Definition of Done |
+| CT09/CT10 conditional validation; Phase 6 must resolve with unified wrapper | Phase 4 | Phase 4 Addendum; Phase 3-5 Deviations Impact (new CT09/CT10 paragraph); Definition of Done |
+| Scan descriptions use base-36 `XXXX|mass@charge` format (not `_N|mass@charge`) | Phase 4 | Phase 4 Addendum; Definition of Done |
+| ScanCommandRecord expanded to 22 properties; Phase 6 `FromScanCommand()` must include `faims_cv` | Phase 4 | Phase 4 Addendum |
+| CollisionEnergy rounding uses `Math.Round()` (banker's rounding), not truncation | Phase 4 | Phase 4 Addendum |
 | Phase 5 handles FAIMS at C# `ScanScheduler` level only; `faims_cv` not added to struct | Phase 5 | Phase 3-5 Deviations Impact section; Prerequisites |
 | `ScanScheduler.cs` and `FAIMSScanProcessor.cs` preserved in Phase 5; deleted in Phase 6 | Phase 5 | Phase 3-5 Deviations Impact section; Steps 8-9 |
