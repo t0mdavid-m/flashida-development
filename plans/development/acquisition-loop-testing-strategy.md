@@ -721,3 +721,69 @@ Marked `[Ignore]` — requires per-CV test data with distinct precursor counts a
 ### Phase 4 test count
 
 40 total continuity tests (30 from Phases 0–3 + 10 new in Phase 4).
+
+---
+
+## Phase 5 Addendum (2026-04-05)
+
+*Corrections and clarifications discovered during Phase 5 implementation. The original spec text above is preserved as-is.*
+
+### ContinuityTestHarness routing update
+
+The harness now routes processors based on FAIMS configuration:
+
+- **Non-FAIMS** (all non-FAIMS configs): `UnifiedScanProcessor` -> `ProcessScan` -> `GetNextScanCommand`
+- **FAIMS** (method configs with FAIMS CVs): `FAIMSScanProcessor` -> `GetIsolationWindows` -> `ScanFactory` -> `ScanScheduler` (legacy path retained)
+
+Test harness routing (line 186-189) exactly mirrors production `Flash.cs` (line 410-413).
+
+### CT27/CT28 activated in Phase 5
+
+Contrary to the Phase 4 addendum which deferred CT27/CT28 to Phase 6, both tests were activated in Phase 5:
+
+| Test | Config | Scans | Description |
+|------|--------|-------|-------------|
+| CT27 | `method_faims_skip.xml` | 300 (all from `ms1_faims_3cv.txt`) | FAIMS adaptive skip — verifies 3+ distinct CVs in results |
+| CT28 | `method_faims_skip.xml` | 300 | Golden file continuity — `continuity_faims_skip.json` captured via legacy bridge |
+
+Golden file `continuity_faims_skip.json` was captured in Phase 5 **before** the Phase 6 architecture transition, following the TDD principle of locking in baseline behavior (see Lesson 3 in `Phase_5/lessons-learned.md`).
+
+### CT09/CT10 soft guards — HIGH severity
+
+CT09 (line 302) and CT10 (line 335) retain `if (results.Count > 0)` guards, meaning they pass silently with zero results. These should be hardened to `Assert.That(results.Count, Is.GreaterThan(0))` in Phase 6, matching the CT27/CT28 pattern. If the legacy bridge needs more scans for reliable results, the test data should be extended.
+
+### "Per-CV wrapper" limitation debunked
+
+The Phase 4 addendum stated CT27/CT28 were deferred because "per-CV wrapper architecture prevents the harness from fully draining C++ queues across CV boundaries." Investigation in Phase 5 revealed this was incorrect — there is a single shared `FLASHIdaWrapper`, not per-CV instances. FAIMS CV cycling is handled entirely at the C# `ScanScheduler` level. The actual root cause of low/zero results was insufficient test data (9-15 scans). See Lesson 2 in `Phase_5/lessons-learned.md`.
+
+### FAIMS test infrastructure rule
+
+FAIMS behavior is **only testable through continuity tests**, NOT through the regression runner (`regression-runner.ps1`). `Flash.exe` test mode bypasses `ScanScheduler`, `FAIMSScanProcessor`, and all per-CV routing entirely — it feeds scans directly to the C++ `ProcessScan` bridge in a single stream, ignoring the `cv=` field. Both `method_faims_3cv.xml` and `method_faims_skip.xml` produce identical results in test mode. See Lesson 1 in `Phase_5/lessons-learned.md`.
+
+### Phase 5 test count
+
+5 new tests in Phase 5 (not 6 as originally estimated):
+
+| Test | File | Type | Status |
+|------|------|------|--------|
+| P5-U01 | `ProcessorTests.cs` | Unit (Tier 1) | EXISTS (rated WEAK) |
+| P5-U02 | `InterfaceShapeTests.cs` | Unit (Tier 1) | EXISTS (ADEQUATE) |
+| P5-U03 | `DeadCodeTests.cs` | Unit (Tier 1) | **MISSING** — never created |
+| P5-U04 | `DataPipeTests.cs` | Unit (Tier 1) | EXISTS (STRONG) |
+| CT27 | `ContinuityTestHarness.cs` | Continuity (Tier 2) | ACTIVATED |
+| CT28 | `ContinuityTestHarness.cs` | Continuity (Tier 2) | ACTIVATED |
+
+### Cumulative continuity test count
+
+42 total continuity tests at end of Phase 5 (30 from Phases 0-3 + 10 from Phase 4 + CT27/CT28 activated in Phase 5).
+
+### Soft guards inventory (all phases)
+
+| Location | Guard Type | Severity | Phase to fix |
+|----------|-----------|----------|--------------|
+| CT09 (line 302) | `if (results.Count > 0)` | **HIGH** | Phase 6 |
+| CT10 (line 335) | `if (results.Count > 0)` | **HIGH** | Phase 6 |
+| CT06 (line 207) | `Assume.That(results.Count > 0)` | MEDIUM | — |
+| CT07 (line 237) | `Assume.That(results.Count > 0)` | LOW | — |
+| CT18 (line 519) | `Assume.That(ms2Commands.Count > 0)` | MEDIUM | — |
+| CT22 (line 586) | `Assume.That(ms2Commands.Count > 0)` | MEDIUM | — |

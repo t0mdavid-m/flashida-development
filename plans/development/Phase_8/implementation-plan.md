@@ -47,12 +47,14 @@ The following must be true before starting Phase 8:
 
 3. **All prior regression tests pass.** Every test from P0 through P7 passes on the
    Build #4 artifact. No test regressions are open. (Phase 2 delivered 59 cumulative
-   tests; Phase 4 brought the count to ~70; Phase 5 to ~76; Phase 6 to ~89; Phase 7
-   to ~101. Phase 8 adds 7 more, bringing the final cumulative count to ~108.)
+   tests; Phase 4 brought the count to ~70; Phase 5 to 77; Phase 6 to ~90; Phase 7
+   to ~102. Phase 8 adds 7 more, bringing the final cumulative count to ~109.)
+   Note: P5-U03 was not implemented in Phase 5. If Phase 6 merged it into P6-U07/U08,
+   the gap is resolved by Phase 8.
 
 4. **No callers of the old bridge functions remain.** Phase 4 (ProcessScan full routing),
    Phase 5 (C# simplification), and Phase 6 (FAIMS absorption) must have removed all C#-side
-   calls to the 13 functions being deleted in this phase. Verify with the dead-code grep
+   calls to the 18 functions being deleted in this phase. Verify with the dead-code grep
    described in Step 1 below before touching any C++ code.
 
 5. **Legacy config format is no longer passed from C#.** Phase 1 (JSON Configuration)
@@ -126,9 +128,11 @@ Phase 8 inherits accumulated struct changes and CI policy changes from Phases 3-
 
 Note: The exact field order and offsets within `ScanCommand` may differ from the table above due to alignment padding. Consult the Phase 4 and Phase 6 implementation plans for the authoritative field order. The key invariant is that Phase 8 verification tests must use the actual final layout, not any intermediate version.
 
+**Phase 5 confirmed:** ScanCommand size unchanged through Phase 5 (still 1240 bytes post-Phase 4). Phase 5 is C#-only; no struct changes. The `faims_cv` field is added in Phase 6, bringing ScanCommand to ~1248 bytes. Phase 5 compliance also flagged CT09/CT10 soft guards (HIGH severity) — these should be hardened by Phase 6. If they reach Phase 8 unhardened, the final verification must flag them.
+
 ### CI Policy: TRACK-CREATE Hard-Fail
 
-The CI `[TRACK-CREATE]` check is a **hard-fail gate** (established by Phase 3 compliance finding F-5, carried forward through all subsequent phases). All Phase 8 regression tests (P8-R01) must produce `[TRACK-CREATE]` entries in stdout or CI will fail. This applies to every one of the 12+ regression config runs.
+The CI `[TRACK-CREATE]` check is a **hard-fail gate** (established by Phase 3 compliance finding F-5, carried forward through all subsequent phases). All Phase 8 regression tests (P8-R01) must produce `[TRACK-CREATE]` entries in stdout or CI will fail. This applies to every one of the 10 regression config runs.
 
 ### Fractional Collision Energy
 
@@ -136,37 +140,66 @@ The CI `[TRACK-CREATE]` check is a **hard-fail gate** (established by Phase 3 co
 
 ---
 
-## The 13 Functions to Remove and the 5 That Remain
+## Phase 5 Addendum (2026-04-05)
 
-### 13 bridge exports to remove
+*Updates based on Phase 5 actual outcomes and lessons learned. See `Phase_5/compliance-report.md` and `Phase_5/lessons-learned.md` for full details.*
 
-These are removed from both `FLASHIdaBridgeFunctions.h/.cpp` (C++ declarations and
-definitions) and `FLASHIdaWrapper.cs` (C# P/Invoke declarations):
+**Phase 5 status: COMPLETE.** FAIMSScanProcessor retained with full legacy path (`GetIsolationWindows` -> `ScanFactory` -> `ScanScheduler`). ScanScheduler also retained. Both are deleted in Phase 6. By Phase 8, all callers of the legacy bridge functions are gone.
+
+**Cumulative test count at Phase 5: 77.** 5 new tests (P5-U01, P5-U02, P5-U04, CT27 activated, CT28 activated). P5-U03 (`DeadCodeTests.cs`) was not implemented — gap carried forward to Phase 6 (merged into P6-U07/U08).
+
+**FAIMS TSV golden files not captured.** `Flash.exe` test mode bypasses the entire C# acquisition loop — it ignores the `cv=` field, has no `ScanScheduler`, no `FAIMSScanProcessor`, no per-CV routing. Both `method_faims_3cv.xml` and `method_faims_skip.xml` produce identical non-FAIMS output through `Flash.exe`. P8-R01 regression configs for FAIMS cannot produce meaningful FAIMS-specific output. FAIMS coverage for Phase 8 final verification relies on continuity tests (CT09/CT10/CT27/CT28).
+
+**Test quality expectations.** Phase 5 compliance found P5-U01 rated WEAK (tautological: `new X(null)` + `IsNotNull`). CT09/CT10 have HIGH severity soft guards (`if (results.Count > 0)` — passes silently with zero results). Phase 8's P8-U01/U02/U03 tests must test meaningful behavioral properties:
+- P8-U01: counts DllImport declarations (structural, non-tautological)
+- P8-U02: scans source tree for dead references (structural, non-tautological)
+- P8-U03: calls MethodDocGenerator and verifies output contains known field names (behavioral)
+
+**Legacy bridge functions still called by FAIMSScanProcessor in Phase 5:**
+- `GetIsolationWindows` — fills m/z and charge arrays for top-N isolation targets
+- `GetAllMonoisotopicMasses` — returns all monoisotopic masses for a peak group
+- `GetAllPeakGroupSize` — returns count of deconvolved peak groups
+- `GetRepresentativeMass` — returns representative mass for a peak group
+- `RemoveFromExclusionList` — removes an m/z from the runtime exclusion list
+
+All five are deleted (along with FAIMSScanProcessor itself) in Phase 6. By Phase 8, all callers are gone — confirming the function removal list is still valid.
+
+**CT09/CT10 soft guards.** Phase 5 compliance flagged `if (results.Count > 0)` in CT09/CT10 as HIGH severity. Phase 6 should harden these after moving FAIMS to the unified bridge path. If Phase 6 does not harden them, Phase 8's final verification should flag them as unresolved test quality issues.
+
+---
+
+## The 18 Functions to Remove and the 5 That Remain
+
+### 18 bridge exports to remove
+
+These are removed from `FLASHIdaBridgeFunctions.h/.cpp` (C++ declarations and
+definitions). The corresponding C# P/Invoke declarations in `FLASHIdaWrapper.cs` are
+also removed (17 C# removals — one C++ export has no C# counterpart):
 
 | # | Function name | Original purpose |
 |---|---------------|-----------------|
 | 1 | `GetPeakGroupSize` | Returns count of deconvolved peak groups from last MS1 |
-| 2 | `GetIsolationWindows` | Fills arrays of m/z and charge for top-N isolation targets |
-| 3 | `DeconvolveMS2` | Runs MS2 deconvolution for a single spectrum |
-| 4 | `ProcessMS2ForTagBasedTargeting` | Routes MS2 results into tag-based targeting state |
-| 5 | `GetBestMS2Masses` | Returns ranked fragment masses after MS2 deconvolution |
-| 6 | `ClearMS2Deconvolution` | Resets MS2 deconvolution state between scans |
+| 2 | `IsDifferentiallyAbundant` | Checks if a peak group shows differential abundance for quant |
+| 3 | `GetIsolationWindows` | Fills arrays of m/z and charge for top-N isolation targets |
+| 4 | `RemoveFromExclusionList` | Removes an m/z from the runtime exclusion list |
+| 5 | `GetAllPeakGroupSize` | Returns total peak group count across all charge states |
+| 6 | `GetAllMonoisotopicMasses` | Returns all monoisotopic masses for a peak group |
 | 7 | `GetRepresentativeMass` | Returns representative (most abundant) mass for a peak group |
-| 8 | `GetAllMonoisotopicMasses` | Returns all monoisotopic masses for a peak group |
-| 9 | `RemoveFromExclusionList` | Removes an m/z from the runtime exclusion list |
-| 10 | `AddToInclusionList` | Adds a mass to the runtime inclusion list |
-| 11 | `GetMS1ScanResult` | Returns scored MS1 scan result metadata |
-| 12 | `ResetScanState` | Resets per-scan internal state (formerly called between events) |
-| 13 | `GetDeconvolutionQuality` | Returns a quality metric for the last deconvolution |
+| 8 | `ProcessMS2ForTagBasedTargeting` | Routes MS2 results into tag-based targeting state |
+| 9 | `DeconvolveMS2` | Runs MS2 deconvolution for a single spectrum |
+| 10 | `GetBestMS2Masses` | Returns ranked fragment masses after MS2 deconvolution |
+| 11 | `HasMS2Deconvolution` | Checks if MS2 deconvolution results are available |
+| 12 | `GetMS2PeakGroupCount` | Returns number of peak groups from last MS2 deconvolution |
+| 13 | `ClearMS2Deconvolution` | Resets MS2 deconvolution state between scans |
+| 14 | `GetTopFragmentMatches` | Returns top fragment ion matches for MS3 targeting |
+| 15 | `GetAmbiguityEnclosingIons` | Returns enclosing ions for ambiguity resolution |
+| 16 | `GetTerminalFragmentIons` | Returns terminal fragment ions for sequence tagging |
+| 17 | `GetConfigInt` | Phase 2 diagnostic: reads integer config value by key |
+| 18 | `GetConfigDouble` | Phase 2 diagnostic: reads double config value by key |
 
-Note: The exact set of functions to remove must be confirmed against the current
-`FLASHIdaBridgeFunctions.h` before deletion. The 13 listed above are from the original
-~20 legacy bridge functions. Additionally, Phase 2 added `GetConfigInt` and
-`GetConfigDouble` as diagnostic bridge helpers — these must also be removed if the
-"exactly 5 exports" invariant is to hold. Verify the complete export list in the current
-DLL (via `dumpbin /exports`) before starting removals. The invariant is: after Phase 8,
-exactly 5 exports remain (`CreateFLASHIda`, `DisposeFLASHIda`, `ProcessScan`,
-`GetNextScanCommand`, `GetNextTrackingId`).
+The invariant is: after Phase 8, exactly 5 C++ exports remain (`CreateFLASHIda`,
+`DisposeFLASHIda`, `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId`) and
+exactly 5 C# `[DllImport]` declarations remain.
 
 ### 5 bridge exports that remain
 
@@ -195,10 +228,12 @@ not locally.
 
 ```powershell
 $funcs = @(
-    "GetPeakGroupSize", "GetIsolationWindows", "DeconvolveMS2",
-    "ProcessMS2ForTagBasedTargeting", "GetBestMS2Masses", "ClearMS2Deconvolution",
-    "GetRepresentativeMass", "GetAllMonoisotopicMasses", "RemoveFromExclusionList",
-    "AddToInclusionList", "GetMS1ScanResult", "ResetScanState", "GetDeconvolutionQuality"
+    "GetPeakGroupSize", "IsDifferentiallyAbundant", "GetIsolationWindows",
+    "RemoveFromExclusionList", "GetAllPeakGroupSize", "GetAllMonoisotopicMasses",
+    "GetRepresentativeMass", "ProcessMS2ForTagBasedTargeting", "DeconvolveMS2",
+    "GetBestMS2Masses", "HasMS2Deconvolution", "GetMS2PeakGroupCount",
+    "ClearMS2Deconvolution", "GetTopFragmentMatches", "GetAmbiguityEnclosingIons",
+    "GetTerminalFragmentIons", "GetConfigInt", "GetConfigDouble"
 )
 foreach ($f in $funcs) {
     $hits = Select-String -Path "FlashIDA\src\**\*.cs" -Pattern $f -Recurse |
@@ -211,10 +246,12 @@ foreach ($f in $funcs) {
 **C++ caller verification (reference — runs in CI on `ubuntu-latest`):**
 
 ```bash
-for func in GetPeakGroupSize GetIsolationWindows DeconvolveMS2 \
-            ProcessMS2ForTagBasedTargeting GetBestMS2Masses ClearMS2Deconvolution \
-            GetRepresentativeMass GetAllMonoisotopicMasses RemoveFromExclusionList \
-            AddToInclusionList GetMS1ScanResult ResetScanState GetDeconvolutionQuality; do
+for func in GetPeakGroupSize IsDifferentiallyAbundant GetIsolationWindows \
+            RemoveFromExclusionList GetAllPeakGroupSize GetAllMonoisotopicMasses \
+            GetRepresentativeMass ProcessMS2ForTagBasedTargeting DeconvolveMS2 \
+            GetBestMS2Masses HasMS2Deconvolution GetMS2PeakGroupCount \
+            ClearMS2Deconvolution GetTopFragmentMatches GetAmbiguityEnclosingIons \
+            GetTerminalFragmentIons GetConfigInt GetConfigDouble; do
     hits=$(grep -rn "$func" OpenMS/src/openms/source/ANALYSIS/TOPDOWN/ \
            --include="*.cpp" --include="*.h" \
            | grep -v "FLASHIdaBridgeFunctions")
@@ -236,11 +273,11 @@ Select-String -Path "FlashIDA\src\**\*.cs" -Pattern "ToFLASHDeconvInput" -Recurs
 
 ---
 
-### Step 2 — Remove the 13 C++ bridge exports from the header
+### Step 2 — Remove the 18 C++ bridge exports from the header
 
 File: `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h`
 
-For each of the 13 functions, remove the `extern "C" OPENMS_DLLAPI` declaration. Leave only
+For each of the 18 functions, remove the `extern "C" OPENMS_DLLAPI` declaration. Leave only
 the 5 keeper declarations and any file-level includes or guards that remain valid.
 
 The header after this step contains exactly these 5 declarations (plus any necessary includes
@@ -260,11 +297,11 @@ extern "C" OPENMS_DLLAPI int       GetNextTrackingId(FLASHIda* obj);
 
 ---
 
-### Step 3 — Remove the 13 C++ bridge function definitions
+### Step 3 — Remove the 18 C++ bridge function definitions
 
 File: `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp`
 
-Delete the entire function body for each of the 13 functions. Do not leave stub bodies,
+Delete the entire function body for each of the 18 functions. Do not leave stub bodies,
 `/* removed */` comments, or `#if 0` blocks. The removed code is in version control; leaving
 dead stubs is noise.
 
@@ -280,7 +317,7 @@ File: `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp`
 Audit the private methods of `FLASHIda` for any that are now unreachable. A method is safe
 to remove if:
 
-- It was called only from one or more of the 13 deleted bridge wrapper functions.
+- It was called only from one or more of the 18 deleted bridge wrapper functions.
 - It is not called from `processScan_()`, `getNextScanCommand_()`, `feedExplorationResult_()`,
   or any other method reachable from the 5 keeper exports.
 
@@ -326,12 +363,14 @@ from `FLASHIda.cpp`.
 
 ---
 
-### Step 6 — Remove 13 old C# P/Invoke declarations from FLASHIdaWrapper.cs
+### Step 6 — Remove 17 old C# P/Invoke declarations from FLASHIdaWrapper.cs
 
 File: `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs`
 
 Remove the `[DllImport(dllName)]` declaration line and its associated static extern method
-signature for each of the 13 functions. Do not remove any helper methods in `FLASHIdaWrapper`
+signature for each of the 17 functions (the C# file has 22 `DllImport` lines total; 5 keepers
+= 17 to remove; the C++ side has 18 removals because one export has no C# counterpart).
+Do not remove any helper methods in `FLASHIdaWrapper`
 that wrap the 5 keeper functions (e.g., any public methods that call `ProcessScan` internally).
 
 After this step, the file contains exactly 5 `[DllImport(dllName)]` lines. The count is
@@ -461,7 +500,7 @@ File: `FlashIDA/test-data/` (update any hard-coded export counts or lists)
 
 The integration test P8-I01 checks `dumpbin /exports` for exactly 5 bridge symbols and
 verifies that none of the removed names are present. If the test script contains a hard-coded
-list of expected absent names, add all 13 removed function names to it. See Section 5.4 of
+list of expected absent names, add all 18 removed function names to it. See Section 5.4 of
 `testing-strategy.md` for the baseline `dumpbin` CI step; extend the `findstr` block to also
 assert absence.
 
@@ -479,21 +518,23 @@ findstr /C:"DisposeFLASHIda"    exports.txt || exit /b 1
 findstr /C:"ProcessScan"        exports.txt || exit /b 1
 findstr /C:"GetNextScanCommand" exports.txt || exit /b 1
 findstr /C:"GetNextTrackingId"  exports.txt || exit /b 1
-rem Verify removed functions are absent (13 legacy + 2 Phase 2 diagnostic)
+rem Verify all 18 removed functions are absent
 findstr /C:"GetPeakGroupSize"               exports.txt && exit /b 1
+findstr /C:"IsDifferentiallyAbundant"       exports.txt && exit /b 1
 findstr /C:"GetIsolationWindows"            exports.txt && exit /b 1
-findstr /C:"DeconvolveMS2"                  exports.txt && exit /b 1
-findstr /C:"ProcessMS2ForTagBasedTargeting" exports.txt && exit /b 1
-findstr /C:"GetBestMS2Masses"               exports.txt && exit /b 1
-findstr /C:"ClearMS2Deconvolution"          exports.txt && exit /b 1
-findstr /C:"GetRepresentativeMass"          exports.txt && exit /b 1
-findstr /C:"GetAllMonoisotopicMasses"       exports.txt && exit /b 1
 findstr /C:"RemoveFromExclusionList"        exports.txt && exit /b 1
-findstr /C:"AddToInclusionList"             exports.txt && exit /b 1
-findstr /C:"GetMS1ScanResult"               exports.txt && exit /b 1
-findstr /C:"ResetScanState"                 exports.txt && exit /b 1
-findstr /C:"GetDeconvolutionQuality"        exports.txt && exit /b 1
-rem Phase 2 diagnostic helpers (also removed for 5-export invariant)
+findstr /C:"GetAllPeakGroupSize"            exports.txt && exit /b 1
+findstr /C:"GetAllMonoisotopicMasses"       exports.txt && exit /b 1
+findstr /C:"GetRepresentativeMass"          exports.txt && exit /b 1
+findstr /C:"ProcessMS2ForTagBasedTargeting" exports.txt && exit /b 1
+findstr /C:"DeconvolveMS2"                  exports.txt && exit /b 1
+findstr /C:"GetBestMS2Masses"               exports.txt && exit /b 1
+findstr /C:"HasMS2Deconvolution"            exports.txt && exit /b 1
+findstr /C:"GetMS2PeakGroupCount"           exports.txt && exit /b 1
+findstr /C:"ClearMS2Deconvolution"          exports.txt && exit /b 1
+findstr /C:"GetTopFragmentMatches"          exports.txt && exit /b 1
+findstr /C:"GetAmbiguityEnclosingIons"      exports.txt && exit /b 1
+findstr /C:"GetTerminalFragmentIons"        exports.txt && exit /b 1
 findstr /C:"GetConfigInt"                   exports.txt && exit /b 1
 findstr /C:"GetConfigDouble"               exports.txt && exit /b 1
 ```
@@ -521,21 +562,22 @@ The authoritative orchestration for this step is `regression-runner.ps1`
 (`FlashIDA/test-scripts/regression-runner.ps1`). Its full config array, correct golden file
 names, and per-config spectrum file assignments are specified in
 [../test-file-specification.md §4.2](../test-file-specification.md). The canonical config
-array as of Phase 8 (all 13 entries) is reproduced there; use that as the single source of
-truth when extending or verifying the script. Note in particular:
+array as of Phase 8 (all 10 entries, FAIMS configs excluded) is reproduced there; use that
+as the single source of truth when extending or verifying the script. Note in particular:
 
 - `ms2_hcd_fragment.txt` (spec §1.3) is the required second spectrum argument for
   `method_tag_targeting.xml`, `method_quant.xml`, `method_ms3_mode1.xml`,
   `method_ms3_mode2.xml`, and `method_ms3_mode3.xml`.
-- `ms1_faims_3cv.txt` (spec §1.4) is the required spectrum for `method_faims_3cv.xml` and
-  `method_faims_skip.xml`.
 - All other configs use `ms1_standard.txt` (spec §1.2).
+- FAIMS configs (`method_faims_3cv.xml`, `method_faims_skip.xml`) are excluded from the
+  regression runner because Flash.exe test mode ignores CVs (Phase 5 Lesson 1). FAIMS
+  behavioral verification is provided by continuity tests CT09/CT10/CT27/CT28.
 - All spectrum files use **tab-separated** format with **RT in seconds** (Phase 0 lesson #2):
   `Spec scan=N\t<rt_seconds>`, followed by tab-separated `m/z\tintensity` data lines.
   Flash.exe's parser divides RT by 60 internally.
 
 Golden file canonical names follow the `phase4_*` / `faims_*` / `phase7_*` convention
-defined in spec §2.2. All 12 configurations must produce `PASS`. Any failure indicates a
+defined in spec §2.2. All 10 configurations must produce `PASS`. Any failure indicates a
 regression introduced during cleanup.
 
 For reference, the runner invokes `Flash.exe` and `compare_golden.py` in the pattern:
@@ -558,14 +600,14 @@ The `compare_golden.py` tolerance rules (absolute 1e-6 for |v| ≤ 1.0, relative
 
 | File | Action | Description |
 |------|--------|-------------|
-| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h` | Modify | Remove 13 `extern "C" OPENMS_DLLAPI` declarations. Leave 5. |
-| `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp` | Modify | Remove 13 function bodies. Leave 5. |
+| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h` | Modify | Remove 18 `extern "C" OPENMS_DLLAPI` declarations. Leave 5. |
+| `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp` | Modify | Remove 18 function bodies. Leave 5. |
 | `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | Remove declarations of private methods that are now orphaned (e.g., `getPeakGroupSize_`, `parseLegacy_`). |
 | `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp` | Modify | Remove `parseLegacy_()` definition; remove the `else parseLegacy_(arg)` branch in the constructor; remove orphaned private method bodies. |
-| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | Modify | Remove 13 `[DllImport]` declarations. Leave exactly 5. |
+| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | Modify | Remove 17 `[DllImport]` declarations. Leave exactly 5. |
 | `FlashIDA/src/Flash/IDA/Parameter.cs` | Modify | Remove `ToFLASHDeconvInput()` method and any helpers that exist solely for it. |
 | `FlashIDA/src/Flash/IDA/MethodDocGenerator.cs` | Create (new) | ~30-line reflection utility for `[Description]`-based documentation. |
-| `.github/workflows/flashida-ci.yml` | Modify | Extend the `dumpbin` export verification step to also assert absence of the 13 removed symbols (see Step 10). |
+| `.github/workflows/flashida-ci.yml` | Modify | Extend the `dumpbin` export verification step to also assert absence of the 18 removed symbols (see Step 10). |
 
 No other files should require changes. If a file outside this list needs modification, that
 indicates an unresolved call site from Step 1 that must be addressed first.
@@ -581,8 +623,8 @@ extensions, but this must be checked if the file list changes.
 ## Test Cases
 
 All 7 tests added in this phase. They run as part of the full cumulative suite (including
-all prior phases; ~101 cumulative tests were delivered through Phase 7. Phase 8 adds 7,
-bringing the cumulative total to ~108).
+all prior phases; ~102 cumulative tests were delivered through Phase 7. Phase 8 adds 7,
+bringing the cumulative total to ~109).
 
 **Tier convention (Phase 0 lesson #12):** Tests that load `OpenMS.dll` (via P/Invoke or
 bridge calls) are Tier 2, not Tier 1. Pure C# tests without DLL dependencies are Tier 1.
@@ -597,13 +639,13 @@ results (see also silent zero-result failure mode, lesson #14).
 
 | Test | Summary |
 |------|---------|
-| P8-U01 | Counts `[DllImport]` declarations in `FLASHIdaWrapper.cs` and asserts exactly 5 remain. Ensures no legacy P/Invoke declaration was accidentally left behind after the 13 removals. |
+| P8-U01 | Counts `[DllImport]` declarations in `FLASHIdaWrapper.cs` and asserts exactly 5 remain. Ensures no legacy P/Invoke declaration was accidentally left behind after the 17 removals. |
 | P8-U02 | Scans all C# source files for any reference to `ToFLASHDeconvInput` and asserts zero hits outside `Parameter.cs`. Confirms the legacy serialization method and all its call sites are fully gone. |
 | P8-U03 | Calls `MethodDocGenerator.Generate(typeof(Parameter))` and verifies the returned string is non-empty and contains at least 3 known `[Description]`-annotated property names. Validates that the new reflection utility works correctly on real `Parameter` properties. |
 | P8-U04 | Passes a non-JSON (legacy space-delimited) string to the `FLASHIda` C++ constructor and asserts that it throws `std::invalid_argument`. Confirms the `parseLegacy_` fallback was removed and invalid input is rejected rather than silently accepted. |
-| P8-I01 | Runs `dumpbin /exports` on the built `OpenMS.dll` and asserts all 5 keeper functions are present and all 13 removed functions are absent. Verifies the compiled DLL export table matches the intended final bridge API exactly. |
+| P8-I01 | Runs `dumpbin /exports` on the built `OpenMS.dll` and asserts all 5 keeper functions are present and all 18 removed functions are absent. Verifies the compiled DLL export table matches the intended final bridge API exactly. |
 | P8-I02 | Builds `Flash.sln` with `/warnaserror` and asserts the build exits with zero warnings. Confirms that removing dead declarations and methods left no dangling references or orphaned `using` directives. |
-| P8-R01 | Runs `Flash.exe` against all 12 method configuration files and compares each output to the corresponding Phase 7 golden file. Verifies that the cleanup phase changed no observable behaviour across every supported acquisition mode. |
+| P8-R01 | Runs `Flash.exe` against all 10 method configuration files (FAIMS configs excluded -- see P8-R01 detail) and compares each output to the corresponding Phase 7 golden file. Verifies that the cleanup phase changed no observable behaviour across every supported acquisition mode. |
 
 ---
 
@@ -728,12 +770,12 @@ are used only in `TEST_EQUAL` assertions, MSVC may warn about unused variables. 
 ### P8-I01 — DLL exports: exactly 5 bridge functions (Tier 2, `windows-latest`)
 
 **Description:** Run `dumpbin /exports` on the built `OpenMS.dll`. Verify that all 5 keeper
-functions are present and all 13 removed functions are absent.
+functions are present and all 18 removed functions are absent.
 
 **Implementation:** Bridge verification step in `windows-tests` job of `flashida-ci.yml` (see Step 10 for
 the full cmd script). This test replaces and extends the Phase 3 DLL export check (P3-I05).
 
-**Expected outcome:** All 5 presence checks pass (`findstr` finds each name). All 13 absence
+**Expected outcome:** All 5 presence checks pass (`findstr` finds each name). All 18 absence
 checks pass (`findstr` returns non-zero for each removed name). Any deviation from this exact
 set is a build failure.
 
@@ -782,7 +824,7 @@ comprehensive validation that cleanup removed only dead code and changed no beha
 (`IsolationStage.collision_energy`), so fractional values are correctly represented.
 The `compare_golden.py` relative tolerance (1e-4 for |v| > 1.0) handles these correctly.
 
-**Configurations covered (minimum 12):**
+**Configurations covered (minimum 10):**
 
 Canonical golden file names are defined in [../test-file-specification.md §2.2](../test-file-specification.md).
 Spectrum file assignments per config are defined in spec §1.2–§1.4 and §4.2.
@@ -798,18 +840,18 @@ Spectrum file assignments per config are defined in spec §1.2–§1.4 and §4.2
 | `method_ms3_mode1.xml` | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `phase4_ms3_mode1.tsv` |
 | `method_ms3_mode2.xml` | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `phase4_ms3_mode2.tsv` |
 | `method_ms3_mode3.xml` | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `phase4_ms3_mode3.tsv` |
-| `method_faims_3cv.xml` | `ms1_faims_3cv.txt` | `faims_3cv.tsv` |
-| `method_faims_skip.xml` | `ms1_faims_3cv.txt` | `faims_skip.tsv` |
 | `method_exploration.xml` | `ms1_standard.txt` | `phase7_exploration.tsv` |
+
+**FAIMS configs excluded:** `method_faims_3cv.xml` and `method_faims_skip.xml` are not included in P8-R01 because Flash.exe test mode ignores CVs (Phase 5 Lesson 1). Both configs produce output identical to standard DDA on the same input data. FAIMS behavioral verification in Phase 8 is provided by continuity tests CT09/CT10/CT27/CT28, which run within NUnit and are included in the cumulative test suite.
 
 **Implementation:** The `regression-runner.ps1` script (Section 6.1 of `testing-strategy.md`;
 canonical config array in [../test-file-specification.md §4.2](../test-file-specification.md))
-covers all 12 configs. Each invocation uses `compare_golden.py` for numeric comparison with
+covers all 10 configs. Each invocation uses `compare_golden.py` for numeric comparison with
 tolerances defined in [../test-file-specification.md §4.1](../test-file-specification.md)
 (absolute 1e-6 for |v| ≤ 1.0, relative 1e-4 for |v| > 1.0; exact match for `charges` and `hcd`).
 The golden TSV column schema (15 columns) is specified in spec §2.1.
 
-**Expected outcome:** All 12 configs produce `PASS`. Any single failure is a regression.
+**Expected outcome:** All 10 configs produce `PASS`. Any single failure is a regression.
 Golden files are the Phase 7 outputs; they are not updated in this phase unless a deliberate
 behavioral change was made (none is expected in a cleanup phase). If golden files do need
 updating, remember that golden-file capture requires a 2-commit minimum: the first commit
@@ -820,7 +862,7 @@ file (Phase 0 lesson #15).
 download needed — Phase 0 lesson #5) and Thermo iAPI DLLs (decrypted via Strategy B /
 openssl — Phase 0 lesson #3).
 
-**Timing note:** 12 `Flash.exe` invocations may approach the 20-min Tier 3 budget.
+**Timing note:** 10 `Flash.exe` invocations may approach the 20-min Tier 3 budget.
 If timing is tight, parallelize by splitting configs across two PowerShell jobs that run
 concurrently, or run the 4 fastest configs sequentially and batch the rest.
 
@@ -833,8 +875,8 @@ These changes to `.github/workflows/flashida-ci.yml` are required for Phase 8:
 ### 1. Extend DLL export verification in the bridge verification step in `windows-tests`
 
 Replace the Phase 3 verification step (P3-I05: "exports include new functions") with the
-Phase 8 step (P8-I01: "exactly 5 exports, 13 absent"). The new step both asserts presence
-of the 5 keepers and asserts absence of the 13 removed functions. See Step 10 for the
+Phase 8 step (P8-I01: "exactly 5 exports, 18 absent"). The new step both asserts presence
+of the 5 keepers and asserts absence of the 18 removed functions. See Step 10 for the
 complete `cmd` script.
 
 ### 2. Add zero-warnings build step to the `windows-tests` job
@@ -878,9 +920,9 @@ alongside the other FLASH test entries that were uncommented in Phase 2. Use `ct
 job to run it. Test names follow the OpenMS `ClassName_test.cpp` convention, not a `FLASH`
 prefix (Phase 2 lesson #4).
 
-### 5. Regression suite covers all 12+ configs
+### 5. Regression suite covers all 10 configs
 
-The regression runner script must include all 12 method configs listed in P8-R01. If the
+The regression runner script must include all 10 method configs listed in P8-R01. If the
 script was built incrementally (each phase adds its new configs), confirm the Phase 8 version
 runs all prior configs plus any new ones. The canonical full config array (names, spectrum
 file assignments, golden file names) is defined in
@@ -920,7 +962,7 @@ by the test suite; this section maps each check to its test.
 | No legacy P/Invoke declarations | P8-U01 | `windows-tests` job NUnit results for `CleanupTests.P8_U01` |
 | ToFLASHDeconvInput absent | P8-U02 | `windows-tests` job NUnit results for `CleanupTests.P8_U02` |
 | Legacy config rejected by C++ | P8-U04 | `cpp-unit-tests` job on `ubuntu-latest`; `ctest -R ClassName` output (Phase 2 lesson #4) |
-| Full regression passes | P8-R01 | Automated by P8-R01 in the `windows-tests` CI job. All 12 regression configs pass in CI. |
+| Full regression passes | P8-R01 | Automated by P8-R01 in the `windows-tests` CI job. All 10 regression configs pass in CI. |
 
 ---
 
@@ -928,7 +970,7 @@ by the test suite; this section maps each check to its test.
 
 Phase 8 is complete when all of the following are true:
 
-- [ ] Step 1 pre-condition check passes: zero live callers of any of the 13 removed functions
+- [ ] Step 1 pre-condition check passes: zero live callers of any of the 18 removed functions
       and zero callers of `ToFLASHDeconvInput` outside of `Parameter.cs` itself.
 
 - [ ] `FLASHIdaBridgeFunctions.h` contains exactly 5 `extern "C" OPENMS_DLLAPI` declarations.
@@ -955,15 +997,15 @@ Phase 8 is complete when all of the following are true:
 
 - [ ] `msbuild Flash.sln /warnaserror` succeeds with zero warnings (verified by P8-I02).
 
-- [ ] `dumpbin /exports OpenMS.dll` shows exactly 5 bridge symbols; all 13 removed symbols
+- [ ] `dumpbin /exports OpenMS.dll` shows exactly 5 bridge symbols; all 18 removed symbols
       are absent (verified by P8-I01).
 
 - [ ] P8-U04 passes: C++ unit test confirms non-JSON input is rejected.
 
-- [ ] P8-R01 passes: all 12+ method configuration variants produce output matching Phase 7
+- [ ] P8-R01 passes: all 10 method configuration variants produce output matching Phase 7
       golden files. All runs emit `[TRACK-CREATE]` entries (CI hard-fail gate).
 
-- [ ] All prior tests P0 through P7 continue to pass (~101 cumulative). No regressions
+- [ ] All prior tests P0 through P7 continue to pass (~102 cumulative). No regressions
       introduced. In particular, struct size tests (P3-U01/P3-U02, updated in Phases 4 and 6)
       still pass with the final `ScanCommand` and `IsolationStage` sizes (including
       `enqueue_timestamp_ms` + 11 scoring fields from Phase 4 [1240 bytes] and `faims_cv`
@@ -1016,3 +1058,10 @@ plan. Each entry identifies where the lesson is reflected.
 | `enqueue_timestamp_ms` (uint64_t) + 11 scoring fields + Pad2 added to ScanCommand (1144 → 1240 bytes) | Phase 4 | Phase 3-7 Deviations Impact section; struct size is not 1144 (nor 1152) |
 | `faims_cv` (double) added to ScanCommand (1240 → ~1248 bytes) | Phase 6 | Phase 3-7 Deviations Impact section; struct size is not 1144 |
 | Phase 7 exploration engine uses fractional CE values | Phase 7 | P8-R01 fractional CE note; `method_exploration.xml` regression config |
+| FAIMS tests must use continuity tests, not regression runner | Phase 5 #1 | P8-R01 FAIMS regression note; FAIMS configs produce identical non-FAIMS output through `Flash.exe` |
+| No tautological tests (P5-U01 rated WEAK) | Phase 5 compliance | P8-U01/U02/U03 test design: all test meaningful behavioral or structural properties |
+| No soft guards (CT09/CT10 HIGH severity) | Phase 5 compliance | Phase 8 test expectations: no `if (results.Count > 0)` guards in Phase 8 tests |
+| Golden files captured before transitions (TDD) | Phase 5 #3 | P8-R01 uses Phase 7 golden files captured before Phase 8 cleanup |
+| Single wrapper architecture confirmed | Phase 5 #2 | No direct impact on Phase 8 (FAIMS already absorbed in Phase 6); noted for consistency |
+| Adaptive skip needs 300 scans | Phase 5 #4 | No direct impact on Phase 8 (no new FAIMS tests added); noted for consistency |
+| Phase 5 cumulative test count: 77 (not 76) | Phase 5 compliance | Prerequisites §3; Phase 5 Addendum; cumulative counts updated throughout |

@@ -24,7 +24,7 @@ The following must be complete and verified before starting Phase 7:
 
 1. **Phase 6 delivered and all tests passing.** C++ fully owns the scan queue including FAIMS CV cycling. `ScanScheduler.cs` and `FAIMSScanProcessor.cs` have been deleted. `GetNextScanCommand` is the sole source of all scan commands including CV injection.
 
-2. **`OptimizationMetadata` struct exists** (delivered in Phase 2, Build #1). `OptimizationMetadata.h` is already present in the OpenMS source tree with 18 fields. `DeconvolvedSpectrum` already carries `std::optional<OptimizationMetadata> opt_metadata_` and the accessor methods `getOrCreateOptimizationMetadata()`, `getOptimizationMetadata()`, `hasOptimizationMetadata()`. The `toSpectrum()` method already serializes metadata fields via `setMetaValue()` when present. Phase 2 also delivered `GetConfigInt`/`GetConfigDouble` bridge functions and 5 C++ unit tests (cumulative: 59 tests after Phase 2; ~70 after Phase 4, ~76 after Phase 5, ~89 after Phase 6). Key Phase 2 API details that Phase 7 must respect:
+2. **`OptimizationMetadata` struct exists** (delivered in Phase 2, Build #1). `OptimizationMetadata.h` is already present in the OpenMS source tree with 18 fields. `DeconvolvedSpectrum` already carries `std::optional<OptimizationMetadata> opt_metadata_` and the accessor methods `getOrCreateOptimizationMetadata()`, `getOptimizationMetadata()`, `hasOptimizationMetadata()`. The `toSpectrum()` method already serializes metadata fields via `setMetaValue()` when present. Phase 2 also delivered `GetConfigInt`/`GetConfigDouble` bridge functions and 5 C++ unit tests (cumulative: 59 tests after Phase 2; ~70 after Phase 4, 77 after Phase 5, ~90 after Phase 6). P5-U03 was not implemented (gap carried forward through Phase 6). Key Phase 2 API details that Phase 7 must respect:
    - **`toSpectrum()` returns `MSSpectrum` by value** (`MSSpectrum toSpectrum(int to_charge, double tol = 10.0, bool retain_undeconvolved = false)`), NOT void with an out-parameter. All code must use `MSSpectrum out = ds.toSpectrum(1);`.
    - **`DeconvolvedSpectrum` constructor takes `scan_number`** (`explicit DeconvolvedSpectrum(int scan_number)`), NOT `ms_level`.
    - **`toSpectrum()` requires at least one PeakGroup** — it unconditionally accesses `peak_groups_[0].isPositive()`. Any test calling `toSpectrum()` must push a default `PeakGroup` first to avoid undefined behavior.
@@ -113,7 +113,21 @@ The following lessons from Phase 2 also apply:
 
 30. **`(void)var;` for MSVC `/WX` compliance in test code (Phase 2 lesson #8):** When a variable is used only in a `TEST_EQUAL` assertion but not otherwise referenced, MSVC will warn about unused variables under `/WX`. Use `(void)var;` after the assertion to suppress the warning. This applies to all Phase 7 C++ unit tests (P7-U01 through P7-U10). Example: `(void)meta;` after asserting on metadata fields.
 
-31. **Cumulative test counts (Phase 2 lesson #9, updated with Phase 4 actuals):** After Phase 2, there were 59 cumulative tests. Actual counts after subsequent phases: Phase 4 ~70, Phase 5 ~76, Phase 6 ~89. Phase 7 adds 12 tests (P7-U01 through P7-U10 + P7-R01, P7-R02), bringing the cumulative total to ~101.
+31. **Cumulative test counts (Phase 2 lesson #9, updated with Phase 5 actuals):** After Phase 2, there were 59 cumulative tests. Actual counts after subsequent phases: Phase 4 ~70, Phase 5 77, Phase 6 ~90. Phase 7 adds 12 tests (P7-U01 through P7-U10 + P7-R01, P7-R02), bringing the cumulative total to ~102.
+
+The following lessons from [../Phase_5/lessons-learned.md](../Phase_5/lessons-learned.md) and [../Phase_5/compliance-report.md](../Phase_5/compliance-report.md) also apply:
+
+32. **FAIMS tests must use continuity tests, not regression runner (Phase 5 lesson #1):** `Flash.exe` test mode bypasses the entire C# acquisition loop — it ignores the `cv=` field, has no `ScanScheduler`, no `FAIMSScanProcessor`, no per-CV routing. FAIMS behavior is only testable through acquisition loop continuity tests (CT09/CT10/CT27/CT28). Never add FAIMS configs to the regression runner. Phase 7's P7-R01/P7-R02 regression tests do not cover FAIMS — FAIMS coverage is via continuity tests only.
+
+33. **Single wrapper architecture — no per-CV limitation (Phase 5 lesson #2):** `FAIMSScanProcessor` uses a single shared `FLASHIdaWrapper`, not per-CV wrappers. The supposed "per-CV wrapper limitation" was a myth. The actual root cause of prior low/zero results was insufficient test data (9-15 scans). Don't accept architectural limitation claims at face value — read the actual code.
+
+34. **Capture golden files BEFORE architecture transitions (Phase 5 lesson #3):** Golden files should capture the current working behavior before a transition, so the new implementation can be verified against it. Capturing after the transition provides no regression baseline.
+
+35. **Adaptive skip needs 300 scans, not 50 (Phase 5 lesson #4):** FAIMS adaptive skip tests (CT27/CT28) need all 300 scans from `ms1_faims_3cv.txt`. 50 scans is insufficient because the scheduler actively reduces how many scans each CV receives. Phase 7 does not add FAIMS tests, but this principle applies to any new test that depends on engine state accumulation.
+
+36. **No tautological tests (Phase 5 compliance finding):** P5-U01 was rated WEAK — it tested `new UnifiedScanProcessor(null)` + IsNotNull, which is a tautology (`new` never returns null in C#). Phase 7's new tests (P7-U01 through P7-U10) must test behavioral properties (scoring logic, queue placement, state transitions), not just object instantiation or field existence.
+
+37. **No soft guards in tests (Phase 5 compliance finding):** CT09/CT10 had `if (results.Count > 0)` conditional validation (HIGH severity). These pass silently with zero results. Phase 7 tests must use hard assertions (`Assert`, `TEST_EQUAL`) with proper test data, never conditional validation or `Assume.That` guards.
 
 ---
 
@@ -136,6 +150,32 @@ The following deviations discovered or introduced during Phases 3–6 affect Pha
 7. **ScanCommand size** — The struct size progression: 1144 (Phase 3) -> **1240** (Phase 4, added `enqueue_timestamp_ms` + 11 scoring fields) -> **~1248** (Phase 6, added `faims_cv`). Phase 7 must use the current post-Phase-6 size (~1248) in any size assertions or layout assumptions. Do not hard-code 1144 (Phase 3) or 1240 (Phase 4).
 
 8. **CI `[TRACK-CREATE]` is hard-fail (from Phase 4)** — Every regression test must produce `[TRACK-CREATE]` entries in stdout or CI will fail. Phase 7's exploration commands are pushed via `queues_[0]` with `logTrackCreate_(cmd)` calls (Step 4, Step 8). The `P7-R02` regression test must emit `[TRACK-CREATE]` entries for all exploration variant commands. Failure to emit these entries will cause the CI gate to fail, independent of golden-file comparison.
+
+9. **FAIMSScanProcessor legacy path retained in Phase 5, deleted in Phase 6 (from Phase 5)** — Phase 5 did NOT make `FAIMSScanProcessor` delegate to `UnifiedScanProcessor`. It retained the full legacy pipeline (`GetIsolationWindows` -> `ScanFactory` -> `ScanScheduler`). Phase 6 deletes both `FAIMSScanProcessor.cs` and `ScanScheduler.cs`. By Phase 7, these files no longer exist. All FAIMS CV cycling is handled by the C++ state machine via `GetNextScanCommand`.
+
+10. **Test quality: no tautological tests or soft guards (from Phase 5 compliance)** — Phase 5 compliance report rated P5-U01 as WEAK (tautological constructor test) and flagged CT09/CT10 soft guards (`if (results.Count > 0)`) as HIGH severity. Phase 7 tests must not repeat these patterns. All P7-U* tests should test behavioral properties (scoring, queue placement, state transitions), not just object instantiation. All assertions must be hard (`TEST_EQUAL`, `Assert.That`), never conditional.
+
+11. **P5-U03 gap carried forward** — `DeadCodeTests.cs` was never created in Phase 5. Phase 6 should merge this gap into P6-U07/P6-U08 (comprehensive dead code test). By Phase 7, this gap should be resolved. If Phase 6 does not address it, Phase 7 should not introduce additional dead code test gaps.
+
+---
+
+## Phase 5 Addendum (2026-04-05)
+
+*Updates based on Phase 5 actual outcomes, compliance report, and lessons learned. See `Phase_5/compliance-report.md` and `Phase_5/lessons-learned.md` for full details.*
+
+**Phase 5 status: COMPLETE.** `FAIMSScanProcessor` retained with full legacy path (not delegating to `UnifiedScanProcessor`). `ScanScheduler` retained. Both are deleted in Phase 6. By the time Phase 7 begins, neither file exists — all FAIMS CV cycling is handled by the C++ state machine.
+
+**Cumulative test count at Phase 5: 77** (not 76). Five new tests: P5-U01, P5-U02, P5-U04, CT27 activated, CT28 activated. P5-U03 (`DeadCodeTests.cs`) was not implemented — gap carried forward through Phase 6.
+
+**FAIMS TSV golden files not captured.** `Flash.exe` test mode bypasses FAIMS entirely — it ignores the `cv=` field, has no `ScanScheduler`, no per-CV routing (Phase 5 Lesson 1). FAIMS coverage is via continuity tests only (CT09/CT10/CT27/CT28). This means Phase 7's P7-R01/P7-R02 regression tests do not cover FAIMS via TSV. FAIMS continuity tests provide that coverage.
+
+**CT09/CT10 soft guards.** These tests have `if (results.Count > 0)` conditional validation (HIGH severity per compliance report). Phase 6 should harden these to `Assert.That(results.Count, Is.GreaterThan(0))` after moving FAIMS to the unified bridge path. If Phase 6 does this, Phase 7 inherits the fix. If not, Phase 7 tests must not introduce new soft guards.
+
+**Test quality expectations from Phase 5 compliance.** P5-U01 was rated WEAK (tautological constructor test — `new` never returns null in C#). No tautological tests in Phase 7. All P7-U01 through P7-U10 must test behavioral properties: scoring logic, queue placement, state transitions, metadata population. No soft guards — all tests must have hard assertions with proper test data.
+
+**Adaptive skip data requirements.** FAIMS adaptive skip tests need 300 scans, not 50 (Phase 5 Lesson 4). Phase 7 does not add FAIMS tests, but this principle applies to any new test that depends on engine state accumulation. Exploration tests (P7-U01 through P7-U10) use synthetic data and are not affected, but P7-R01/P7-R02 regression tests use `ms1_standard.txt` which has 50 scans — sufficient for non-FAIMS exploration.
+
+**Exploration commands must populate `faims_cv`.** Phase 6 adds `faims_cv` to `ScanCommand`. Exploration commands pushed to `queues_[0]` via `initiateMS2Exploration_()` must populate `faims_cv` via `currentCV_()` (or 0.0 in non-FAIMS mode). This is already noted in Step 4 and the Phase 3-6 Deviations Impact section (item 6), but is reinforced here because Phase 5 confirmed the single-wrapper architecture — all commands, including exploration variants, share the same FAIMS CV context.
 
 ---
 
@@ -985,7 +1025,7 @@ This is also verified structurally by P7-U07 and P7-U08 in the `cpp-unit-tests` 
 ## Definition of Done
 
 - [ ] All 12 Phase 7 tests pass: P7-U01 through P7-U10 (C++, `ubuntu-latest`) and P7-R01, P7-R02 (`windows-latest`).
-- [ ] All prior phase tests (P0 through P6, cumulative total ~89 tests) continue to pass — no regressions introduced.
+- [ ] All prior phase tests (P0 through P6, cumulative total ~90 tests) continue to pass — no regressions introduced.
 - [ ] `ExplorationGroup` and `ExplorationVariant` structs are defined in `FLASHIda.h`.
 - [ ] `initiateMS2Exploration_()`, `feedExplorationResult_()`, `initiateMS3Exploration_()`, `computeFragmentationQuality_()`, `buildCEVariants_()` are implemented in `FLASHIda.cpp`.
 - [ ] `getNextScanCommand()` suppresses MS1 cycle time injection when `active_exploration_groups_` is non-empty.
@@ -1042,7 +1082,7 @@ This section records which Phase 0–6 lessons are directly reflected in this im
 | CMake flags for test-only builds | Phase 2 #6 | Cross-References item 28 |
 | ccache key uses `hashFiles('OpenMS/CMakeLists.txt')` | Phase 2 #7 | Cross-References item 29 |
 | `(void)var;` for MSVC `/WX` in test code | Phase 2 #8 | Cross-References item 30; P7-U10 description; Test Cases preamble |
-| Cumulative test counts (59 after P2, ~70 P4, ~76 P5, ~89 P6) | Phase 2 #9 + Phase 4 actuals | Cross-References item 31 |
+| Cumulative test counts (59 after P2, ~70 P4, 77 P5, ~90 P6) | Phase 2 #9 + Phase 5 actuals | Cross-References item 31 |
 | `ScanCommand.scan_id` is first field (not `msn_level`) | Phase 3 deviation | Phase 3–6 Deviations Impact §1 |
 | `IsolationStage.collision_energy` is `double` (not `int`) | Phase 3 deviation | Phase 3–6 Deviations Impact §2; Step 1 (CE config fields); Step 2 (`ExplorationVariant.collision_energy`); Step 3 (`buildCEVariants_` signature); Step 4 (CE vector type); Step 8 (MS3 CE vector); P7-U01, P7-U03, P7-U09 expected outcomes |
 | `IsolationStage.activation_type` is `char[32]` (not `char[16]`) | Phase 3 deviation | Phase 3–6 Deviations Impact §3; Step 2 (`ExplorationVariant.activation_type` comment) |
@@ -1051,3 +1091,11 @@ This section records which Phase 0–6 lessons are directly reflected in this im
 | `ScanCommand.faims_cv` added in Phase 6 | Phase 6 | Phase 3–6 Deviations Impact §6; Step 4 (command-building comment); Step 8 (MS3 command comment) |
 | ScanCommand size: 1144 -> 1240 (P4) -> ~1248 (P6) | Phase 3–6 | Phase 3–6 Deviations Impact §7 |
 | CI `[TRACK-CREATE]` is hard-fail | Phase 4 (F-5 fix) | Phase 3–6 Deviations Impact §8; Step 4 (`logTrackCreate_` comment); Step 8 (`logTrackCreate_` comment); P7-R02 expected outcome; DoD checklist |
+| FAIMS tests must use continuity tests, not regression runner | Phase 5 lesson #1 | Cross-References item 32; Phase 5 Addendum (FAIMS TSV golden files not captured) |
+| Single wrapper architecture — no per-CV limitation | Phase 5 lesson #2 | Cross-References item 33; Phase 5 Addendum (exploration commands faims_cv) |
+| Capture golden files BEFORE architecture transitions | Phase 5 lesson #3 | Cross-References item 34 |
+| Adaptive skip needs 300 scans, not 50 | Phase 5 lesson #4 | Cross-References item 35; Phase 5 Addendum (adaptive skip data requirements) |
+| No tautological tests — test behavioral properties | Phase 5 compliance | Cross-References item 36; Phase 3–6 Deviations Impact §10; Phase 5 Addendum (test quality expectations) |
+| No soft guards — use hard assertions | Phase 5 compliance | Cross-References item 37; Phase 3–6 Deviations Impact §10; Phase 5 Addendum (CT09/CT10 soft guards) |
+| FAIMSScanProcessor legacy path retained in Phase 5, deleted in Phase 6 | Phase 5 deviation | Phase 3–6 Deviations Impact §9; Phase 5 Addendum (Phase 5 status) |
+| P5-U03 gap carried forward | Phase 5 gap | Phase 3–6 Deviations Impact §11; Phase 5 Addendum (cumulative test count) |

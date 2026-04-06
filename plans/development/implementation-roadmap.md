@@ -483,3 +483,62 @@ Golden files must be re-captured whenever struct fields are added or the bridge 
 - CT27/CT28 FAIMS adaptive skip tests (need per-CV test data)
 - FAIMS per-CV wrapper unification
 - CRIT-01 full resolution (full queue draining across CV boundaries)
+
+---
+
+## Phase 5 Addendum (2026-04-05)
+
+*Corrections and clarifications discovered during Phase 5 implementation. The original spec text above is preserved as-is.*
+
+### Phase 5 status
+
+**COMPLETE** — 8/8 implementation steps pass compliance. See `Phase_5/compliance-report.md`.
+
+### Test count correction
+
+The Phase 5 section (line 254) estimated 6 tests. Actual: **5 new tests** (P5-U03 not implemented). Cumulative total: ~77 tests across all phases (not 66 as would have been projected from the Phase 4 addendum's ~70 + 6).
+
+| Category | Estimated | Actual |
+|----------|-----------|--------|
+| Unit tests (P5-U01 to P5-U04) | 4 | 3 (P5-U03 missing) |
+| Regression (P5-R01) | 1 | 1 (13 configs, all match Phase 4) |
+| Regression (P5-R02) | 1 | 0 (removed — Flash.exe bypasses FAIMS) |
+| Continuity (CT27/CT28) | 0 (deferred) | 2 (activated in Phase 5) |
+| **Total new** | **6** | **5** |
+
+### Known deviations
+
+| Item | Description |
+|------|-------------|
+| ScanScheduler retained | Required for FAIMS CV cycling — ScanCommand lacks `faims_cv` field until Phase 6 |
+| FAIMSScanProcessor retained | Uses legacy path (GetIsolationWindows -> ScanFactory -> ScanScheduler), does not delegate to UnifiedScanProcessor |
+
+These are the same two deviations documented in `baseline-plan.md` Phase 5 Addendum (KD-1, KD-2).
+
+### No C++ build required (confirmed)
+
+Phase 5 reused Build #2 DLLs unchanged. No C++ code changes, no new bridge functions, no struct modifications.
+
+### FAIMS golden files
+
+The Phase 5 section of the original `environment-and-workflows.md` (line 286) listed `faims_3cv.tsv` and `faims_skip.tsv` as new golden files to be captured via the regression runner. This did **not happen** because `Flash.exe` test mode bypasses the FAIMS pipeline entirely (see Lesson 1 in `Phase_5/lessons-learned.md`). FAIMS coverage is exclusively via continuity tests:
+
+| Golden file | Captured | Method |
+|-------------|----------|--------|
+| `faims_3cv.tsv` | NOT captured | Flash.exe ignores CVs — would be identical to non-FAIMS output |
+| `faims_skip.tsv` | NOT captured | Same reason |
+| `continuity_faims_skip.json` | **Captured** | Via ContinuityTestHarness + legacy bridge path |
+
+### Phase 4 addendum corrections
+
+The Phase 4 addendum's "Deferred to Phase 6" section listed 3 items. Phase 5 resolved one of them:
+
+| Item | Phase 4 status | Phase 5 resolution |
+|------|---------------|-------------------|
+| CT27/CT28 FAIMS adaptive skip tests | Deferred | **Activated** — uses 300 scans from `ms1_faims_3cv.txt` |
+| FAIMS per-CV wrapper unification | Deferred | Remains deferred — "per-CV wrapper" was a myth (single shared wrapper), but FAIMS still uses legacy path |
+| CRIT-01 full resolution | Deferred | Remains deferred to Phase 6 |
+
+### Compliance report
+
+Phase 5 compliance report: 8/8 implementation steps PASS, 2 known deviations documented, P5-U03 missing (spec gap). Full report at `Phase_5/compliance-report.md`.

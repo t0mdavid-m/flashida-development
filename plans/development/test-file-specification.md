@@ -929,3 +929,56 @@ FlashIDA/test-data/
     ├── config_default.json
     └── config_full.json
 ```
+
+---
+
+## Phase 5 Addendum (2026-04-05)
+
+*Corrections and clarifications discovered during Phase 5 implementation. The original spec text above is preserved as-is.*
+
+### New test source files
+
+| File | Test IDs | Description |
+|------|----------|-------------|
+| `Flash.Tests/ProcessorTests.cs` | P5-U01 | UnifiedScanProcessor instantiation (rated WEAK — tautological) |
+| `Flash.Tests/InterfaceShapeTests.cs` | P5-U02 | IScanProcessor interface shape reflection check |
+| `Flash.Tests/DataPipeTests.cs` | P5-U04 | DataPipe TPL Dataflow completion propagation |
+
+### Missing test file
+
+`DeadCodeTests.cs` (P5-U03) was specified in the Phase 4 addendum's `Flash.Tests.csproj` table and in `testing-strategy.md` but was **never created**. This test was intended to search production `.cs` files for dead references to `QuantScanProcessor`, `OutputMS`, and `UseUnifiedBridge`.
+
+### ContinuityTestHarness.cs updates
+
+Processor routing updated: non-FAIMS configs route to `UnifiedScanProcessor`, FAIMS configs route to `FAIMSScanProcessor` (which retains the legacy `GetIsolationWindows` -> `ScanFactory` -> `ScanScheduler` path). This mirrors production `Flash.cs` routing.
+
+### ms1_faims_3cv.txt usage
+
+Confirmed: 300 scans, 5 CVs. Usage in Phase 5:
+
+| Tests | Scan count pushed | Purpose |
+|-------|-------------------|---------|
+| CT27/CT28 | 300 (all scans) | Adaptive skip needs ~60 scans/CV for multi-CV results |
+| CT09/CT10 | 50 (first 50 scans) | Non-skip FAIMS; fewer scans sufficient |
+
+### FAIMS golden files — NOT captured as regression TSVs
+
+The original spec (environment-and-workflows.md line 286) listed `faims_3cv.tsv` and `faims_skip.tsv` as Phase 5 golden files to be captured via `regression-runner.ps1`. These were **not captured** because `Flash.exe` test mode ignores FAIMS CVs entirely — both FAIMS method configs produce output identical to non-FAIMS runs. FAIMS golden files are continuity JSON only.
+
+### New continuity golden file
+
+| File | Captured by | Description |
+|------|-------------|-------------|
+| `golden/continuity_faims_skip.json` | ContinuityTestHarness (CT28) via legacy bridge | FAIMS adaptive skip baseline for Phase 6 regression |
+
+This file was captured in Phase 5 **before** the Phase 6 FAIMS-to-C++ transition, following the TDD principle of locking in baseline behavior before architecture changes.
+
+### Updated directory layout (Phase 5 additions)
+
+No new spectrum files, config files, or TSV golden files added in Phase 5. The only new file is:
+
+```
+FlashIDA/test-data/
+└── golden/
+    └── continuity_faims_skip.json          # NEW Phase 5
+```

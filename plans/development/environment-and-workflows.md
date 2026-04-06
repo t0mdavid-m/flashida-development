@@ -336,3 +336,41 @@ ctest -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHId
 ```
 
 New C++ test classes must be added to this pattern in `flashida-ci.yml` to be picked up by CI.
+
+---
+
+## Phase 5 Addendum (2026-04-05)
+
+*Corrections and clarifications discovered during Phase 5 implementation. The original spec text above is preserved as-is.*
+
+### No build required (confirmed)
+
+Phase 5 is C#-only. No C++ code changes, no new bridge functions, no struct modifications. Build #2 DLLs reused unchanged.
+
+### Workflow activation status (unchanged from Phase 4)
+
+| Workflow/Step | Status | Since | Phase 5 changes |
+|---------------|--------|-------|-----------------|
+| `cpp-unit-tests` | ACTIVE | Phase 2 | No new C++ tests; existing tests run against Build #2 DLLs |
+| Stress tests | Run within NUnit | Phase 3 | Still active, no changes |
+| `build-dlls` (OpenMS repo) | ACTIVE | Phase 3 | Not triggered in Phase 5 |
+
+### Per-Phase Environment Summary correction
+
+The original table (line 286) listed Phase 5 golden files as `faims_3cv.tsv`, `faims_skip.tsv` captured via P5-R02. This is **incorrect**:
+
+| Original spec | Actual |
+|---------------|--------|
+| `faims_3cv.tsv` via regression runner | NOT captured — Flash.exe ignores FAIMS CVs |
+| `faims_skip.tsv` via regression runner | NOT captured — same reason |
+| (not listed) | `continuity_faims_skip.json` captured via ContinuityTestHarness |
+
+The corrected Phase 5 row for the Per-Phase Environment Summary table:
+
+| Phase | Build | `cpp-unit-tests` active | Stress step active | New golden files | Special environment notes |
+|-------|-------|-------------------------|-------------------|------------------|---------------------------|
+| 5 | None (reuse Build #2) | Yes (no new C++ tests) | Yes | `continuity_faims_skip.json` | FAIMS regression configs should NOT be added to `regression-runner.ps1` — Flash.exe bypasses FAIMS pipeline entirely (see Lesson 1 in `Phase_5/lessons-learned.md`) |
+
+### FAIMS regression runner rule
+
+**Do not add FAIMS method configs** (`method_faims_3cv.xml`, `method_faims_skip.xml`) to `regression-runner.ps1`. `Flash.exe` test mode feeds scans directly to the C++ `ProcessScan` bridge in a single stream, ignoring the `cv=` field entirely. Both FAIMS configs produce output identical to non-FAIMS runs. FAIMS behavior is only testable through continuity tests (`ContinuityTestHarness`), which create a real `FAIMSScanProcessor` + `ScanScheduler` pipeline with mock instrument interfaces.

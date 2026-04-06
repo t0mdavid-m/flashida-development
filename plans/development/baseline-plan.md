@@ -957,3 +957,49 @@ Conditional MS2 now requires `processMS2ForTagBasedTargeting()` to return true b
 - **Feature flag default**: `UseUnifiedBridge` defaults to `true` in production (post-switchover verified)
 - **CollisionEnergy rounding**: C# uses `Math.Round()`, not truncation
 - **Phase 4 status**: COMPLETE
+
+---
+
+## Phase 5 Addendum (2026-04-05)
+
+*Corrections and clarifications discovered during Phase 5 implementation. The original spec text above is preserved as-is.*
+
+### Phase 5 status
+
+**COMPLETE** — all 8 implementation steps pass compliance. 2 known deviations documented. See `Phase_5/compliance-report.md`.
+
+### Implementation status table update
+
+The status table at line 589 should now read:
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 4 | COMPLETE | Switch-over verified for all modes. ~31 new tests (cumulative: ~70). See Phase 4 compliance report. |
+| Phase 5 | COMPLETE | C# simplification. 5 new tests (cumulative: ~77). 2 known deviations (ScanScheduler retained, FAIMSScanProcessor retained). See Phase 5 compliance report. |
+
+Phases 6-8 remain "Not started."
+
+### Known deviations from Issue 6 spec
+
+| ID | Description | Rationale |
+|----|-------------|-----------|
+| KD-1 | ScanScheduler retained (not deleted) | Required for FAIMS CV cycling until Phase 6 adds `faims_cv` to ScanCommand |
+| KD-2 | FAIMSScanProcessor retained with legacy pipeline | ScanCommand lacks `faims_cv` field; cannot route FAIMS through UnifiedScanProcessor yet |
+
+Both deviations are explicitly documented in the Phase 5 implementation plan (line 750) with clear technical rationale.
+
+### FAIMSScanProcessor architecture
+
+FAIMSScanProcessor retains the full legacy deconvolution path: `GetIsolationWindows` -> `ScanFactory` -> `ScanScheduler`. It does **NOT** delegate to `UnifiedScanProcessor` as originally planned in Step 4 of the implementation plan. The plan had a self-contradiction in Step 6 — one section said "delegates to inner processor's ProcessMS" while another said "retain the legacy deconvolution path." The code correctly follows the latter. This will be resolved in Phase 6 when FAIMS CV cycling moves to C++.
+
+### Test gaps and quality issues
+
+| Item | Severity | Description |
+|------|----------|-------------|
+| P5-U03 (`DeadCodeTests.cs`) | MISSING | Specified in testing-strategy.md and implementation plan DoD but never created |
+| P5-U01 | WEAK | Tautological constructor test — `new UnifiedScanProcessor(null)` + `IsNotNull`. Passes even with `throw new NotImplementedException()` in ProcessMS. |
+| CT09/CT10 soft guards | HIGH | `if (results.Count > 0)` passes silently with zero results. Should be hardened to `Assert.That(results.Count, Is.GreaterThan(0))` in Phase 6. |
+
+### Design invariant clarification
+
+Design invariant #9 ("Old bridge functions survive through Phase 4") is now partially fulfilled — `UseUnifiedBridge` flag removed in Phase 5. The old bridge functions themselves (GetIsolationWindows etc.) remain active for FAIMSScanProcessor's legacy path until Phase 6/8.
