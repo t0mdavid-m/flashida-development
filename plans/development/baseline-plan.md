@@ -1052,3 +1052,78 @@ The 6th item is easy to forget when only updating the size assertion. (Lesson 15
 ### Design invariant #9 update
 
 Old bridge functions (`GetIsolationWindows`, `GetFAIMSIsolationWindows`) remain in the C++ codebase for potential use in legacy testing but are no longer called from any production C# path. All production FAIMS routing goes through `ProcessScan` + `GetNextScanCommand`. Final cleanup of old bridge functions is scheduled for Phase 8.
+
+---
+
+## Phase 7 Addendum (2026-04-07)
+
+*Corrections and clarifications discovered during Phase 7 implementation. The original spec text above is preserved as-is.*
+
+### Phase 7 status
+
+**COMPLETE** — Exploration engine implemented. 13 new tests (11 C++ unit + 2 regression). See `Phase_7/compliance-report.md`.
+
+### Implementation status table update
+
+The status table at line 589 should now read:
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 4 | COMPLETE | Switch-over verified for all modes. ~31 new tests (cumulative: ~70). See Phase 4 compliance report. |
+| Phase 5 | COMPLETE | C# simplification. 5 new tests (cumulative: ~77). 2 known deviations resolved in Phase 6. See Phase 5 compliance report. |
+| Phase 6 | COMPLETE | FAIMS absorption. 7 new C++ tests, 1 deleted C# test (cumulative: ~83). ScanScheduler + FAIMSScanProcessor deleted. See Phase 6 compliance report. |
+| Phase 7 | COMPLETE | Exploration engine. 13 new tests (cumulative: ~96). Per-level selection/exploration framework in C++. See Phase 7 compliance report. |
+
+Phase 8 remains "Not started."
+
+### Issue 4 implementation notes
+
+The Issue 4 spec (line 187–238) described an `<ParameterOptimization>` XML config structure with flat exploration settings and a single `FragmentationQuality` scoring metric. The actual implementation deviates significantly:
+
+**Config structure:** The XML uses `<SelectionStrategy>` with per-level `<MSLevel>` blocks, NOT the `<ParameterOptimization>` structure in the spec. Each MSLevel block specifies a selection metric (intensity/qscore/none) and an optional exploration sub-block with its own metric. This per-level design replaces the spec's flat exploration config.
+
+**Method names vs. spec:**
+
+| Spec name | Actual name | Notes |
+|-----------|-------------|-------|
+| `initiateMS2Exploration_` | `initiateExploration_()` | Generic MSn, not MS2-specific |
+| `initiateMS3Exploration_` | `initiateNextLevel_()` | Generic MSn+1 chaining |
+| `computeFragmentationQuality_` | `computeExplorationScore_()` | Dispatcher for multiple metrics |
+| (none) | `computeMassCount_()` | MassCount metric implementation |
+| (none) | `computeRemainingPrecursorScore_()` | RemainingPrecursor metric implementation |
+| (none) | `computeFragmentCount_()` | FragmentCount metric implementation |
+| (none) | `computeTICCoverage_()` | TICCoverage metric implementation |
+
+**Scoring:** Uses `ExplorationMetric` enum (None, MassCount, RemainingPrecursor, FragmentCount) dispatched via `computeExplorationScore_()`, replacing the spec's single `FragmentationQuality` metric type.
+
+**Config state:** `level_configs_` map (`std::map<int, MSLevelConfig>`) replaces `ms3_enabled_`/`top_n_`/`exploration_max_depth_`/`exploration_max_variants_`. The `ms3_enabled_` field is intentionally retained as a fallback for backward compatibility.
+
+### Issue 9 update
+
+`OptimizationMetadata` (Issue 9) is now populated by the Phase 7 exploration engine. The `exploration_metric` field (field #19, type `int`) was added to the struct. The `toSpectrum()` serialization path now writes all metadata fields including the new `exploration_metric` via `setMetaValue()`. See `OptimizationMetadata.h:31` and `DeconvolvedSpectrum.cpp:157`.
+
+### ScanCommand unchanged
+
+ScanCommand struct remains **1248 bytes** with `faims_cv` at offset 1240 (unchanged from Phase 6). Phase 7 does not modify the struct.
+
+### Pipeline transition
+
+| Legacy variable | Status | Notes |
+|-----------------|--------|-------|
+| `top_n_` | **REMOVED** | Replaced by `level_configs_[1].max_targets` |
+| `exploration_max_depth_` | **REMOVED** | Replaced by per-level `MSLevelConfig` |
+| `exploration_max_variants_` | **REMOVED** | Replaced by per-level CE range (min/max/step) |
+| `ms3_enabled_` | **RETAINED** | Intentional fallback for legacy configs without `selection_strategy` |
+
+### 4 WEAK tests identified
+
+The compliance report rates 4 of 11 C++ unit tests as WEAK:
+
+| Test | Issue |
+|------|-------|
+| P7-U03 | Missing `winner_index` and `group.complete` assertions — verifies group removal (side effect) only |
+| P7-U07 | Missing child group property assertions (msn_level, exploration_metric, parent_tracking_id) |
+| P7-U11 | Config-only test — does not exercise chaining rule behavior via `processScan()` |
+| P7-U12 | Config-only test — does not exercise selection ranking behavior via `processScan()` |
+
+These are not blocking. The behavioral contracts are partially covered by other tests and the regression golden file.

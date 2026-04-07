@@ -344,7 +344,7 @@ All golden files are **tab-separated values (TSV)** with the following propertie
 | `phase4_ms3_mode3.tsv` | Phase 4 (Step 0) | `ms1_standard.txt` + `ms2_hcd_fragment.txt` | `method_ms3_mode3.xml` | **Pre-switch baseline.** MS3 mode 3 (HCD-triggered) via old bridge. P4-R10 regression target. |
 | `faims_3cv.tsv` | Phase 5 (P5-R02) | `ms1_faims_3cv.txt` | `method_faims_3cv.xml` | FAIMS 3-CV cycling baseline captured while `ScanScheduler.cs` is still active. Used as Phase 6 regression target. |
 | `faims_skip.tsv` | Phase 5 (P5-R02) | `ms1_faims_3cv.txt` | `method_faims_skip.xml` | FAIMS adaptive skipping baseline. Used as Phase 6 regression target. |
-| `phase7_exploration.tsv` | Phase 7 | `ms1_standard.txt` | `method_exploration.xml` | Exploration engine active: variant scans present in output. |
+| `phase7_exploration.tsv` | Phase 7 | `ms1_standard.txt` | `method_exploration.xml` | Exploration engine active: 37 lines (header + 36 data rows), 6 precursors x 6 rows each (5 exploration variants with qScore=0 + 1 standard MS2). Exploration variants have zero deconvolution results in test mode (expected — see Phase 7 lesson #9). |
 
 **Note on `phase4_standard_dda.tsv` vs. `baseline_phase0.tsv`:** These two golden files use different input spectrum files (`ms1_standard.txt` vs. `ms1_smoke_test.txt`). They are not directly compared against each other. The Phase 4 standard DDA golden uses the larger, richer input spectrum for comprehensive mode coverage.
 
@@ -430,7 +430,8 @@ File size: all config files are expected to be < 5 KB each.
 | `method_ms3_mode3.xml` | Phase 4 | MS3 mode 3 (HCD-triggered). | `MS3.Enabled=True`, `MS3.Mode=3`. |
 | `method_faims_3cv.xml` | Phase 5 (for P5-R02) | FAIMS with 3 CVs, no adaptive skipping. | `FAIMS.CVValues` must exactly match the CV annotations in `ms1_faims_3cv.txt`. `MaxCVSkip=0`. |
 | `method_faims_skip.xml` | Phase 5 (for P5-R02) | FAIMS with adaptive CV skipping enabled. | Same `CVValues` as `method_faims_3cv.xml`. `MaxCVSkip=2`, `CVPrecursorThreshold=15` (or the value found in the existing `ScanScheduler.cs` during Phase 6 Step 1 audit). |
-| `method_exploration.xml` | Phase 7 | Parameter exploration (CE optimization) enabled. | `ParameterOptimization.Active=True`. CE range 20–40 step 5, `MaxVariantsPerPrecursor=5`, `MaxQueueForExploration=50`. |
+| `method_exploration.xml` | Phase 7 | Parameter exploration (CE optimization) enabled. MS2 only. | `SelectionStrategy` with MS2 exploration: metric `mass_count`, CE range 20–40 step 5, activation HCD. |
+| `method_exploration_ms3.xml` | Phase 7 | MS2+MS3 parameter exploration enabled. | `SelectionStrategy` with MS2 exploration (mass_count, CE 20–40 step 5) and MS3 exploration (fragment_count). Not regression-tested; covered by C++ unit test P7-U07 only. |
 | `method_json_roundtrip.xml` | Phase 1 | Full-featured config for JSON round-trip testing. All sections populated with non-default values. | All optional fields set to non-default values. Used by P1-U03 and P1-U05. |
 
 **`UseUnifiedBridge` lifecycle:**
@@ -740,7 +741,8 @@ FlashIDA/test-data/
 │   ├── method_ms3_mode3.xml        # Phase 4: MS3 mode 3 (HCD-triggered)
 │   ├── method_faims_3cv.xml        # Phase 5: FAIMS 3 CVs, no adaptive skipping
 │   ├── method_faims_skip.xml       # Phase 5: FAIMS adaptive skipping enabled
-│   └── method_exploration.xml      # Phase 7: CE exploration enabled
+│   ├── method_exploration.xml      # Phase 7: CE exploration enabled (MS2 only)
+│   └── method_exploration_ms3.xml  # Phase 7: CE exploration (MS2+MS3)
 │
 ├── golden/
 │   ├── README.md                   # Provenance, update procedure, review expectations
@@ -1007,3 +1009,56 @@ Both changes are correct behavior for the new architecture. The golden file was 
 ### ScanDescription format change
 
 After the Phase 6 bridge migration, all golden files captured via `ContinuityTestHarness` use the unified bridge's ScanDescription format: tracking IDs (`_N|mass@charge`) for MS2/MS3 commands, empty strings for MS1 commands. The legacy bridge format (empty strings for all) is no longer produced in any production or test path.
+
+---
+
+## Phase 7 Addendum (2026-04-07)
+
+*Corrections and clarifications discovered during Phase 7 implementation. The original spec text above is preserved as-is.*
+
+### New config files
+
+| File | Description |
+|------|-------------|
+| `configs/method_exploration.xml` | MS2 exploration with `<SelectionStrategy>` block (replaces spec's `<ParameterOptimization>`). CE 20-40 step 5, metric `mass_count`, activation HCD. |
+| `configs/method_exploration_ms3.xml` | MS2+MS3 exploration. MS2: `mass_count` metric. MS3: `fragment_count` metric. Not regression-tested. |
+
+### New golden files
+
+| File | Description |
+|------|-------------|
+| `golden/phase7_exploration.tsv` | 37 lines (header + 36 data rows). 6 precursors x 6 rows: 5 exploration variants (qScore=0, monoMasses=0) + 1 standard MS2 (real deconvolution). Exploration variants have zero deconvolution results in test mode (expected — lesson #9). Same precursor m/z values as `phase4_standard_dda.tsv` (same input data). |
+
+### Config file inventory corrections
+
+The original Section 3.2 entry for `method_exploration.xml` referenced `<ParameterOptimization>` config structure. Phase 7 implementation uses `<SelectionStrategy>` instead. The config key parameters are: `<MSLevel level="2">` with `<Selection metric="qscore">` and `<Exploration metric="mass_count" ce_min="20" ce_max="40" ce_step="5" activation="HCD">`.
+
+### `SelectionStrategy` required in all method XMLs
+
+Phase 7 makes `<SelectionStrategy>` a required block in all method XMLs. All 20+ existing method config files were updated with `<SelectionStrategy>` blocks. Omitting the block crashes `Parameter.ToJSON()` with `InvalidOperationException: Method XML must contain <SelectionStrategy> block`. This is intentional — no backwards-compat defaults are provided.
+
+### regression-runner.ps1 entry
+
+The `p7_exploration` entry was added to the config array:
+```powershell
+@{ name="p7_exploration"; method="method_exploration.xml"; ms1="ms1_standard.txt"; ms2=$null; golden="phase7_exploration.tsv" }
+```
+
+### No new C# test files
+
+Phase 7 added no new `.cs` test files to `Flash.Tests.csproj`. All 11 new unit tests are C++ (`FLASHIda_exploration_test.cpp`). Existing C# tests (`BridgeSmokeTests.cs`) were updated with `SelectionStrategy` config but no new test class was created.
+
+### AL-CT29/CT30 continuity tests NOT implemented
+
+The spec (acquisition-loop-testing-strategy.md Section 5.8) specifies AL-CT29 and AL-CT30 as Phase 7 continuity tests. These were **not implemented** — Phase 7 focused on C++ unit tests and Flash.exe regression tests. The `ContinuityTestHarness` does not yet support exploration configs. The `continuity_exploration.json` golden file listed in Section 2.5 was not captured. This is deferred.
+
+### Updated directory layout (Phase 7 additions)
+
+```
+FlashIDA/test-data/
+├── configs/
+│   ├── method_exploration.xml          # NEW Phase 7
+│   └── method_exploration_ms3.xml      # NEW Phase 7
+└── golden/
+    └── phase7_exploration.tsv          # NEW Phase 7
+```

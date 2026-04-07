@@ -1,6 +1,6 @@
 # Phase 8: Cleanup + Documentation — Implementation Plan
 
-**Date:** 2026-03-21 (updated 2026-04-07 with Phase 6 lessons)
+**Date:** 2026-03-21 (updated 2026-04-07 with Phase 6 and Phase 7 lessons)
 **Build:** Build #4 (ships together with Phase 7). Build #4 is the final C++ build. Phase 7 adds the exploration engine; Phase 8 polishes and hardens everything. All C++ changes for both phases should be batched to minimize DLL rebuild cycles (~40 min each).
 **Status:** Final phase of the FLASHIda v9 migration
 **Source documents:**
@@ -11,6 +11,8 @@
 - [../Phase_6/lessons-learned.md](../Phase_6/lessons-learned.md) — 15 lessons from Phase 6 (FAIMS absorption)
 - [../Phase_6/compliance-report.md](../Phase_6/compliance-report.md) — Phase 6 compliance audit findings
 - [../Phase_5/lessons-learned.md](../Phase_5/lessons-learned.md) — 4 lessons from Phase 5 (C# simplification)
+- [../Phase_7/lessons-learned.md](../Phase_7/lessons-learned.md) — 9 lessons from Phase 7 (exploration engine)
+- [../Phase_7/compliance-report.md](../Phase_7/compliance-report.md) — Phase 7 compliance audit findings (4 WEAK tests, method name corrections)
 
 ---
 
@@ -38,7 +40,7 @@ After this phase:
 
 The following must be true before starting Phase 8:
 
-1. **Phase 7 is complete and verified.** The exploration engine is implemented: `ExplorationGroup`/`ExplorationVariant` structs in `FLASHIda.h`, `initiateMS2Exploration_()`, `feedExplorationResult_()`, `initiateMS3Exploration_()`, `computeFragmentationQuality_()`, `buildCEVariants_()` in `FLASHIda.cpp`, MS1 cycle time suppression during active exploration, `EXPL:` prefix routing in `processScan()` MS2 path. All Phase 7 working product verification criteria pass. Phase 7 golden files are committed to `FlashIDA/test-data/golden/` (including `phase7_exploration.tsv`). `method_exploration.xml` exists in `FlashIDA/test-data/configs/`. `Parameter.ToJSON()` serializes the full `<ParameterOptimization>` block. The Phase 7 implementation plan is marked done.
+1. **Phase 7 is complete and verified.** The exploration engine is implemented: `ExplorationGroup`/`ExplorationVariant` structs in `FLASHIda.h`, `initiateExploration_()`, `feedExplorationResult_()` (4-parameter: group_id, variant_index, ms2_deconv, rt), `initiateNextLevel_()`, `computeExplorationScore_()`, `buildCEVariants_()` in `FLASHIda.cpp`, MS1 cycle time suppression during active exploration, `variant_tracking_to_group_` lookup routing in `processScan()` MS2 path. All Phase 7 working product verification criteria pass. Phase 7 golden files are committed to `FlashIDA/test-data/golden/` (including `phase7_exploration.tsv`). `method_exploration.xml` exists in `FlashIDA/test-data/configs/`. `Parameter.ToJSON()` serializes the full `<SelectionStrategy>` block. The Phase 7 implementation plan is marked done.
 
 2. **Build #4 C++ compilation of Phase 7 has succeeded.** The exploration engine changes are
    compiled into `OpenMS.dll` and the DLL artifact is committed in `FlashIDA/dll/` (OpenMS
@@ -51,8 +53,8 @@ The following must be true before starting Phase 8:
 
 3. **All prior regression tests pass.** Every test from P0 through P7 passes on the
    Build #4 artifact. No test regressions are open. Cumulative test counts: Phase 2 = 59,
-   Phase 4 = ~70, Phase 5 = 77, Phase 6 = ~90, Phase 7 = ~102. Phase 8 adds 7 more,
-   bringing the final cumulative count to ~109.
+   Phase 4 = ~70, Phase 5 = 77, Phase 6 = ~90, Phase 7 = ~103 (13 new: 11 unit + 2 regression). Phase 8 adds 7 more,
+   bringing the final cumulative count to ~110.
    Note: P5-U03 (`DeadCodeTests.cs`) was never implemented. P6-U07/U08 (dead code tests)
    were removed from scope per user direction; dead code verification was done via manual
    grep instead. Phase 8's P8-U02 serves as the automated dead code verification test.
@@ -229,6 +231,56 @@ Instrument -> Flash.ProcessSpectrum -> DataPipe -> UnifiedScanProcessor.ProcessM
 
 ---
 
+## Phase 7 Addendum (2026-04-07)
+
+*Updates based on Phase 7 actual outcomes, compliance report, and 9 lessons learned. See `Phase_7/lessons-learned.md` and `Phase_7/compliance-report.md` for full details.*
+
+**Phase 7 status: COMPLETE.** The per-MS-level selection and exploration framework is implemented. Pipeline transition from hardcoded `ms3_enabled_`/`top_n_` to unified `level_configs_` is functional.
+
+**Method name corrections (spec vs actual).** The Phase 7 spec used different method names than the actual implementation. All references in this Phase 8 plan have been corrected:
+
+| Spec name (original) | Actual name (implemented) |
+|---|---|
+| `initiateMS2Exploration_()` | `initiateExploration_()` |
+| `initiateMS3Exploration_()` | `initiateNextLevel_()` |
+| `computeFragmentationQuality_()` | `computeExplorationScore_()` |
+| `feedExplorationResult_(ctx, ms2_deconv)` | `feedExplorationResult_(group_id, variant_index, ms2_deconv, rt)` |
+
+**Config structure: `<SelectionStrategy>` replaces `<ParameterOptimization>`.** The C# XML block is `<SelectionStrategy>` with per-level `<MSLevel>` sub-elements, not `<ParameterOptimization>`. `Parameter.ToJSON()` serializes this as `selection_strategy` in JSON. All 20+ method XML files include `<SelectionStrategy>` blocks. The C++ parser crashes if `selection_strategy` is absent from the JSON (no backwards-compat default).
+
+**Actual test counts.** Phase 7 added 13 new tests: 11 C++ unit tests (P7-U01 through P7-U12, no U04) and 2 regression tests (P7-R01, P7-R02). Cumulative count after Phase 7: ~103.
+
+**4 WEAK tests identified by compliance audit.** P7-U03 (missing winner_index assertion), P7-U07 (missing child group property assertions), P7-U11 (config-only, does not exercise chaining rule behavior), P7-U12 (config-only, does not exercise selection ranking behavior). These are not blocking for Phase 8 but noted for backlog.
+
+**Pipeline transition outcomes:**
+- `top_n_` removed, replaced by `level_configs_[1].max_targets`
+- `exploration_max_depth_` and `exploration_max_variants_` removed
+- `ms3_enabled_` retained as controlled fallback (not removed in Phase 7) -- three-tier MS3 routing: (1) new exploration path via `getLevelConfig_(3)`, (2) legacy fallback via `ms3_enabled_`, (3) new selection-only path
+
+**ScanCommand: unchanged at 1248 bytes.** Phase 7 did NOT modify the struct. `static_assert(sizeof(ScanCommand) == 1248)` in `FLASHIda.h` line 109. `faims_cv` at offset 1240.
+
+**Variant routing uses `variant_tracking_to_group_` lookup, not `EXPL:` prefix.** The spec anticipated `EXPL:` prefix routing in `processScan()` MS2 path. The actual implementation uses a `variant_tracking_to_group_` map lookup instead.
+
+**New files created in Phase 7:**
+- `FlashIDA/test-data/configs/method_exploration.xml` -- MS2 exploration (mass_count, CE 20-40 step 5)
+- `FlashIDA/test-data/configs/method_exploration_ms3.xml` -- MS2+MS3 exploration
+- `FlashIDA/test-data/golden/phase7_exploration.tsv` -- golden file (37 lines: header + 36 data rows)
+- `OpenMS/src/tests/class_tests/openms/source/FLASHIda_exploration_test.cpp` -- 11 C++ unit tests
+
+**Golden file pattern.** 6 precursors x 6 rows each: 5 exploration variants (qScore=0, monoMasses=0, zero deconvolution results expected in test mode -- lesson #9) + 1 standard MS2 (real deconvolution). `method_exploration_ms3.xml` is not covered by the regression runner.
+
+**AL-CT29/CT30 (exploration continuity tests) NOT implemented.** Deferred -- these require actual instrument data or full acquisition loop simulation.
+
+**9 lessons learned.** See `Phase_7/lessons-learned.md` for full details. Key lessons affecting Phase 8:
+- Lesson #1: Variable name collision in `parseJSONConfig_()` (MSVC-only). Use descriptive names, not short abbreviations like `ss`.
+- Lesson #3/4: `JavaScriptSerializer` writes null for unset reference properties and nullable ints. Always emit defaults.
+- Lesson #5: When adding required fields to `MethodParameters`, grep for `new MethodParameters` in test code.
+- Lesson #6: DLL must be updated before pushing parent submodule pointer.
+
+**Build #4 partial.** Phase 7 C++ shipped and DLLs committed. Phase 8 C++ changes (dead code removal, legacy config rejection) still pending in Build #4.
+
+---
+
 ## The 18 Functions to Remove and the 5 That Remain
 
 ### 18 bridge exports to remove
@@ -384,8 +436,8 @@ Audit the private methods of `FLASHIda` for any that are now unreachable. A meth
 to remove if:
 
 - It was called only from one or more of the 18 deleted bridge wrapper functions.
-- It is not called from `processScan_()`, `getNextScanCommand_()`, `feedExplorationResult_()`,
-  or any other method reachable from the 5 keeper exports.
+- It is not called from `processScan_()`, `getNextScanCommand_()`, `feedExplorationResult_(group_id, variant_index, ms2_deconv, rt)`,
+  `initiateExploration_()`, `initiateNextLevel_()`, or any other method reachable from the 5 keeper exports.
 
 Common candidates (confirm by grep before deletion):
 
@@ -396,9 +448,11 @@ Common candidates (confirm by grep before deletion):
 
 **Do NOT remove these Phase 7 exploration methods** (they are reachable from the 5 keeper
 exports via `processScan_()` / `getNextScanCommand_()`):
-- `initiateMS2Exploration_()`, `feedExplorationResult_()`, `initiateMS3Exploration_()`
-- `computeFragmentationQuality_()`, `computeTICCoverage_()`, `buildCEVariants_()`
-- Any test helpers ending in `ForTest` (e.g., `getActiveExplorationGroupCountForTest()`)
+- `initiateExploration_()`, `feedExplorationResult_()` (4-parameter: group_id, variant_index, ms2_deconv, rt), `initiateNextLevel_()`
+- `computeExplorationScore_()`, `computeMassCount_()`, `computeRemainingPrecursorScore_()`, `computeFragmentCount_()`, `computeTICCoverage_()`, `buildCEVariants_()`
+- `buildMS2Command_()` overload (explicit CE version), `applyOverrides_()`
+- `parseLevelConfig_()`, `parseSelectionMetric_()`, `parseExplorationMetric_()`, `getLevelConfig_()`
+- All `ForTest` helpers: `getActiveExplorationGroupCountForTest()`, `getExplorationGroupForTest()`, `getLevelConfigForTest()`, `getQueueSizeForTest()`, `initiateExplorationForTest()`, `feedExplorationResultForTest()`
 
 Do not remove methods that are still referenced from anywhere in `FLASHIda.cpp` or
 `FLASHIdaBridgeFunctions.cpp` (post-deletion). When in doubt, leave the method and note it
@@ -732,8 +786,8 @@ extensions, but this must be checked if the file list changes.
 ## Test Cases
 
 All 7 tests added in this phase. They run as part of the full cumulative suite (including
-all prior phases; ~102 cumulative tests were delivered through Phase 7. Phase 8 adds 7,
-bringing the cumulative total to ~109).
+all prior phases; ~103 cumulative tests were delivered through Phase 7. Phase 8 adds 7,
+bringing the cumulative total to ~110).
 
 **Tier convention (Phase 0 lesson #12):** Tests that load `OpenMS.dll` (via P/Invoke or
 bridge calls) are Tier 2, not Tier 1. Pure C# tests without DLL dependencies are Tier 1.
@@ -1174,7 +1228,7 @@ Phase 8 is complete when all of the following are true:
       `method_exploration.xml`) produce output matching Phase 7 golden files. All runs
       emit `[TRACK-CREATE]` entries (CI hard-fail gate).
 
-- [ ] All prior tests P0 through P7 continue to pass (~102 cumulative). No regressions
+- [ ] All prior tests P0 through P7 continue to pass (~103 cumulative). No regressions
       introduced. In particular, struct size tests (P3-U01/P3-U02, updated in Phases 4 and 6)
       still pass with the final `ScanCommand` (1248 bytes) and `IsolationStage` (80 bytes)
       sizes, including `FaimsCv` offset assertion at 1240 in `ScanCommandLayoutTests.cs`.
@@ -1273,3 +1327,16 @@ plan. Each entry identifies where the lesson is reflected.
 | P6-U07/U08 dead code tests removed from scope | Phase 6 deviation | Phase 6 Addendum; P8-U02 serves as automated dead code verification |
 | ProcessScan bridge now accepts `double faims_cv` | Phase 6 #5 | Prerequisites §8; 5 keeper exports table; Step 6 C# declarations; Step 2 C++ header |
 | `Flash.Tests.csproj` uses explicit `<Compile>` includes, not wildcard globs | Phase 8 discovery | CI section §3; Files to Create/Modify; DoD CI workflow changes |
+| Variable name collision in `parseJSONConfig_()` -- use descriptive names, not `ss` | Phase 7 #1 | Phase 7 Addendum; no direct impact on Phase 8 code (Phase 8 removes `parseLegacy_`, not `parseJSONConfig_`) |
+| Enums and structs used by tests must be in `public:` section | Phase 7 #2 | Phase 7 Addendum; Step 4 must NOT move Phase 7 enums to `private:` during cleanup |
+| `JavaScriptSerializer` writes null for unset reference properties -- emit defaults | Phase 7 #3 | Phase 7 Addendum; no new JSON sub-objects in Phase 8, but pattern noted |
+| No nullable `int?` in JSON serialization classes consumed by C++ | Phase 7 #4 | Phase 7 Addendum; no new JSON fields in Phase 8 |
+| When adding required fields to `MethodParameters`, grep for `new MethodParameters` in tests | Phase 7 #5 | Phase 7 Addendum; Phase 8 does not add new required fields, but pattern noted |
+| DLL must be updated before pushing parent submodule pointer | Phase 7 #6 | Phase 7 Addendum; Build #4 commit sequence (same as Phase 4 lesson, re-confirmed) |
+| PeakGroup API: no `setIntensity()`, no `getMZ()` -- use `getMonoMass()` | Phase 7 #7 | Phase 7 Addendum; no new PeakGroup interaction in Phase 8 |
+| Golden file capture requires regression runner entry first | Phase 7 #8 | Phase 7 Addendum; Phase 8 does not add new golden files |
+| Exploration variants produce zero deconvolution in test mode -- expected | Phase 7 #9 | Phase 7 Addendum; P8-R01 `method_exploration.xml` regression expects this pattern |
+| Method names differ from spec: `initiateExploration_` not `initiateMS2Exploration_` | Phase 7 compliance | Phase 7 Addendum; Step 4 "Do NOT remove" list corrected |
+| `<SelectionStrategy>` replaces `<ParameterOptimization>` XML block | Phase 7 compliance | Phase 7 Addendum; Prerequisites §1 corrected |
+| `variant_tracking_to_group_` lookup, not `EXPL:` prefix routing | Phase 7 compliance | Phase 7 Addendum; Prerequisites §1 corrected |
+| 4 WEAK tests (P7-U03, U07, U11, U12) -- not blocking Phase 8 | Phase 7 compliance | Phase 7 Addendum; noted for backlog |

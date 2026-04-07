@@ -420,6 +420,8 @@ These modes all exist in the legacy C# processors from Phase 0. Each test uses a
 | AL-CT29 | **Exploration CE variants:** multiple CEs for same precursor | Configure exploration (CE 20-40 step 5); feed MS1 + MS2; verify multiple MS2 records for same `PrecursorMz` with distinct `CollisionEnergy` values |
 | AL-CT30 | **Exploration behavioral reference** | Feed spectrum + `method_exploration.xml`; collect records; compare against `continuity_exploration.json` |
 
+> **Phase 7 implementation note (2026-04-07):** AL-CT29 and AL-CT30 were **not implemented** in Phase 7. The `ContinuityTestHarness` requires extension to support `<SelectionStrategy>` exploration configs before these tests can run. Exploration behavior is covered by 11 C++ unit tests and 2 regression tests. See Phase 7 Addendum in `test-file-specification.md` for details.
+
 ### 5.9 Stress (Tier 4)
 
 **Introduced:** Phase 3 (deferred from Phase 0 — requires DataPipe concurrent pipeline infrastructure; see Phase 0 lesson #13)
@@ -515,9 +517,11 @@ Phase 5 deletes `IDAScanProcessor`, `QuantScanProcessor`, collapses `DataPipe`, 
 
 ### Phase 7: Exploration continuity tests introduced
 
-Phase 7 adds the exploration engine. **AL-CT29–CT30 are introduced** — these are the only continuity tests not present from Phase 0, because exploration does not exist before Phase 7.
+Phase 7 adds the exploration engine. **AL-CT29–CT30 are specified** — these are the only continuity tests not present from Phase 0, because exploration does not exist before Phase 7.
 
-**Tests added:** AL-CT29 (CE variant verification), AL-CT30 (exploration behavioral reference → `continuity_exploration.json`)
+**Tests specified:** AL-CT29 (CE variant verification), AL-CT30 (exploration behavioral reference → `continuity_exploration.json`)
+
+> **Phase 7 implementation note (2026-04-07):** AL-CT29 and AL-CT30 were **not implemented** in Phase 7. Phase 7 focused on C++ unit tests (11 tests in `FLASHIda_exploration_test.cpp`) and Flash.exe regression tests (P7-R01, P7-R02). The `ContinuityTestHarness` does not yet support exploration configs — it would need to parse `<SelectionStrategy>` blocks and pass exploration-enabled JSON to the C++ engine. The `continuity_exploration.json` golden file was not captured. These tests remain deferred until the harness is extended. Exploration behavior is verified by C++ unit tests (P7-U01–U12) and the regression golden file (`phase7_exploration.tsv`).
 
 ### Phase 8: Final verification
 
@@ -533,10 +537,10 @@ All 32 continuity tests pass as final regression suite.
 | 4 | **30** | — |
 | 5 | **30** | harness updated |
 | 6 | **30** | harness updated |
-| 7 | **32** | +2 (exploration: AL-CT29, CT30) |
-| 8 | **32** | — |
+| 7 | **30** | +0 (AL-CT29, CT30 specified but NOT implemented — ContinuityTestHarness needs extension) |
+| 8 | **30** (32 if CT29/CT30 implemented) | — |
 
-**28 continuity tests run from Phase 0. 2 stress tests join at Phase 3 (deferred from Phase 0; see lesson #13). 2 exploration tests join at Phase 7.** Together they cover every acquisition mode.
+**28 continuity tests run from Phase 0. 2 stress tests join at Phase 3 (deferred from Phase 0; see lesson #13). 2 exploration tests (AL-CT29, CT30) are specified for Phase 7 but were not implemented** — the ContinuityTestHarness needs extension to support `<SelectionStrategy>` exploration configs. Together the 30 implemented tests cover every acquisition mode except exploration continuity.
 
 ---
 

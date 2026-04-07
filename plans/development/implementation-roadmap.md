@@ -393,10 +393,10 @@ Strategy A (base64 in secret) was ruled out in Phase 0: the 5 Thermo DLLs compre
 | 4 | 21 | 60 | Phase 3 golden |
 | 5 | 6 | 66 | Phase 4 golden |
 | 6 | 13 | 79 | Phase 5 golden |
-| 7 | 12 | 91 | Phase 6 golden |
-| 8 | 7 | 98 | Phase 7 golden |
+| 7 | 13 | 92 | Phase 6 golden |
+| 8 | 7 | 99 | Phase 7 golden |
 
-All 98 tests are additive. No phase removes tests. Every push triggers the full suite.
+All 99 tests are additive (projected). No phase removes tests. Every push triggers the full suite.
 
 See [testing-strategy.md SS Testing Philosophy](testing-strategy.md#1-testing-philosophy) and [SS Test Tiers](testing-strategy.md#2-test-tiers) for CI tier structure and timing budgets.
 
@@ -592,5 +592,96 @@ Phase 6 has C++ changes (FAIMS state machine in `FLASHIda.cpp/.h`, new test `FLA
 |-------|--------|-------|
 | Phase 5 | COMPLETE | C# simplification. 5 new tests (cumulative: ~77). 2 known deviations resolved in Phase 6. |
 | Phase 6 | COMPLETE | FAIMS absorption. 7 new C++ tests, 1 deleted C# test. ScanScheduler + FAIMSScanProcessor deleted. See Phase 6 compliance report. |
+| Phase 7 | COMPLETE | Exploration engine. 13 new tests (cumulative: ~96). Per-level selection/exploration framework. See Phase 7 compliance report. |
 
-Phases 7-8 remain "Not started."
+Phase 8 remains "Not started."
+
+---
+
+## Phase 7 Addendum (2026-04-07)
+
+*Corrections and clarifications discovered during Phase 7 implementation. The original spec text above is preserved as-is.*
+
+### Phase 7 status
+
+**COMPLETE** — Per-MS-level selection and exploration framework implemented in C++. `SelectionStrategy` XML/JSON pipeline in C#. Pipeline transition from hardcoded `ms3_enabled_`/`top_n_` to unified `level_configs_`. See `Phase_7/compliance-report.md`.
+
+### Build #4 partial
+
+Phase 7 C++ changes are shipped on `flashida-v9-bridge` as part of Build #4 (shared with Phase 8). DLLs were rebuilt and updated in `FlashIDA/dll/`. Phase 8 C++ changes (legacy bridge removal) are still pending.
+
+### Test count (corrected from spec)
+
+The Phase 7 section (line 328) estimated 12 tests. Actual: **13 tests** (11 C++ unit + 2 regression).
+
+| Category | Estimated | Actual |
+|----------|-----------|--------|
+| C++ unit tests (P7-U01 to P7-U12, no U04) | 10 | 11 |
+| Regression (P7-R01, P7-R02) | 2 | 2 |
+| **Total new** | **12** | **13** |
+
+### Config structure deviation
+
+The spec (Issue 4, baseline-plan.md line 202) described `<ParameterOptimization>` XML structure. The actual implementation uses `<SelectionStrategy>` with per-level `<MSLevel>` blocks:
+
+```xml
+<SelectionStrategy>
+  <MSLevel level="1">
+    <Selection metric="intensity" max_precursors="10" max_fragments="10" />
+  </MSLevel>
+  <MSLevel level="2">
+    <Selection metric="qscore" max_precursors="10" max_fragments="10" />
+    <Exploration metric="mass_count" ce_min="20" ce_max="40" ce_step="5" activation="HCD" />
+  </MSLevel>
+</SelectionStrategy>
+```
+
+This per-level design replaces the spec's flat exploration config and single `FragmentationQuality` metric. See Issue 4 implementation notes in `baseline-plan.md` Phase 7 Addendum for full mapping.
+
+### Method name corrections
+
+| Spec name | Actual name |
+|-----------|-------------|
+| `initiateMS2Exploration_` | `initiateExploration_()` |
+| `initiateMS3Exploration_` | `initiateNextLevel_()` |
+| `computeFragmentationQuality_` | `computeExplorationScore_()` (dispatcher) |
+| `FragmentationQuality` (single metric) | `ExplorationMetric` enum (MassCount, RemainingPrecursor, FragmentCount) |
+
+### Pipeline transition
+
+| Legacy variable | Status |
+|-----------------|--------|
+| `top_n_` | REMOVED — replaced by `level_configs_[1].max_targets` |
+| `exploration_max_depth_` | REMOVED |
+| `exploration_max_variants_` | REMOVED |
+| `ms3_enabled_` | RETAINED — intentional fallback for backward compat |
+
+### ScanCommand unchanged
+
+ScanCommand remains **1248 bytes** (unchanged from Phase 6). Phase 7 does not modify the struct. If a future change requires struct modification, the 6-file lockstep rule applies.
+
+### 4 WEAK tests identified
+
+The compliance audit rated 4 of 11 C++ unit tests as WEAK (pass CI but verify config/side effects rather than behavioral contracts): P7-U03 (winner selection), P7-U07 (MS3 child groups), P7-U11 (chaining rule), P7-U12 (selection ranking). These are not blocking but should be strengthened in a future pass. See `Phase_7/compliance-report.md` Section 3 for details.
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `FlashIDA/test-data/configs/method_exploration.xml` | MS2 exploration config (CE 20-40 step 5, mass_count metric) |
+| `FlashIDA/test-data/configs/method_exploration_ms3.xml` | MS2+MS3 exploration config |
+| `FlashIDA/test-data/golden/phase7_exploration.tsv` | Golden file: 37 lines (header + 36 data rows), 6 precursors x 6 rows (5 exploration variants with qScore=0 + 1 standard MS2) |
+| `OpenMS/.../FLASHIda_exploration_test.cpp` | 11 C++ unit tests (P7-U01–U12, no U04) |
+
+### CI registration
+
+`FLASHIda_exploration_test` was added to all three CI locations:
+1. `executables.cmake` (test binary registration)
+2. `flashida-ci.yml` `cmake --build --target` list (6th target)
+3. `flashida-ci.yml` `ctest -R` filter (6th entry)
+
+The `p7_exploration` entry was added to `regression-runner.ps1`.
+
+### `method_exploration_ms3.xml` not regression-tested
+
+`method_exploration_ms3.xml` exists (MS2+MS3 exploration config) but has no regression runner entry. MS3 exploration is covered by C++ unit test P7-U07 but not by end-to-end regression. This is a known gap (LOW severity per compliance report).

@@ -416,3 +416,51 @@ Corrected Phase 6 row:
 | Phase | Build | `cpp-unit-tests` active | Stress step active | New golden files | Special environment notes |
 |-------|-------|-------------------------|-------------------|------------------|---------------------------|
 | 6 | Build #3 | Yes (`FLASHIdaFAIMS_test` added) | Yes | None new; `continuity_faims_skip.json` re-captured | FAIMS state machine in C++; ScanScheduler + FAIMSScanProcessor deleted |
+
+---
+
+## Phase 7 Addendum (2026-04-07)
+
+*Corrections and clarifications discovered during Phase 7 implementation. The original spec text above is preserved as-is.*
+
+### Build #4 partial (Phase 7 shipped)
+
+Phase 7 C++ changes (exploration engine) are shipped on `flashida-v9-bridge` as part of Build #4. The `build-dlls` workflow was triggered and DLLs updated in `FlashIDA/dll/`. Phase 8 C++ changes (legacy bridge removal) are still pending — Build #4 is not yet finalized.
+
+### cpp-unit-tests targets updated
+
+The CTest filter in `flashida-ci.yml` was updated to include `FLASHIda_exploration_test` as the 6th entry:
+
+```
+ctest -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration"
+```
+
+The `cmake --build --target` list also has 6 entries now:
+1. `DeconvolvedSpectrum_OptimizationMetadata_test` (Phase 2)
+2. `FLASHIdaQueueTracking_test` (Phase 3)
+3. `FLASHIda_ProcessScan_test` (Phase 4)
+4. `ScanCommandLayout_test` (Phase 3)
+5. `FLASHIdaFAIMS_test` (Phase 6)
+6. `FLASHIda_exploration_test` (Phase 7)
+
+Both lists use an explicit allowlist pattern (not automatic test discovery). A test registered only in `executables.cmake` will never run in CI unless both lists are updated.
+
+### Workflow activation status (as of Phase 7)
+
+| Workflow/Step | Status | Since | Phase 7 changes |
+|---------------|--------|-------|-----------------|
+| `cpp-unit-tests` | ACTIVE | Phase 2 | `FLASHIda_exploration_test` added to build targets and CTest filter (6th entry) |
+| Stress tests | Run within NUnit | Phase 3 | No changes |
+| `build-dlls` (OpenMS repo) | ACTIVE | Phase 3 | Triggered for Build #4 |
+
+### Per-Phase Environment Summary (Phase 7 row)
+
+| Phase | Build | `cpp-unit-tests` active | Stress step active | New golden files | Special environment notes |
+|-------|-------|-------------------------|-------------------|------------------|---------------------------|
+| 7 | Build #4 (partial) | Yes (`FLASHIda_exploration_test` added, 6 targets total) | Yes | `phase7_exploration.tsv` | 13 tests (11 C++ unit + 2 regression); `method_exploration.xml` and `method_exploration_ms3.xml` committed; all method XMLs require `<SelectionStrategy>` |
+
+The original table (line 288) listed Phase 7 with "10" C++ tests and a single exploration golden file. Actual: **11 C++ unit tests** (P7-U01–U12, no U04) + 2 regression tests = 13 total. The original table's description is otherwise correct.
+
+### Per-Phase Environment Summary correction (Phase 8)
+
+The original table (line 289) for Phase 8 listed "12+ configs" for full regression. Actual as of Phase 7: 13 configs in `regression-runner.ps1` (including `p7_exploration`). Phase 8 should not add more configs unless new modes are introduced.

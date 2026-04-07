@@ -13,7 +13,7 @@ Each sub-project has its own `CLAUDE.md` with detailed architecture and build in
 
 ## How the Projects Connect
 
-FlashIDA's `FLASHIdaWrapper.cs` calls into `OpenMS.dll` via P/Invoke (~20 exported C functions). The bridge functions are defined on the C++ side in `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp` and consumed on the C# side in `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs`. Changes to the bridge API must be synchronized across both projects.
+FlashIDA's `FLASHIdaWrapper.cs` calls into `OpenMS.dll` via P/Invoke (5 exported C functions after Phase 8; was ~20 before cleanup). The bridge functions are defined on the C++ side in `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp` and consumed on the C# side in `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs`. Changes to the bridge API must be synchronized across both projects.
 
 ## Build Commands
 
@@ -44,7 +44,7 @@ ctest                       # All tests
 ctest -R ClassName_test     # Single class test
 ctest -R FLASH              # All FLASH-related tests
 ```
-Active FLASHIda test binaries in `executables.cmake`: `DeconvolvedSpectrum_OptimizationMetadata_test`, `FLASHIdaQueueTracking_test`, `FLASHIda_ProcessScan_test`, `ScanCommandLayout_test`, `FLASHIdaFAIMS_test`. Phase 7 adds `FLASHIda_exploration_test`.
+Active FLASHIda test binaries in `executables.cmake`: `DeconvolvedSpectrum_OptimizationMetadata_test`, `FLASHIdaQueueTracking_test`, `FLASHIda_ProcessScan_test`, `ScanCommandLayout_test`, `FLASHIdaFAIMS_test`, `FLASHIda_exploration_test`. Phase 8 adds `FLASHIda_LegacyConfig_test`.
 
 ## Key Development Concerns
 
@@ -53,32 +53,34 @@ Active FLASHIda test binaries in `executables.cmake`: `DeconvolvedSpectrum_Optim
 - **Method configuration**: Acquisition parameters are in XML format (`FlashIDA/src/Flash/etc/method.xml`).
 - **Code style**: OpenMS uses clang-format (LLVM-based, 150 col, 2-space indent, Allman braces). FlashIDA follows standard C# conventions.
 
-## Current State (Phase 7)
+## Current State (Phase 8)
 
-Phases 0-6 are complete. Phase 7 (Exploration Engine) is the current active phase.
+Phases 0-7 are complete. Phase 8 (Cleanup + Documentation) is the current active phase — the final phase.
 
-**Pipeline status:** All acquisition paths route through `UnifiedScanProcessor` → C++ `processScan()` → `getNextScanCommand()`. `ScanScheduler.cs` and `FAIMSScanProcessor.cs` were deleted in Phase 6. FAIMS CV cycling is fully in C++.
+**Pipeline status:** All acquisition paths route through `UnifiedScanProcessor` → C++ `processScan()` → `getNextScanCommand()`. `ScanScheduler.cs` and `FAIMSScanProcessor.cs` were deleted in Phase 6. FAIMS CV cycling is fully in C++. Exploration engine (`level_configs_`, CE sweep) shipped in Phase 7.
 
-**Phase 7 scope:** Per-MS-level selection/exploration framework. Two independent concerns per MSn level:
-- **Selection** (required): How targets are ranked for MSn+1. Metrics: `intensity`, `qscore`, `none`.
-- **Exploration** (optional, MS2+): CE sweep optimization. Metrics: `mass_count`, `remaining_precursor`, `fragment_count`.
+**Phase 8 scope:** Remove all legacy bridge infrastructure and dead C# code, leaving exactly 5 exported bridge functions. Eliminate legacy config parsing so JSON is the only format. Add `MethodDocGenerator.cs` reflection utility. Final regression suite with zero warnings.
 
 Key files to modify:
 - **C++ (OpenMS, `flashida-v9-bridge` branch):**
-  - `FLASHIda.h` — enums (`SelectionMetric`, `ExplorationMetric`), `MSLevelConfig` struct, `ExplorationGroup`/`ExplorationVariant` structs, `level_configs_` map
-  - `FLASHIda.cpp` — JSON config parsing (`parseLevelConfig_`), `initiateExploration_()`, `feedExplorationResult_()`, `initiateNextLevel_()`, scoring helpers
-  - New: `FLASHIda_exploration_test.cpp` (13 tests: P7-U01–U12, P7-R01, P7-R02)
-  - `executables.cmake` — register `FLASHIda_exploration_test`
-- **C# (FlashIDA, `phase-7` branch):**
-  - `Parameter.cs` — serialize `<SelectionStrategy>` XML to JSON `selection_strategy` object
-  - `test-data/configs/method_exploration.xml` — new config file
-  - All existing method XMLs — add `<SelectionStrategy>` blocks (crash if missing)
-- **CI (parent repo, `phase-7` branch):**
-  - `flashida-ci.yml` — add `FLASHIda_exploration_test` to build targets and CTest filter
+  - `FLASHIdaBridgeFunctions.h/.cpp` — remove 18 bridge exports, leave 5 keepers
+  - `FLASHIda.h` — remove orphaned private method declarations (e.g., `getPeakGroupSize_`, `parseLegacy_`)
+  - `FLASHIda.cpp` — remove `parseLegacy_()` definition + `else` branch, remove orphaned method bodies
+  - New: `FLASHIda_LegacyConfig_test.cpp` (P8-U04: legacy config rejection test)
+  - `executables.cmake` — register `FLASHIda_LegacyConfig_test`
+- **C# (FlashIDA, `phase-8` branch):**
+  - `FLASHIdaWrapper.cs` — remove 17 `[DllImport]` declarations, leave 5
+  - `Parameter.cs` — remove `ToFLASHDeconvInput()` method
+  - New: `MethodDocGenerator.cs` (~30-line reflection utility)
+  - New: `CleanupTests.cs` (P8-U01, P8-U02, P8-U03)
+- **CI (parent repo, `phase-8` branch):**
+  - `flashida-ci.yml` — add `FLASHIda_LegacyConfig_test` to targets, extend `dumpbin` verification, add `/warnaserror`
 
-**Build batching:** Phase 7 + Phase 8 are Build #4 (final C++ build). Batch all C++ changes before pushing to `flashida-v9-bridge` (~40 min DLL build).
+**Build #4 (final):** Phase 7 C++ already shipped. Phase 8 C++ changes (dead code removal, legacy config rejection) are the remaining batch. Push once to `flashida-v9-bridge`, wait ~40 min for DLL build.
 
-**ScanCommand is 1248 bytes** with `faims_cv` at offset 1240 (Phase 6). Phase 7 does not modify the struct. If needed, the 6-file lockstep rule applies.
+**ScanCommand is 1248 bytes** with `faims_cv` at offset 1240 (Phase 6). Phase 8 does NOT modify the struct.
+
+**Active C++ test binaries (6 + 1 new):** `DeconvolvedSpectrum_OptimizationMetadata_test`, `FLASHIdaQueueTracking_test`, `FLASHIda_ProcessScan_test`, `ScanCommandLayout_test`, `FLASHIdaFAIMS_test`, `FLASHIda_exploration_test`, plus Phase 8's `FLASHIda_LegacyConfig_test`.
 
 ## Development Plan
 
@@ -118,3 +120,4 @@ Append reusable lessons here when discovered during implementation. Date-prefix 
 - (2026-04-02) When changing P/Invoke struct layout (e.g. ScanCommand), the full commit sequence is: (1) commit+push C++ changes to OpenMS, (2) wait for `build-dlls` workflow to succeed, (3) download artifact and update DLLs in `FlashIDA/dll/`, (4) commit C# changes + DLLs in FlashIDA, (5) then update parent submodule pointers. Skipping step 3 causes CI to fail with struct size mismatch.
 - (2026-04-02) P/Invoke struct changes require updating **5 files** in lockstep, not just the obvious 3: (1) `FLASHIda.h` (C++ struct + static_assert), (2) `FLASHIda.cpp` (populate new fields), (3) `ScanCommandLayout_test.cpp` (C++ offsetof printer — easy to forget), (4) `FLASHIdaWrapper.cs` (C# struct), (5) `ScanCommandLayoutTests.cs` (C# size + offset assertions).
 - (2026-04-02) In the old bridge's `getIsolationWindows`, `precursorIntensities` maps to `PeakGroup::getChargeIntensity(charge)` (per-charge), while `peakgroupIntensities` maps to `PeakGroup::getIntensity()` (total). The names are misleading — "precursor" means charge-specific, not the overall precursor.
+- (2026-04-07) `parseJSONConfig_()` in FLASHIda.cpp has a `std::stringstream ss` at line ~3198. Any new variable named `ss` in the same function scope causes MSVC `C2040`. Use descriptive names (`sel_strategy`, `expl_obj`) not short abbreviations.
