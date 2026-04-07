@@ -33,7 +33,7 @@ cmake --build <build-dir> --config Release
 ## Testing
 
 ### FlashIDA
-No automated test suite. Use test mode for offline deconvolution without an instrument:
+C# NUnit tests in `src/Flash/Flash.Tests/`. Run via NUnit console runner in CI. Also has test mode for offline deconvolution:
 ```
 Flash.exe <input_file> <output_file> <method.xml> [ms2_file]
 ```
@@ -44,7 +44,7 @@ ctest                       # All tests
 ctest -R ClassName_test     # Single class test
 ctest -R FLASH              # All FLASH-related tests
 ```
-Note: FLASH test entries are currently commented out in `OpenMS/src/tests/class_tests/openms/executables.cmake`.
+Active FLASHIda test binaries in `executables.cmake`: `DeconvolvedSpectrum_OptimizationMetadata_test`, `FLASHIdaQueueTracking_test`, `FLASHIda_ProcessScan_test`, `ScanCommandLayout_test`, `FLASHIdaFAIMS_test`. Phase 7 adds `FLASHIda_exploration_test`.
 
 ## Key Development Concerns
 
@@ -52,6 +52,33 @@ Note: FLASH test entries are currently commented out in `OpenMS/src/tests/class_
 - **FLASH code location**: All FLASH algorithms live in `OpenMS/src/openms/{include,source}/OpenMS/ANALYSIS/TOPDOWN/`.
 - **Method configuration**: Acquisition parameters are in XML format (`FlashIDA/src/Flash/etc/method.xml`).
 - **Code style**: OpenMS uses clang-format (LLVM-based, 150 col, 2-space indent, Allman braces). FlashIDA follows standard C# conventions.
+
+## Current State (Phase 7)
+
+Phases 0-6 are complete. Phase 7 (Exploration Engine) is the current active phase.
+
+**Pipeline status:** All acquisition paths route through `UnifiedScanProcessor` → C++ `processScan()` → `getNextScanCommand()`. `ScanScheduler.cs` and `FAIMSScanProcessor.cs` were deleted in Phase 6. FAIMS CV cycling is fully in C++.
+
+**Phase 7 scope:** Per-MS-level selection/exploration framework. Two independent concerns per MSn level:
+- **Selection** (required): How targets are ranked for MSn+1. Metrics: `intensity`, `qscore`, `none`.
+- **Exploration** (optional, MS2+): CE sweep optimization. Metrics: `mass_count`, `remaining_precursor`, `fragment_count`.
+
+Key files to modify:
+- **C++ (OpenMS, `flashida-v9-bridge` branch):**
+  - `FLASHIda.h` — enums (`SelectionMetric`, `ExplorationMetric`), `MSLevelConfig` struct, `ExplorationGroup`/`ExplorationVariant` structs, `level_configs_` map
+  - `FLASHIda.cpp` — JSON config parsing (`parseLevelConfig_`), `initiateExploration_()`, `feedExplorationResult_()`, `initiateNextLevel_()`, scoring helpers
+  - New: `FLASHIda_exploration_test.cpp` (13 tests: P7-U01–U12, P7-R01, P7-R02)
+  - `executables.cmake` — register `FLASHIda_exploration_test`
+- **C# (FlashIDA, `phase-7` branch):**
+  - `Parameter.cs` — serialize `<SelectionStrategy>` XML to JSON `selection_strategy` object
+  - `test-data/configs/method_exploration.xml` — new config file
+  - All existing method XMLs — add `<SelectionStrategy>` blocks (crash if missing)
+- **CI (parent repo, `phase-7` branch):**
+  - `flashida-ci.yml` — add `FLASHIda_exploration_test` to build targets and CTest filter
+
+**Build batching:** Phase 7 + Phase 8 are Build #4 (final C++ build). Batch all C++ changes before pushing to `flashida-v9-bridge` (~40 min DLL build).
+
+**ScanCommand is 1248 bytes** with `faims_cv` at offset 1240 (Phase 6). Phase 7 does not modify the struct. If needed, the 6-file lockstep rule applies.
 
 ## Development Plan
 
