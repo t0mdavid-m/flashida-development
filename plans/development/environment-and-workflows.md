@@ -374,3 +374,45 @@ The corrected Phase 5 row for the Per-Phase Environment Summary table:
 ### FAIMS regression runner rule
 
 **Do not add FAIMS method configs** (`method_faims_3cv.xml`, `method_faims_skip.xml`) to `regression-runner.ps1`. `Flash.exe` test mode feeds scans directly to the C++ `ProcessScan` bridge in a single stream, ignoring the `cv=` field entirely. Both FAIMS configs produce output identical to non-FAIMS runs. FAIMS behavior is only testable through continuity tests (`ContinuityTestHarness`), which create a real `FAIMSScanProcessor` + `ScanScheduler` pipeline with mock instrument interfaces.
+
+---
+
+## Phase 6 Addendum (2026-04-07)
+
+*Corrections and clarifications discovered during Phase 6 implementation. The original spec text above is preserved as-is.*
+
+### Build #3 confirmed
+
+Phase 6 has C++ changes (FAIMS state machine ported to `FLASHIda.cpp`). Build #3 was triggered and completed on the `flashida-v9-bridge` branch as specified in Section 4.
+
+### cpp-unit-tests targets updated
+
+The CTest filter in `flashida-ci.yml` was updated to include `FLASHIdaFAIMS_test`:
+
+```
+ctest -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS"
+```
+
+New C++ test targets must be added to **both** the `cmake --build --target` list and the `ctest -R` filter in `flashida-ci.yml`. The CI uses an explicit allowlist — it does not discover tests automatically. A test registered only in `executables.cmake` will never run. (Lessons 10, 11 in `Phase_6/lessons-learned.md`.)
+
+### DLL build workflow does not run CTest
+
+The `build_dlls.yml` workflow in the OpenMS repo calls `ctest_start`, `ctest_configure`, and `ctest_build` but has **no `ctest_test()` call**. It only compiles the DLL; it never executes unit tests. C++ test execution depends entirely on the parent repo's `flashida-ci.yml` pipeline. (Lesson 11.)
+
+### Workflow activation status (as of Phase 6)
+
+| Workflow/Step | Status | Since | Phase 6 changes |
+|---------------|--------|-------|-----------------|
+| `cpp-unit-tests` | ACTIVE | Phase 2 | `FLASHIdaFAIMS_test` added to build targets and CTest filter |
+| Stress tests | Run within NUnit | Phase 3 | No changes |
+| `build-dlls` (OpenMS repo) | ACTIVE | Phase 3 | Triggered for Build #3 |
+
+### Per-Phase Environment Summary correction
+
+The original table (line 287) listed Phase 6 golden files as "None (uses Phase 5 FAIMS baselines)." This is partially correct — no new golden files were created, but the existing `continuity_faims_skip.json` was **re-captured** after bridge migration due to output changes (tracking IDs in ScanDescription, different record count from unified bridge state accumulation). See Lesson 7 in `Phase_6/lessons-learned.md`.
+
+Corrected Phase 6 row:
+
+| Phase | Build | `cpp-unit-tests` active | Stress step active | New golden files | Special environment notes |
+|-------|-------|-------------------------|-------------------|------------------|---------------------------|
+| 6 | Build #3 | Yes (`FLASHIdaFAIMS_test` added) | Yes | None new; `continuity_faims_skip.json` re-captured | FAIMS state machine in C++; ScanScheduler + FAIMSScanProcessor deleted |

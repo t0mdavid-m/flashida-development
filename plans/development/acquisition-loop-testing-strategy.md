@@ -787,3 +787,57 @@ FAIMS behavior is **only testable through continuity tests**, NOT through the re
 | CT07 (line 237) | `Assume.That(results.Count > 0)` | LOW | — |
 | CT18 (line 519) | `Assume.That(ms2Commands.Count > 0)` | MEDIUM | — |
 | CT22 (line 586) | `Assume.That(ms2Commands.Count > 0)` | MEDIUM | — |
+
+---
+
+## Phase 6 Addendum (2026-04-07)
+
+*Corrections and clarifications discovered during Phase 6 implementation. The original spec text above is preserved as-is.*
+
+### Soft guards hardened in Phase 6
+
+CT09 and CT10 soft guards (`if (results.Count > 0)`) were hardened to `Assert.That(results.Count, Is.GreaterThan(0))` during Phase 6 Step 0, as scheduled in the Phase 5 addendum. CT22 was also found to have if-guarded assertions that could pass with zero MS3 results; this was flagged by the compliance audit. (Lesson 14 in `Phase_6/lessons-learned.md`.)
+
+Updated soft guards inventory:
+
+| Location | Guard Type | Severity | Status |
+|----------|-----------|----------|--------|
+| CT09 (line 302) | ~~`if (results.Count > 0)`~~ | ~~HIGH~~ | **FIXED** in Phase 6 |
+| CT10 (line 335) | ~~`if (results.Count > 0)`~~ | ~~HIGH~~ | **FIXED** in Phase 6 |
+| CT06 (line 207) | `Assume.That(results.Count > 0)` | MEDIUM | Remains |
+| CT07 (line 237) | `Assume.That(results.Count > 0)` | LOW | Remains |
+| CT18 (line 519) | `Assume.That(ms2Commands.Count > 0)` | MEDIUM | Remains |
+| CT22 (line 586) | if-guarded assertions | **HIGH** | Flagged by compliance audit |
+
+### Queue passthrough tests don't verify behavioral guards
+
+P6-U06 originally tested non-FAIMS mode by pushing a pre-stamped MS2 via `pushCommandForTest` and checking it came back with `faims_cv=0.0`. This only tests queue data structure passthrough, not the behavioral property that `processScan` skips CV cycling when `faims_enabled_=false`. P6-U06 was rewritten to call `processScan` and assert the queue is empty (no CV-transition MS1 pushed). (Lesson 14.)
+
+### Per-CV state machine testing requires separate input/output arrays
+
+When testing a state machine with both input (observed state, e.g. the `faims_cv` parameter passed to `processScan`) and output (next action, e.g. the CV on the dequeued command), use separate arrays. P6-U01 initially used a single `expected_cvs` array for both, which obscured an off-by-one assertion bug. Split into `input_cvs` and `expected_cvs`. (Lesson 13.)
+
+### Off-by-one in cycling assertions
+
+P6-U01's assertion used `expected_cvs[(i+1) % size]` instead of `expected_cvs[i]`. Three of four iterations would fail, but the fourth passed by coincidence. The bug was only discovered by a compliance audit agent tracing all 4 iterations by hand. When writing loop-based assertions with index arithmetic, trace at least 3 iterations against the actual implementation. (Lesson 12.)
+
+### ProcessorTests.cs (P5-U01) deleted
+
+`ProcessorTests.cs` was deleted in Phase 6 as an always-pass test (`new UnifiedScanProcessor(null)` + `IsNotNull`). It provided no behavioral verification. (Compliance report finding M6.)
+
+### Struct offset assertions must cover all fields
+
+`ScanCommandLayoutTests.cs` (P3-U03) had offset assertions through `Pad2` at offset 1236 but stopped there. The Phase 6 `FaimsCv` field at offset 1240 was missing. When adding a new field to the P/Invoke ScanCommand struct, its offset assertion must be added in the same commit. (Lesson 15.)
+
+### 5-file lockstep rule extended to 6 files
+
+The CLAUDE.md 5-file lockstep rule for P/Invoke struct changes should be a **6-file rule**:
+
+1. `FLASHIda.h` (C++ struct + static_assert)
+2. `FLASHIda.cpp` (populate new fields)
+3. `ScanCommandLayout_test.cpp` (C++ offsetof printer)
+4. `FLASHIdaWrapper.cs` (C# struct)
+5. `ScanCommandLayoutTests.cs` (C# size + offset assertions)
+6. **`ScanCommandLayoutTests.cs` offset assertion for the new field** (easy to forget if only adding a size assertion)
+
+(Lesson 15.)

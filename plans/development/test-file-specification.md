@@ -982,3 +982,28 @@ FlashIDA/test-data/
 └── golden/
     └── continuity_faims_skip.json          # NEW Phase 5
 ```
+
+---
+
+## Phase 6 Addendum (2026-04-07)
+
+*Corrections and clarifications discovered during Phase 6 implementation. The original spec text above is preserved as-is.*
+
+### No new test data files
+
+Phase 6 created no new spectrum files, config files, or golden files. All FAIMS test data from Phase 5 (`ms1_faims_3cv.txt`, `method_faims_skip.xml`, `method_faims_3cv.xml`) was reused unchanged.
+
+### Golden file re-capture: continuity_faims_skip.json
+
+`continuity_faims_skip.json` (originally captured in Phase 5 via the legacy bridge) was **re-captured** after migration to the unified bridge. Two categories of changes:
+
+| Change | Cause |
+|--------|-------|
+| ScanDescription fields populated with tracking IDs (e.g. `_0\|2063.61@4`) instead of empty strings | Unified bridge generates tracking IDs; legacy bridge left ScanDescription empty |
+| 8 records instead of 6 | Unified bridge's state accumulation produces more precursors across CV cycles than the per-call legacy bridge |
+
+Both changes are correct behavior for the new architecture. The golden file was diffed and categorized before accepting. (Lesson 7 in `Phase_6/lessons-learned.md`.)
+
+### ScanDescription format change
+
+After the Phase 6 bridge migration, all golden files captured via `ContinuityTestHarness` use the unified bridge's ScanDescription format: tracking IDs (`_N|mass@charge`) for MS2/MS3 commands, empty strings for MS1 commands. The legacy bridge format (empty strings for all) is no longer produced in any production or test path.

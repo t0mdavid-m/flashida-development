@@ -1,13 +1,16 @@
 # Phase 8: Cleanup + Documentation — Implementation Plan
 
-**Date:** 2026-03-21
-**Build:** Build #4 (ships together with Phase 7)
+**Date:** 2026-03-21 (updated 2026-04-07 with Phase 6 lessons)
+**Build:** Build #4 (ships together with Phase 7). Build #4 is the final C++ build. Phase 7 adds the exploration engine; Phase 8 polishes and hardens everything. All C++ changes for both phases should be batched to minimize DLL rebuild cycles (~40 min each).
 **Status:** Final phase of the FLASHIda v9 migration
 **Source documents:**
 - [../baseline-plan.md](../baseline-plan.md) — Issue 7 and Phase 8 specification
 - [../implementation-roadmap.md](../implementation-roadmap.md) — Phase 8 roadmap entry
 - [../testing-strategy.md](../testing-strategy.md) — Phase 8 test plan
 - [../test-file-specification.md](../test-file-specification.md) — Authoritative format, content, and naming specification for all test data files (spectrum files, golden TSVs, config XMLs, test scripts)
+- [../Phase_6/lessons-learned.md](../Phase_6/lessons-learned.md) — 15 lessons from Phase 6 (FAIMS absorption)
+- [../Phase_6/compliance-report.md](../Phase_6/compliance-report.md) — Phase 6 compliance audit findings
+- [../Phase_5/lessons-learned.md](../Phase_5/lessons-learned.md) — 4 lessons from Phase 5 (C# simplification)
 
 ---
 
@@ -27,6 +30,7 @@ After this phase:
 - The C++ constructor rejects non-JSON input (no `parseLegacy` fallback).
 - `MethodDocGenerator.cs` is present and produces correct output.
 - The full regression suite passes against Phase 7 golden files.
+- `msbuild Flash.sln /warnaserror` succeeds with zero warnings.
 
 ---
 
@@ -34,42 +38,64 @@ After this phase:
 
 The following must be true before starting Phase 8:
 
-1. **Phase 7 is complete and verified.** The exploration engine is implemented, all Phase 7
-   working product verification criteria pass, Phase 7 golden files are committed to
-   `FlashIDA/test-data/golden/`, and the Phase 7 implementation plan is marked done.
+1. **Phase 7 is complete and verified.** The exploration engine is implemented: `ExplorationGroup`/`ExplorationVariant` structs in `FLASHIda.h`, `initiateMS2Exploration_()`, `feedExplorationResult_()`, `initiateMS3Exploration_()`, `computeFragmentationQuality_()`, `buildCEVariants_()` in `FLASHIda.cpp`, MS1 cycle time suppression during active exploration, `EXPL:` prefix routing in `processScan()` MS2 path. All Phase 7 working product verification criteria pass. Phase 7 golden files are committed to `FlashIDA/test-data/golden/` (including `phase7_exploration.tsv`). `method_exploration.xml` exists in `FlashIDA/test-data/configs/`. `Parameter.ToJSON()` serializes the full `<ParameterOptimization>` block. The Phase 7 implementation plan is marked done.
 
 2. **Build #4 C++ compilation of Phase 7 has succeeded.** The exploration engine changes are
    compiled into `OpenMS.dll` and the DLL artifact is committed in `FlashIDA/dll/` (OpenMS
-   DLLs are committed to the repo, not downloaded — Phase 0 lesson #5). Verify
+   DLLs are committed to the repo, not downloaded -- Phase 0 lesson #5). Verify
    `build_dlls.yml` passed on the `flashida-v9-bridge` branch before starting Phase 8 C++
-   changes; each failed DLL build wastes ~40 minutes (Phase 1 lesson #10). Batch all
-   Phase 8 C++ edits (Steps 2–5) into a single push to minimise rebuild cycles.
+   changes; each failed DLL build wastes ~40 minutes (Phase 1 lesson #10). Note: the
+   `build_dlls.yml` workflow only builds, it never runs CTest (Phase 6 lesson 11). C++
+   tests only execute in the parent repo CI. Batch all Phase 8 C++ edits (Steps 2-5) into
+   a single push to minimise rebuild cycles.
 
 3. **All prior regression tests pass.** Every test from P0 through P7 passes on the
-   Build #4 artifact. No test regressions are open. (Phase 2 delivered 59 cumulative
-   tests; Phase 4 brought the count to ~70; Phase 5 to 77; Phase 6 to ~90; Phase 7
-   to ~102. Phase 8 adds 7 more, bringing the final cumulative count to ~109.)
-   Note: P5-U03 was not implemented in Phase 5. If Phase 6 merged it into P6-U07/U08,
-   the gap is resolved by Phase 8.
+   Build #4 artifact. No test regressions are open. Cumulative test counts: Phase 2 = 59,
+   Phase 4 = ~70, Phase 5 = 77, Phase 6 = ~90, Phase 7 = ~102. Phase 8 adds 7 more,
+   bringing the final cumulative count to ~109.
+   Note: P5-U03 (`DeadCodeTests.cs`) was never implemented. P6-U07/U08 (dead code tests)
+   were removed from scope per user direction; dead code verification was done via manual
+   grep instead. Phase 8's P8-U02 serves as the automated dead code verification test.
 
 4. **No callers of the old bridge functions remain.** Phase 4 (ProcessScan full routing),
-   Phase 5 (C# simplification), and Phase 6 (FAIMS absorption) must have removed all C#-side
-   calls to the 18 functions being deleted in this phase. Verify with the dead-code grep
+   Phase 5 (C# simplification), and Phase 6 (FAIMS absorption) removed all C#-side
+   calls to the 18 functions being deleted in this phase. Phase 6 deleted both
+   `ScanScheduler.cs` and `FAIMSScanProcessor.cs`, which were the last callers of
+   `GetIsolationWindows`, `GetAllMonoisotopicMasses`, `GetAllPeakGroupSize`,
+   `GetRepresentativeMass`, and `RemoveFromExclusionList`. Verify with the dead-code grep
    described in Step 1 below before touching any C++ code.
 
 5. **Legacy config format is no longer passed from C#.** Phase 1 (JSON Configuration)
    switched `FLASHIdaWrapper.cs` to pass JSON via `Parameter.ToJSON()`. The legacy
    space-delimited string path must not be reachable from any live C# code path.
 
-6. **ScanCommand struct is in its final form.** The struct includes all fields accumulated
-   through Phases 3-6: `scan_id` as the first field (Phase 3 cache alignment deviation),
-   `uint64_t enqueue_timestamp_ms` and 11 scoring fields (added in Phase 4, total +96 bytes
-   over Phase 3, bringing ScanCommand from 1144 to 1240 bytes), `double faims_cv` (added
-   in Phase 6, bringing ScanCommand to ~1248 bytes).
+6. **ScanCommand struct is in its final form (1248 bytes).** The struct includes all fields
+   accumulated through Phases 3-6: `scan_id` as the first field (Phase 3 cache alignment
+   deviation), `uint64_t enqueue_timestamp_ms` and 11 scoring fields (added in Phase 4,
+   total +96 bytes over Phase 3, bringing ScanCommand from 1144 to 1240 bytes), `double
+   faims_cv` at offset 1240 (added in Phase 6, bringing ScanCommand to 1248 bytes).
+   `static_assert(sizeof(ScanCommand) == 1248)` in `FLASHIda.h` line 109.
    `IsolationStage` has `collision_energy` as `double` (not `int`) and `activation_type` as
    `char[32]` (not `char[16]`), totaling 80 bytes. Both C++ `static_assert` values and C#
-   `Marshal.SizeOf` expectations reflect the final sizes. See "Phase 3-7 Deviations Impact"
-   section below for the complete layout.
+   `Marshal.SizeOf` expectations reflect the final sizes. Phase 7 does NOT modify the struct.
+   Phase 8 does NOT modify the struct. If any late-breaking need arises, the 6-file lockstep
+   rule applies (Phase 6 lesson 15): `FLASHIda.h`, `FLASHIda.cpp`, `ScanCommandLayout_test.cpp`,
+   `FLASHIdaWrapper.cs`, `ScanCommandLayoutTests.cs` (size assertion), `ScanCommandLayoutTests.cs`
+   (offset assertion for new field). See "Phase 3-7 Deviations Impact" section below for the
+   complete layout.
+
+7. **CI includes all Phase 7 C++ test binaries.** After Phase 7, `flashida-ci.yml` must
+   include 6 test binaries in both `cmake --build --target` and `ctest -R`:
+   `DeconvolvedSpectrum_OptimizationMetadata_test`, `FLASHIdaQueueTracking_test`,
+   `FLASHIda_ProcessScan_test`, `ScanCommandLayout_test`, `FLASHIdaFAIMS_test`,
+   `FLASHIda_exploration_test`. Verify this before starting Phase 8.
+
+8. **ProcessScan bridge accepts `double faims_cv` parameter.** The bridge function signature
+   was extended in Phase 6. All pipeline paths route through:
+   `Instrument -> Flash.ProcessSpectrum -> DataPipe -> UnifiedScanProcessor.ProcessMS
+   -> FLASHIdaWrapper.ProcessScan(mzs, ints, rt, msLevel, scanDesc, faimsCv)
+   -> C++ ProcessScan bridge -> FLASHIda::processScan(... faims_cv)
+   -> FLASHIdaWrapper.GetNextScanCommand -> ScanFactory.BuildFromCommand -> Instrument`
 
 ### User-Provided Inputs
 
@@ -96,7 +122,7 @@ Phase 8 inherits accumulated struct changes and CI policy changes from Phases 3-
 | `charge_state` | int32_t | Renamed from `charge` |
 | `activation_type` | **char[32]** | Was `char[16]` in original plan; accommodates longer names like EThcD |
 
-**ScanCommand (final size, verified by `static_assert`):** The struct size is NOT the original 1144 bytes (nor 1152). Phase 4 added `uint64_t enqueue_timestamp_ms` (8 bytes) AND 11 scoring fields (totaling 88 bytes of data + `Pad2` for alignment), bringing the struct from 1144 to **1240 bytes**. Phase 6 added `double faims_cv` (8 bytes), bringing the struct to **~1248 bytes**. The Phase 8 `static_assert` and C# `Marshal.SizeOf` tests must verify the final size that includes all additions. Key field order and additions:
+**ScanCommand (1248 bytes, verified by `static_assert` in `FLASHIda.h` line 109):** The struct size is NOT the original 1144 bytes (nor 1152). Phase 4 added `uint64_t enqueue_timestamp_ms` (8 bytes) AND 11 scoring fields (totaling 88 bytes of data + `Pad2` for alignment), bringing the struct from 1144 to **1240 bytes**. Phase 6 added `double faims_cv` (8 bytes at offset 1240), bringing the struct to **1248 bytes**. Phase 7 does NOT modify the struct. The Phase 8 `static_assert` and C# `Marshal.SizeOf` tests must verify the final size that includes all additions. The `FaimsCv` offset assertion at 1240 must be present in `ScanCommandLayoutTests.cs` (Phase 6 lesson 15). Key field order and additions:
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -128,7 +154,7 @@ Phase 8 inherits accumulated struct changes and CI policy changes from Phases 3-
 
 Note: The exact field order and offsets within `ScanCommand` may differ from the table above due to alignment padding. Consult the Phase 4 and Phase 6 implementation plans for the authoritative field order. The key invariant is that Phase 8 verification tests must use the actual final layout, not any intermediate version.
 
-**Phase 5 confirmed:** ScanCommand size unchanged through Phase 5 (still 1240 bytes post-Phase 4). Phase 5 is C#-only; no struct changes. The `faims_cv` field is added in Phase 6, bringing ScanCommand to ~1248 bytes. Phase 5 compliance also flagged CT09/CT10 soft guards (HIGH severity) — these should be hardened by Phase 6. If they reach Phase 8 unhardened, the final verification must flag them.
+**Phase 5 confirmed:** ScanCommand size unchanged through Phase 5 (still 1240 bytes post-Phase 4). Phase 5 is C#-only; no struct changes. The `faims_cv` field was added in Phase 6, bringing ScanCommand to 1248 bytes (`static_assert(sizeof(ScanCommand) == 1248)` in `FLASHIda.h` line 109, `faims_cv` at offset 1240). Phase 7 does NOT modify the struct. Phase 5 compliance flagged CT09/CT10 soft guards (HIGH severity) -- these were hardened in Phase 6. CT22 (if-guarded MS3) and CT18 (Assume.That) remain in the backlog.
 
 ### CI Policy: TRACK-CREATE Hard-Fail
 
@@ -144,27 +170,62 @@ The CI `[TRACK-CREATE]` check is a **hard-fail gate** (established by Phase 3 co
 
 *Updates based on Phase 5 actual outcomes and lessons learned. See `Phase_5/compliance-report.md` and `Phase_5/lessons-learned.md` for full details.*
 
-**Phase 5 status: COMPLETE.** FAIMSScanProcessor retained with full legacy path (`GetIsolationWindows` -> `ScanFactory` -> `ScanScheduler`). ScanScheduler also retained. Both are deleted in Phase 6. By Phase 8, all callers of the legacy bridge functions are gone.
+**Phase 5 status: COMPLETE.** FAIMSScanProcessor retained with full legacy path (`GetIsolationWindows` -> `ScanFactory` -> `ScanScheduler`). ScanScheduler also retained. Both were deleted in Phase 6. By Phase 8, all callers of the legacy bridge functions are gone.
 
-**Cumulative test count at Phase 5: 77.** 5 new tests (P5-U01, P5-U02, P5-U04, CT27 activated, CT28 activated). P5-U03 (`DeadCodeTests.cs`) was not implemented — gap carried forward to Phase 6 (merged into P6-U07/U08).
+**Cumulative test count at Phase 5: 77.** 5 new tests (P5-U01, P5-U02, P5-U04, CT27 activated, CT28 activated). P5-U03 (`DeadCodeTests.cs`) was not implemented -- gap carried forward; P6-U07/U08 also removed from scope; P8-U02 provides automated dead code verification.
 
-**FAIMS TSV golden files not captured.** `Flash.exe` test mode bypasses the entire C# acquisition loop — it ignores the `cv=` field, has no `ScanScheduler`, no `FAIMSScanProcessor`, no per-CV routing. Both `method_faims_3cv.xml` and `method_faims_skip.xml` produce identical non-FAIMS output through `Flash.exe`. P8-R01 regression configs for FAIMS cannot produce meaningful FAIMS-specific output. FAIMS coverage for Phase 8 final verification relies on continuity tests (CT09/CT10/CT27/CT28).
+**FAIMS TSV golden files not captured.** `Flash.exe` test mode bypasses the entire C# acquisition loop -- it ignores the `cv=` field, has no per-CV routing. P8-R01 regression configs for FAIMS cannot produce meaningful FAIMS-specific output. FAIMS coverage for Phase 8 final verification relies on continuity tests (CT09/CT10/CT27/CT28).
 
-**Test quality expectations.** Phase 5 compliance found P5-U01 rated WEAK (tautological: `new X(null)` + `IsNotNull`). CT09/CT10 have HIGH severity soft guards (`if (results.Count > 0)` — passes silently with zero results). Phase 8's P8-U01/U02/U03 tests must test meaningful behavioral properties:
+**Test quality expectations.** Phase 5 compliance found P5-U01 rated WEAK (tautological: `new X(null)` + `IsNotNull`). Phase 8's P8-U01/U02/U03 tests must test meaningful behavioral properties:
 - P8-U01: counts DllImport declarations (structural, non-tautological)
 - P8-U02: scans source tree for dead references (structural, non-tautological)
 - P8-U03: calls MethodDocGenerator and verifies output contains known field names (behavioral)
 
-**Legacy bridge functions still called by FAIMSScanProcessor in Phase 5:**
-- `GetIsolationWindows` — fills m/z and charge arrays for top-N isolation targets
-- `GetAllMonoisotopicMasses` — returns all monoisotopic masses for a peak group
-- `GetAllPeakGroupSize` — returns count of deconvolved peak groups
-- `GetRepresentativeMass` — returns representative mass for a peak group
-- `RemoveFromExclusionList` — removes an m/z from the runtime exclusion list
+**Legacy bridge functions now fully removed.** Phase 6 deleted `ScanScheduler.cs` and `FAIMSScanProcessor.cs`, which were the last callers of `GetIsolationWindows`, `GetAllMonoisotopicMasses`, `GetAllPeakGroupSize`, `GetRepresentativeMass`, and `RemoveFromExclusionList`. By Phase 8, all callers are gone -- confirming the function removal list is still valid.
 
-All five are deleted (along with FAIMSScanProcessor itself) in Phase 6. By Phase 8, all callers are gone — confirming the function removal list is still valid.
+**CT09/CT10 soft guards resolved in Phase 6.** CT09 was hardened to hard assertion on `Count > 0` in Phase 6 Step 0. CT10 now has hard assertion verifying MS2 parent CV. Both rated GOOD in the Phase 6 compliance audit. **Remaining test quality issues:** CT22 has if-guarded assertions (can pass with zero MS3 results). CT18 has `Assume.That` soft guards (test skips if Count <= 0). These are in the backlog but do not block Phase 8.
 
-**CT09/CT10 soft guards.** Phase 5 compliance flagged `if (results.Count > 0)` in CT09/CT10 as HIGH severity. Phase 6 should harden these after moving FAIMS to the unified bridge path. If Phase 6 does not harden them, Phase 8's final verification should flag them as unresolved test quality issues.
+---
+
+## Phase 6 Addendum (2026-04-07)
+
+*Updates based on Phase 6 actual outcomes, compliance report, and 15 lessons learned. See `Phase_6/lessons-learned.md` and `Phase_6/compliance-report.md` for full details.*
+
+**Phase 6 status: COMPLETE.** FAIMS CV cycling state machine ported to C++. `ScanScheduler.cs` and `FAIMSScanProcessor.cs` are deleted and removed from `Flash.csproj`. The only remaining reference is a comment in `Flash.cs` (line 283). All FAIMS CV cycling is handled by C++ via `processScan()` and `getNextScanCommand()`. The unified pipeline is:
+```
+Instrument -> Flash.ProcessSpectrum -> DataPipe -> UnifiedScanProcessor.ProcessMS
+  -> FLASHIdaWrapper.ProcessScan(mzs, ints, rt, msLevel, scanDesc, faimsCv)
+  -> C++ ProcessScan bridge -> FLASHIda::processScan(... faims_cv)
+  -> FLASHIdaWrapper.GetNextScanCommand -> ScanFactory.BuildFromCommand -> Instrument
+```
+
+**Cumulative test count at Phase 6: ~90.** Six new C++ FAIMS tests (P6-U01 through P6-U06). P6-U07/U08 (dead code tests) removed from scope per user direction; manual grep verification used instead. Phase 8's P8-U02 closes this gap with an automated source-tree scan.
+
+**Files deleted in Phase 6 (do NOT reference these in Phase 8):**
+- `Flash/ScanScheduler.cs` -- deleted in Phase 6 Step 9 (note: actual path is `Flash/ScanScheduler.cs`, NOT `Flash/IDA/ScanScheduler.cs` -- Phase 6 lesson 8)
+- `Flash/IDA/FAIMSScanProcessor.cs` -- deleted in Phase 6 Step 9
+- Both removed from `Flash.csproj`
+- `ProcessorTests.cs` was never created (P5-U03 gap carried forward)
+
+**Test quality standards established by Phase 6 compliance audit.** All Phase 8 tests must follow these rules:
+
+1. **No soft guards:** Use `TEST_EQUAL` / `Assert.That` / `Assert.AreEqual`, never `if (x > 0)` conditional validation or `Assume.That` (Phase 6 lessons 12-14).
+2. **Separate input and output arrays:** State machine tests with both input (observed state) and output (next action) must use separate arrays (Phase 6 lesson 13).
+3. **No queue passthrough tests:** Tests must exercise production logic paths, not bypass them by pushing pre-built commands via test helpers (Phase 6 lesson 14).
+4. **Trace loop assertions for 3+ iterations:** For any loop-based test assertion with index arithmetic, trace at least 3 iterations by hand against the actual implementation (Phase 6 lesson 12).
+5. **Hard assertions only:** All continuity tests must have hard assertions. CT22 (if-guarded MS3) and CT18 (Assume.That) remain in the backlog but Phase 8 must not introduce new instances.
+
+**6-file lockstep rule for ScanCommand changes.** Phase 8 does NOT modify ScanCommand (confirmed: 1248 bytes, `faims_cv` at offset 1240). If any late-breaking need arises to change the struct, the 6-file lockstep rule (Phase 6 lesson 15) applies:
+1. `FLASHIda.h` (C++ struct + `static_assert`)
+2. `FLASHIda.cpp` (populate new field)
+3. `ScanCommandLayout_test.cpp` (C++ offsetof printer)
+4. `FLASHIdaWrapper.cs` (C# struct)
+5. `ScanCommandLayoutTests.cs` (C# `Marshal.SizeOf` assertion)
+6. `ScanCommandLayoutTests.cs` (offset assertion for new field)
+
+**CI explicit allowlist for C++ tests.** `flashida-ci.yml` uses explicit `--target` and `-R` lists, NOT test discovery (Phase 6 lesson 10). After Phase 7, the CI targets are: `DeconvolvedSpectrum_OptimizationMetadata_test`, `FLASHIdaQueueTracking_test`, `FLASHIda_ProcessScan_test`, `ScanCommandLayout_test`, `FLASHIdaFAIMS_test`, `FLASHIda_exploration_test`. If Phase 8 adds a new C++ test binary (P8-U04), it must be added to BOTH `cmake --build --target` and `ctest -R` in the **same commit** as the test file creation.
+
+**DLL build workflow only builds, never tests.** The `build_dlls.yml` in the OpenMS repo has no `ctest_test()` call (Phase 6 lesson 11). C++ tests only execute in the parent repo's `flashida-ci.yml`. Do not assume a successful DLL build means tests pass.
 
 ---
 
@@ -207,9 +268,11 @@ exactly 5 C# `[DllImport]` declarations remain.
 |----------|---------------|-------------|
 | `CreateFLASHIda` | `FLASHIda* CreateFLASHIda(const char* jsonConfig)` | `static extern IntPtr CreateFLASHIda(string jsonConfig)` |
 | `DisposeFLASHIda` | `void DisposeFLASHIda(FLASHIda* ptr)` | `static extern void DisposeFLASHIda(IntPtr ptr)` |
-| `ProcessScan` | `int ProcessScan(FLASHIda* obj, double* mzs, double* ints, int length, double rt_min, int ms_level, const char* scan_description)` | `static extern int ProcessScan(IntPtr ptr, double[] mzs, double[] ints, int length, double rt, int msLevel, string scanDesc)` |
+| `ProcessScan` | `int ProcessScan(FLASHIda* obj, double* mzs, double* ints, int length, double rt_min, int ms_level, const char* scan_description, double faims_cv)` | `static extern int ProcessScan(IntPtr ptr, double[] mzs, double[] ints, int length, double rt, int msLevel, string scanDesc, double faimsCv)` |
 | `GetNextScanCommand` | `int GetNextScanCommand(FLASHIda* obj, ScanCommand* output)` | `static extern int GetNextScanCommand(IntPtr ptr, ref ScanCommand output)` |
 | `GetNextTrackingId` | `int GetNextTrackingId(FLASHIda* obj)` | `static extern int GetNextTrackingId(IntPtr ptr)` |
+
+**Note:** The `ProcessScan` signature includes `double faims_cv` added in Phase 6. The C++ declaration in `FLASHIdaBridgeFunctions.h` (lines 192-194) already has this parameter. The C# `[DllImport]` in `FLASHIdaWrapper.cs` already has `double faimsCv`.
 
 ---
 
@@ -289,11 +352,14 @@ extern "C" OPENMS_DLLAPI void      DisposeFLASHIda(FLASHIda* obj);
 extern "C" OPENMS_DLLAPI int       ProcessScan(FLASHIda* obj,
                                                double* mzs, double* ints, int length,
                                                double rt_min, int ms_level,
-                                               const char* scan_description);
+                                               const char* scan_description,
+                                               double faims_cv);
 extern "C" OPENMS_DLLAPI int       GetNextScanCommand(FLASHIda* obj,
                                                       ScanCommand* output);
 extern "C" OPENMS_DLLAPI int       GetNextTrackingId(FLASHIda* obj);
 ```
+
+Note: `ProcessScan` includes `double faims_cv` (added in Phase 6, `FLASHIdaBridgeFunctions.h` lines 192-194).
 
 ---
 
@@ -323,10 +389,16 @@ to remove if:
 
 Common candidates (confirm by grep before deletion):
 
-- `getPeakGroupSize_()` — served `GetPeakGroupSize`
-- `fillIsolationWindows_()` — served `GetIsolationWindows`
-- `deconvolveMS2_()` — may have been superseded by the MS2 path inside `processScan_()`
-- `resetScanState_()` — served `ResetScanState`
+- `getPeakGroupSize_()` -- served `GetPeakGroupSize`
+- `fillIsolationWindows_()` -- served `GetIsolationWindows`
+- `deconvolveMS2_()` -- may have been superseded by the MS2 path inside `processScan_()`
+- `resetScanState_()` -- served `ResetScanState`
+
+**Do NOT remove these Phase 7 exploration methods** (they are reachable from the 5 keeper
+exports via `processScan_()` / `getNextScanCommand_()`):
+- `initiateMS2Exploration_()`, `feedExplorationResult_()`, `initiateMS3Exploration_()`
+- `computeFragmentationQuality_()`, `computeTICCoverage_()`, `buildCEVariants_()`
+- Any test helpers ending in `ForTest` (e.g., `getActiveExplorationGroupCountForTest()`)
 
 Do not remove methods that are still referenced from anywhere in `FLASHIda.cpp` or
 `FLASHIdaBridgeFunctions.cpp` (post-deletion). When in doubt, leave the method and note it
@@ -383,11 +455,15 @@ resolve to `"OpenMS.dll"` (with extension), matching the actual P/Invoke constan
 [DllImport(dllName)] static extern IntPtr CreateFLASHIda(string jsonConfig);
 [DllImport(dllName)] static extern void   DisposeFLASHIda(IntPtr ptr);
 [DllImport(dllName)] static extern int    ProcessScan(IntPtr ptr,
-    double[] mzs, double[] ints, int length, double rt, int msLevel, string scanDesc);
+    double[] mzs, double[] ints, int length, double rt, int msLevel, string scanDesc,
+    double faimsCv);
 [DllImport(dllName)] static extern int    GetNextScanCommand(IntPtr ptr,
     ref ScanCommand output);
 [DllImport(dllName)] static extern int    GetNextTrackingId(IntPtr ptr);
 ```
+
+Note: `ProcessScan` includes `double faimsCv` (added in Phase 6). When counting `[DllImport]`
+lines for P8-U01, ensure the count is exactly 5 regardless of multi-line formatting.
 
 ---
 
@@ -479,18 +555,30 @@ particular, never comment out a call to an OpenMS singleton initializer
 (`ModificationsDB::getInstance()`, `ResidueDB::getInstance()`, etc.) to silence a
 C4189 warning; use a `(void)` cast instead (Phase 1 lesson #4).
 
-**C# (CI `windows-latest` — `windows-tests` job):**
+**C# (CI `windows-latest` -- `windows-tests` job):**
 
 ```powershell
 msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /warnaserror
 ```
 
-The `/warnaserror` flag is required here. Zero warnings must remain after the removed code
-is gone. Common warning sources to resolve:
+The `/warnaserror` flag is a Phase 8 goal. Zero warnings must remain after the removed code
+is gone. Common warning sources to resolve before enabling `/warnaserror`:
 
-- Unreferenced `using` directives left behind after method removal.
+- Unreferenced `using` directives left behind after method removal (e.g., `using System.Text`
+  that was only needed by `ToFLASHDeconvInput()`).
 - Variables or parameters that were only used by now-deleted call sites.
 - Nullable reference warnings if the project has that analyzer enabled.
+- `CS0169` (field never used) for any private fields that were only read by deleted methods.
+
+**Approach:** First build without `/warnaserror` to collect the full list of warnings.
+Fix them all in the same commit as the code removal. Then enable `/warnaserror` as a
+separate CI step (P8-I02) to lock in the zero-warning state permanently. This two-step
+approach avoids a commit that removes code AND enables `/warnaserror` simultaneously,
+which makes debugging harder if warnings arise.
+
+Note: The `.csproj` currently uses `<WarningLevel>4</WarningLevel>` without
+`<TreatWarningsAsErrors>`. P8-I02 adds `/warnaserror` as a CI-only flag rather than
+modifying the `.csproj`, so local developer builds are not affected.
 
 ---
 
@@ -505,7 +593,7 @@ list of expected absent names, add all 18 removed function names to it. See Sect
 assert absence.
 
 **Note:** The 5 keeper exports use the final struct layouts (including `enqueue_timestamp_ms`
-+ 11 scoring fields from Phase 4 [1240 bytes] and `faims_cv` from Phase 6 [~1248 bytes]).
++ 11 scoring fields from Phase 4 [1240 bytes] and `faims_cv` from Phase 6 [1248 bytes]).
 The `dumpbin` check verifies symbol presence only, not struct ABI — struct size verification
 is handled by `static_assert` in C++ and `Marshal.SizeOf` in C# (P3-U01/P3-U02, updated in
 Phases 4 and 6 to reflect the final sizes).
@@ -598,16 +686,37 @@ The `compare_golden.py` tolerance rules (absolute 1e-6 for |v| ≤ 1.0, relative
 
 ## Files to Create or Modify
 
+### C++ (OpenMS) -- Build #4, batched with Phase 7
+
 | File | Action | Description |
 |------|--------|-------------|
-| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h` | Modify | Remove 18 `extern "C" OPENMS_DLLAPI` declarations. Leave 5. |
+| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h` | Modify | Remove 18 `extern "C" OPENMS_DLLAPI` declarations. Leave 5 (including `ProcessScan` with `double faims_cv` parameter). |
 | `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp` | Modify | Remove 18 function bodies. Leave 5. |
-| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | Remove declarations of private methods that are now orphaned (e.g., `getPeakGroupSize_`, `parseLegacy_`). |
+| `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda.h` | Modify | Remove declarations of private methods that are now orphaned (e.g., `getPeakGroupSize_`, `parseLegacy_`). **Do NOT remove** Phase 7 exploration methods or Phase 6 FAIMS methods (they are reachable from the 5 keeper exports). |
 | `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp` | Modify | Remove `parseLegacy_()` definition; remove the `else parseLegacy_(arg)` branch in the constructor; remove orphaned private method bodies. |
-| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | Modify | Remove 17 `[DllImport]` declarations. Leave exactly 5. |
+| `OpenMS/src/tests/class_tests/openms/source/FLASHIda_LegacyConfig_test.cpp` | Create (new) | C++ test for P8-U04 (legacy config rejection). |
+| `OpenMS/src/tests/class_tests/openms/executables.cmake` | Modify | Add entry for `FLASHIda_LegacyConfig_test` (or chosen test binary name). |
+
+### C# (FlashIDA)
+
+| File | Action | Description |
+|------|--------|-------------|
+| `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs` | Modify | Remove 17 `[DllImport]` declarations. Leave exactly 5 (including `ProcessScan` with `double faimsCv`). |
 | `FlashIDA/src/Flash/IDA/Parameter.cs` | Modify | Remove `ToFLASHDeconvInput()` method and any helpers that exist solely for it. |
 | `FlashIDA/src/Flash/IDA/MethodDocGenerator.cs` | Create (new) | ~30-line reflection utility for `[Description]`-based documentation. |
-| `.github/workflows/flashida-ci.yml` | Modify | Extend the `dumpbin` export verification step to also assert absence of the 18 removed symbols (see Step 10). |
+| `FlashIDA/src/Flash.Tests/CleanupTests.cs` | Create (new) | NUnit tests P8-U01, P8-U02, P8-U03. |
+| `FlashIDA/src/Flash.Tests/Flash.Tests.csproj` | Modify | Add `<Compile Include="CleanupTests.cs" />` to the item group (the project uses explicit `<Compile>` includes, NOT wildcard globs). |
+
+### CI workflow
+
+| File | Action | Description |
+|------|--------|-------------|
+| `.github/workflows/flashida-ci.yml` | Modify | **(1)** Add `FLASHIda_LegacyConfig_test` to BOTH `cmake --build --target` and `ctest -R` (Phase 6 lesson 10). **(2)** Extend `dumpbin` export verification to assert 5 present + 18 absent (Step 10). **(3)** Add `/warnaserror` build step (P8-I02). |
+
+**Files NOT modified (already deleted or never created):**
+- `Flash/ScanScheduler.cs` -- deleted in Phase 6 Step 9
+- `Flash/IDA/FAIMSScanProcessor.cs` -- deleted in Phase 6 Step 9
+- `ProcessorTests.cs` -- never created (P5-U03/P6-U07/U08 gaps)
 
 No other files should require changes. If a file outside this list needs modification, that
 indicates an unresolved call site from Step 1 that must be addressed first.
@@ -634,6 +743,17 @@ If any test is added that exercises bridge functions, label it Tier 2.
 files must stop at the first scan boundary (`if (started) break;` on encountering a second
 `Spec` line). Failing to do so mixes peaks from multiple scans and silently produces wrong
 results (see also silent zero-result failure mode, lesson #14).
+
+**Test quality standards (Phase 6 compliance, mandatory for all Phase 8 tests):**
+- **No soft guards:** Hard `Assert` / `TEST_EQUAL` only. No `if (x > 0)` conditional
+  validation, no `Assume.That`, no `NOT_TESTABLE` (Phase 6 lessons 12-14).
+- **No tautological tests:** Every assertion must be capable of failing with incorrect
+  implementation. `new X(null)` + `IsNotNull` is tautological (Phase 5 compliance).
+- **No queue passthrough:** Tests must exercise production code paths, not push pre-built
+  commands via test helpers (Phase 6 lesson 14).
+- **`Flash.Tests.csproj` uses explicit `<Compile>` includes:** New test files must be
+  added to the `<ItemGroup>` with `<Compile Include="CleanupTests.cs" />`. The project
+  does NOT use wildcard globs.
 
 ### Test Summary (Quick Reference)
 
@@ -870,31 +990,49 @@ concurrently, or run the 4 fastest configs sequentially and batch the rest.
 
 ## CI Configuration Changes
 
-These changes to `.github/workflows/flashida-ci.yml` are required for Phase 8:
+These changes to `.github/workflows/flashida-ci.yml` are required for Phase 8.
+
+**CRITICAL (Phase 6 lesson 10):** New C++ test binaries must be added to BOTH the
+`cmake --build --target` list AND the `ctest -R` regex. The CI uses an explicit allowlist
+-- it does not discover tests automatically.
 
 ### 1. Extend DLL export verification in the bridge verification step in `windows-tests`
 
 Replace the Phase 3 verification step (P3-I05: "exports include new functions") with the
 Phase 8 step (P8-I01: "exactly 5 exports, 18 absent"). The new step both asserts presence
-of the 5 keepers and asserts absence of the 18 removed functions. See Step 10 for the
-complete `cmd` script.
+of the 5 keepers and asserts absence of the 18 removed functions. The `dumpbin` check
+verifies exactly 5 bridge functions by name. See Step 10 for the complete `cmd` script.
 
 ### 2. Add zero-warnings build step to the `windows-tests` job
 
-Add a dedicated MSBuild invocation with `/warnaserror` for P8-I02. Place it after the
+Add a dedicated MSBuild invocation with `/warnaserror` for P8-I02. Place it **after** the
 normal build succeeds, so the normal build output (artifacts, test DLLs) is available for
-subsequent test steps regardless of warning status.
+subsequent test steps regardless of warning status. This ensures that if `/warnaserror`
+fails, the regular test suite still runs and provides diagnostic information.
+
+```yaml
+- name: Build with warnings-as-errors
+  run: |
+    msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /warnaserror
+```
 
 ### 3. Add CleanupTests.cs to the NUnit test run
 
-The new test class `CleanupTests.cs` (containing P8-U01, P8-U02, P8-U03) is automatically
-picked up by the NUnit console runner if it is included in `Flash.Tests.csproj`.
+The new test class `CleanupTests.cs` (containing P8-U01, P8-U02, P8-U03) must be included
+in `Flash.Tests.csproj` via an explicit `<Compile Include="CleanupTests.cs" />` entry in
+the `<ItemGroup>`. The project does NOT use wildcard globs -- it has explicit includes
+for every test file (see current csproj: `SmokeTests.cs`, `JsonConfigTests.cs`,
+`GoldenCaptureTests.cs`, `BridgeSmokeTests.cs`, `BridgeMS2Tests.cs`,
+`ScanCommandLayoutTests.cs`, `BridgePhase3Tests.cs`, `BridgePhase4Tests.cs`,
+`InterfaceShapeTests.cs`, `DataPipeTests.cs`, `AcquisitionLoop\ContinuityTests.cs`).
+
+The NUnit console runner picks up all test classes compiled into `Flash.Tests.dll`.
 Invoke the runner by its full NuGet packages path and set the working directory to
 `FlashIDA/bin/` so native DLLs (OpenMS.dll and dependencies) are found by the .NET
 runtime's DLL search path (Phase 0 lesson #12). Use `--agents=1` and
 `--timeout=300000` to avoid parallel cold-cache timeouts from `calculateAveragine`
 (Phase 1 lesson #8). Set `OPENMS_DATA_PATH` so the DLL can locate chemistry data
-(Phase 1 lessons #5–#6):
+(Phase 1 lessons #5-#6):
 
 ```yaml
 - name: Run NUnit tests
@@ -908,23 +1046,30 @@ runtime's DLL search path (Phase 0 lesson #12). Use `--agents=1` and
         --timeout=300000
 ```
 
-Verify that `Flash.Tests.csproj` includes the new file (or uses a wildcard glob that picks
-it up).
-
-### 4. Add Phase 8 C++ test to the `cpp-unit-tests` job
+### 4. Add Phase 8 C++ test to the `cpp-unit-tests` job (Phase 6 lesson 10)
 
 The test for P8-U04 (legacy config rejection) runs on `ubuntu-latest`. It must be registered
-in `OpenMS/src/tests/class_tests/openms/executables.cmake`. Add an entry for the test binary
-alongside the other FLASH test entries that were uncommented in Phase 2. Use `ctest -R ClassName`
-(e.g., `ctest -R FLASHIda_LegacyConfig` or the chosen test class name) in the `cpp-unit-tests`
-job to run it. Test names follow the OpenMS `ClassName_test.cpp` convention, not a `FLASH`
-prefix (Phase 2 lesson #4).
+in `OpenMS/src/tests/class_tests/openms/executables.cmake`. Add the test binary to BOTH
+CI locations in the **same commit** as the test file creation:
+
+**Build targets** (add to existing list -- after Phase 7, there are 6 targets):
+```yaml
+cmake --build OpenMS/build --target DeconvolvedSpectrum_OptimizationMetadata_test FLASHIdaQueueTracking_test FLASHIda_ProcessScan_test ScanCommandLayout_test FLASHIdaFAIMS_test FLASHIda_exploration_test FLASHIda_LegacyConfig_test
+```
+
+**CTest filter** (add to existing regex -- after Phase 7, there are 6 patterns):
+```yaml
+ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig" --output-on-failure
+```
+
+This brings the total C++ test binaries to 7 (5 pre-Phase 7 + 1 Phase 7 + 1 Phase 8).
 
 ### 5. Regression suite covers all 10 configs
 
-The regression runner script must include all 10 method configs listed in P8-R01. If the
+The regression runner script must include all 10 method configs listed in P8-R01 (including
+`method_exploration.xml` added by Phase 7 with golden file `phase7_exploration.tsv`). If the
 script was built incrementally (each phase adds its new configs), confirm the Phase 8 version
-runs all prior configs plus any new ones. The canonical full config array (names, spectrum
+runs all prior configs plus Phase 7's. The canonical full config array (names, spectrum
 file assignments, golden file names) is defined in
 [../test-file-specification.md §4.2](../test-file-specification.md). No new method configs
 are added in Phase 8 itself.
@@ -932,9 +1077,21 @@ are added in Phase 8 itself.
 ### Workflow trigger branches
 
 No changes to trigger branches are needed. Phase 8 commits go to `flashida-v9-migration`,
-which is already in the trigger list.
+which is already in the trigger list. The `phase-*` wildcard in the trigger list also covers
+the current `phase-4` branch.
 
-### Commit strategy — submodule batching (Phase 0 lesson #15, Phase 1 lesson #1)
+### Build #4 batching implications
+
+Phase 8 is batched with Phase 7 in Build #4. This means:
+- Phase 7's C++ changes (exploration engine) and Phase 8's C++ changes (dead code removal,
+  legacy config rejection) can be pushed in the same batch to `flashida-v9-bridge`.
+- The DLL rebuild (~40 min) covers both phases. Only one rebuild cycle is needed.
+- The `build_dlls.yml` workflow only builds, it never runs CTest (Phase 6 lesson 11).
+  C++ tests only execute in the parent repo CI.
+- Phase 8's regression suite (P8-R01) runs against Phase 7 golden files, so Phase 7
+  must be fully complete (golden files committed) before Phase 8 regression tests run.
+
+### Commit strategy -- submodule batching (Phase 0 lesson #15, Phase 1 lesson #1)
 
 Phase 8 touches both C++ (Steps 2-5) and C# (Steps 6-8) code. Batch all C++ changes
 into a single OpenMS submodule commit before updating the submodule pointer, then batch
@@ -943,7 +1100,7 @@ all C# changes together. This minimizes submodule pointer update churn.
 After pushing to any submodule branch (`flashida-v9-bridge` for C++,
 `flashida-v9-migration` for C#), always update the parent repo's submodule pointer
 (`git add FlashIDA OpenMS` and push) before expecting CI to pick up the changes. The
-CI workflow checks out submodules at the pointer commit, not at the branch HEAD — new
+CI workflow checks out submodules at the pointer commit, not at the branch HEAD -- new
 files are silently invisible to CI until the pointer is updated (Phase 1 lesson #1).
 
 ---
@@ -961,8 +1118,12 @@ by the test suite; this section maps each check to its test.
 | MethodDocGenerator produces output | P8-U03 | Automated by P8-U03 NUnit test that asserts the generator returns a non-empty string; see `windows-tests` job NUnit results |
 | No legacy P/Invoke declarations | P8-U01 | `windows-tests` job NUnit results for `CleanupTests.P8_U01` |
 | ToFLASHDeconvInput absent | P8-U02 | `windows-tests` job NUnit results for `CleanupTests.P8_U02` |
-| Legacy config rejected by C++ | P8-U04 | `cpp-unit-tests` job on `ubuntu-latest`; `ctest -R ClassName` output (Phase 2 lesson #4) |
-| Full regression passes | P8-R01 | Automated by P8-R01 in the `windows-tests` CI job. All 10 regression configs pass in CI. |
+| Legacy config rejected by C++ | P8-U04 | `cpp-unit-tests` job on `ubuntu-latest`; `ctest -R FLASHIda_LegacyConfig` output (Phase 2 lesson #4) |
+| Full regression passes (incl. exploration) | P8-R01 | All 10 regression configs pass in CI, including Phase 7's `method_exploration.xml` with golden file `phase7_exploration.tsv` |
+| Phase 7 exploration engine unaffected | P8-R01 | `method_exploration.xml` regression produces `EXPL-WINNER` log entries and matches `phase7_exploration.tsv` |
+| FAIMS continuity tests still pass | CT09/CT10/CT27/CT28 | Continuity tests in NUnit suite verify FAIMS CV cycling (unified pipeline route) |
+| ScanCommand struct unchanged | P3-U01/P3-U02 | `static_assert(sizeof(ScanCommand) == 1248)` in C++; `Marshal.SizeOf` = 1248 in C# |
+| No dead code references | P8-U02 | Source-tree scan for `ToFLASHDeconvInput` returns zero hits |
 
 ---
 
@@ -970,10 +1131,13 @@ by the test suite; this section maps each check to its test.
 
 Phase 8 is complete when all of the following are true:
 
+### Functional completeness
+
 - [ ] Step 1 pre-condition check passes: zero live callers of any of the 18 removed functions
       and zero callers of `ToFLASHDeconvInput` outside of `Parameter.cs` itself.
 
-- [ ] `FLASHIdaBridgeFunctions.h` contains exactly 5 `extern "C" OPENMS_DLLAPI` declarations.
+- [ ] `FLASHIdaBridgeFunctions.h` contains exactly 5 `extern "C" OPENMS_DLLAPI` declarations
+      (including `ProcessScan` with `double faims_cv` parameter from Phase 6).
 
 - [ ] `FLASHIdaBridgeFunctions.cpp` contains exactly 5 function definitions; no removed
       function names appear anywhere in the file.
@@ -982,10 +1146,10 @@ Phase 8 is complete when all of the following are true:
       branch in the constructor. The constructor rejects non-JSON input.
 
 - [ ] `FLASHIda.h` contains no declaration for `parseLegacy_()` or any other private method
-      deleted in Step 4.
+      deleted in Step 4. Phase 7 exploration methods and Phase 6 FAIMS methods are preserved.
 
 - [ ] `FLASHIdaWrapper.cs` contains exactly 5 `[DllImport(dllName)]` lines (verified by
-      P8-U01).
+      P8-U01). `ProcessScan` includes `double faimsCv` parameter.
 
 - [ ] `Parameter.cs` contains no `ToFLASHDeconvInput()` method and no helpers that existed
       solely for it (verified by P8-U02).
@@ -993,29 +1157,62 @@ Phase 8 is complete when all of the following are true:
 - [ ] `MethodDocGenerator.cs` exists, compiles, and produces non-empty output from
       `[Description]` attributes on `Parameter` (verified by P8-U03).
 
-- [ ] C++ build succeeds with zero errors and zero warnings.
+### Build quality
+
+- [ ] C++ build succeeds with zero errors and zero warnings (MSVC `/WX`).
 
 - [ ] `msbuild Flash.sln /warnaserror` succeeds with zero warnings (verified by P8-I02).
 
 - [ ] `dumpbin /exports OpenMS.dll` shows exactly 5 bridge symbols; all 18 removed symbols
       are absent (verified by P8-I01).
 
+### Test suite
+
 - [ ] P8-U04 passes: C++ unit test confirms non-JSON input is rejected.
 
-- [ ] P8-R01 passes: all 10 method configuration variants produce output matching Phase 7
-      golden files. All runs emit `[TRACK-CREATE]` entries (CI hard-fail gate).
+- [ ] P8-R01 passes: all 10 method configuration variants (including Phase 7's
+      `method_exploration.xml`) produce output matching Phase 7 golden files. All runs
+      emit `[TRACK-CREATE]` entries (CI hard-fail gate).
 
 - [ ] All prior tests P0 through P7 continue to pass (~102 cumulative). No regressions
       introduced. In particular, struct size tests (P3-U01/P3-U02, updated in Phases 4 and 6)
-      still pass with the final `ScanCommand` and `IsolationStage` sizes (including
-      `enqueue_timestamp_ms` + 11 scoring fields from Phase 4 [1240 bytes] and `faims_cv`
-      from Phase 6 [~1248 bytes]).
+      still pass with the final `ScanCommand` (1248 bytes) and `IsolationStage` (80 bytes)
+      sizes, including `FaimsCv` offset assertion at 1240 in `ScanCommandLayoutTests.cs`.
 
-- [ ] The `flashida-ci.yml` CI workflow changes (DLL export verification extension, zero-
-      warnings build step, Phase 8 C++ test registration) are committed and passing in CI.
+- [ ] All P8-U* tests follow test quality standards: hard assertions only, no soft guards,
+      no tautological tests, no queue passthrough (Phase 6 compliance standards).
+
+### CI registration (Phase 6 lesson 10 -- must not be deferred)
+
+- [ ] `FLASHIda_LegacyConfig_test` (or chosen name) is listed in `executables.cmake`.
+- [ ] `FLASHIda_LegacyConfig_test` is in the `cmake --build --target` list in `flashida-ci.yml`.
+- [ ] `FLASHIda_LegacyConfig_test` is in the `ctest -R` regex in `flashida-ci.yml`.
+- [ ] All three CI registration items are in the **same commit** as the test file creation.
+- [ ] Total C++ test binaries in CI after Phase 8: 7 (5 pre-Phase 7 + 1 Phase 7 + 1 Phase 8).
+
+### CI workflow changes
+
+- [ ] The `flashida-ci.yml` CI workflow includes: DLL export verification (5 present, 18
+      absent), zero-warnings build step (`/warnaserror`), Phase 8 C++ test registration,
+      and all 10 regression configs in the runner.
+
+- [ ] `Flash.Tests.csproj` includes `<Compile Include="CleanupTests.cs" />` in the
+      `<ItemGroup>` (explicit include, not wildcard).
+
+### Build #4 and release
 
 - [ ] Phase 8 changes are merged to `flashida-v9-migration` and Build #4 artifact (Phase 7 +
-      Phase 8) is tagged and recorded.
+      Phase 8) is tagged and recorded. Build #4 is the final C++ build of the v9 migration.
+
+### Regression verification
+
+- [ ] ScanCommand struct unchanged: 1248 bytes, `static_assert` passes, `faims_cv` at
+      offset 1240.
+- [ ] Phase 7 exploration engine unaffected: `method_exploration.xml` regression passes,
+      `EXPL-WINNER` log entries appear, `phase7_exploration.tsv` golden file comparison passes.
+- [ ] FAIMS continuity tests (CT09/CT10/CT27/CT28) continue to pass.
+- [ ] No references to `ScanScheduler`, `FAIMSScanProcessor`, or `ProcessorTests` remain
+      in production code (comment references in `Flash.cs` are acceptable).
 
 ---
 
@@ -1056,12 +1253,23 @@ plan. Each entry identifies where the lesson is reflected.
 | `IsolationStage` size = 80 bytes | Phase 3 | Phase 3-7 Deviations Impact section |
 | CI TRACK-CREATE check is hard-fail | Phase 3 F-5 | Phase 3-7 Deviations Impact section; P8-R01 CI gate note |
 | `enqueue_timestamp_ms` (uint64_t) + 11 scoring fields + Pad2 added to ScanCommand (1144 → 1240 bytes) | Phase 4 | Phase 3-7 Deviations Impact section; struct size is not 1144 (nor 1152) |
-| `faims_cv` (double) added to ScanCommand (1240 → ~1248 bytes) | Phase 6 | Phase 3-7 Deviations Impact section; struct size is not 1144 |
+| `faims_cv` (double) added to ScanCommand (1240 → 1248 bytes) | Phase 6 | Phase 3-7 Deviations Impact section; struct size is not 1144 |
 | Phase 7 exploration engine uses fractional CE values | Phase 7 | P8-R01 fractional CE note; `method_exploration.xml` regression config |
 | FAIMS tests must use continuity tests, not regression runner | Phase 5 #1 | P8-R01 FAIMS regression note; FAIMS configs produce identical non-FAIMS output through `Flash.exe` |
 | No tautological tests (P5-U01 rated WEAK) | Phase 5 compliance | P8-U01/U02/U03 test design: all test meaningful behavioral or structural properties |
-| No soft guards (CT09/CT10 HIGH severity) | Phase 5 compliance | Phase 8 test expectations: no `if (results.Count > 0)` guards in Phase 8 tests |
+| No soft guards (CT09/CT10 HIGH severity, resolved in P6) | Phase 5 compliance | Phase 8 test expectations: no `if (results.Count > 0)` guards in Phase 8 tests |
 | Golden files captured before transitions (TDD) | Phase 5 #3 | P8-R01 uses Phase 7 golden files captured before Phase 8 cleanup |
 | Single wrapper architecture confirmed | Phase 5 #2 | No direct impact on Phase 8 (FAIMS already absorbed in Phase 6); noted for consistency |
 | Adaptive skip needs 300 scans | Phase 5 #4 | No direct impact on Phase 8 (no new FAIMS tests added); noted for consistency |
 | Phase 5 cumulative test count: 77 (not 76) | Phase 5 compliance | Prerequisites §3; Phase 5 Addendum; cumulative counts updated throughout |
+| New C++ test binaries must be added to CI build targets AND CTest filter | Phase 6 #10 | CI section §4: `FLASHIda_LegacyConfig_test` added to both lists; same-commit rule enforced in DoD |
+| DLL build workflow only builds, never runs CTest | Phase 6 #11 | Prerequisites §2; Phase 6 Addendum; Build #4 batching note |
+| Off-by-one in loop assertions -- trace 3+ iterations by hand | Phase 6 #12 | Test cases preamble: test quality standards; no loop-based assertions in P8-U01/U02/U03 |
+| Separate input and output values in state machine tests | Phase 6 #13 | Test cases preamble: test quality standards (no state machine tests in Phase 8) |
+| No queue passthrough tests -- exercise production logic | Phase 6 #14 | Test cases preamble: test quality standards |
+| 6-file lockstep rule for P/Invoke struct changes | Phase 6 #15 | Phase 6 Addendum; Prerequisites §6 (Phase 8 does NOT modify ScanCommand) |
+| ScanScheduler.cs and FAIMSScanProcessor.cs deleted in Phase 6 | Phase 6 #8-9 | Phase 6 Addendum (deleted file references); Files to Create/Modify (NOT modified list); Step 4 (do NOT remove Phase 6 FAIMS methods) |
+| CT09/CT10 hardened in Phase 6, CT22/CT18 remain in backlog | Phase 6 compliance | Phase 5 Addendum (CT09/CT10 section); DoD regression verification |
+| P6-U07/U08 dead code tests removed from scope | Phase 6 deviation | Phase 6 Addendum; P8-U02 serves as automated dead code verification |
+| ProcessScan bridge now accepts `double faims_cv` | Phase 6 #5 | Prerequisites §8; 5 keeper exports table; Step 6 C# declarations; Step 2 C++ header |
+| `Flash.Tests.csproj` uses explicit `<Compile>` includes, not wildcard globs | Phase 8 discovery | CI section §3; Files to Create/Modify; DoD CI workflow changes |

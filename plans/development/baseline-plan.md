@@ -1003,3 +1003,52 @@ FAIMSScanProcessor retains the full legacy deconvolution path: `GetIsolationWind
 ### Design invariant clarification
 
 Design invariant #9 ("Old bridge functions survive through Phase 4") is now partially fulfilled — `UseUnifiedBridge` flag removed in Phase 5. The old bridge functions themselves (GetIsolationWindows etc.) remain active for FAIMSScanProcessor's legacy path until Phase 6/8.
+
+---
+
+## Phase 6 Addendum (2026-04-07)
+
+*Corrections and clarifications discovered during Phase 6 implementation. The original spec text above is preserved as-is.*
+
+### FAIMS absorption complete
+
+The FAIMS CV cycling state machine is now fully implemented in C++ (`FLASHIda.cpp/.h`). Key elements:
+
+- **Per-CV state arrays:** `cv_skip_amount_[]` (adaptive skip spacing per CV) and `cv_skip_count_[]` (per-CV cycle counter), matching the C# `ScanScheduler` behavior exactly. The plan's single global counter model was incorrect and was corrected during implementation. (Lesson 1 in `Phase_6/lessons-learned.md`.)
+- **Dead code removed:** `ScanScheduler.cs` and `FAIMSScanProcessor.cs` deleted. All references removed from `Flash.csproj`. Phase 5 known deviations KD-1 and KD-2 are now resolved.
+
+### ProcessScan bridge accepts faims_cv parameter
+
+The `ProcessScan` bridge function signature was extended with `double faims_cv` to pass the current CV from the instrument scan header to the C++ state machine. This was not in the original plan but is required for the C++ engine to know which CV produced each scan. (Lesson 5, deviation #5.)
+
+### cv_precursor_threshold added to JSON config pipeline
+
+`IDA.MassThreshold` (the precursor count threshold for adaptive skip decisions, default 15) was not being serialized in `Parameter.ToJSON()`. Added `cv_precursor_threshold` to both the JSON serialization (C#) and the `JsonFaimsConfig` parser (C++). Without this, the C++ state machine would have used a hardcoded default with no user configurability. (Lesson 5.)
+
+### ScanCommandRecord.FromScanCommand populates FaimsCV
+
+`ScanCommandRecord.FromScanCommand()` was missing `record.FaimsCV = cmd.FaimsCv`. After Phase 6, this is the primary capture path (the `FromCustomScan` path is secondary). Without this fix, all FAIMS CV assertions in continuity tests would have seen 0.0. (Lesson 6.)
+
+### 6-file lockstep rule for P/Invoke struct changes
+
+The 5-file lockstep rule documented in CLAUDE.md should be a **6-file rule**. When adding a new field to the ScanCommand struct, update:
+
+1. `FLASHIda.h` — C++ struct definition + `static_assert`
+2. `FLASHIda.cpp` — populate new field in bridge functions
+3. `ScanCommandLayout_test.cpp` — C++ offsetof printer
+4. `FLASHIdaWrapper.cs` — C# struct definition
+5. `ScanCommandLayoutTests.cs` — C# `Marshal.SizeOf` assertion
+6. `ScanCommandLayoutTests.cs` — **offset assertion for the new field** (e.g. `Marshal.OffsetOf<ScanCommand>("FaimsCv")` at 1240)
+
+The 6th item is easy to forget when only updating the size assertion. (Lesson 15.)
+
+### Phase 5 known deviations resolved
+
+| ID | Phase 5 status | Phase 6 resolution |
+|----|---------------|-------------------|
+| KD-1 | ScanScheduler retained | **RESOLVED** — `ScanScheduler.cs` deleted; CV cycling in C++ |
+| KD-2 | FAIMSScanProcessor retained with legacy pipeline | **RESOLVED** — `FAIMSScanProcessor.cs` deleted; all paths route through UnifiedScanProcessor |
+
+### Design invariant #9 update
+
+Old bridge functions (`GetIsolationWindows`, `GetFAIMSIsolationWindows`) remain in the C++ codebase for potential use in legacy testing but are no longer called from any production C# path. All production FAIMS routing goes through `ProcessScan` + `GetNextScanCommand`. Final cleanup of old bridge functions is scheduled for Phase 8.

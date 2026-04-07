@@ -542,3 +542,55 @@ The Phase 4 addendum's "Deferred to Phase 6" section listed 3 items. Phase 5 res
 ### Compliance report
 
 Phase 5 compliance report: 8/8 implementation steps PASS, 2 known deviations documented, P5-U03 missing (spec gap). Full report at `Phase_5/compliance-report.md`.
+
+---
+
+## Phase 6 Addendum (2026-04-07)
+
+*Corrections and clarifications discovered during Phase 6 implementation. The original spec text above is preserved as-is.*
+
+### Phase 6 status
+
+**COMPLETE** — FAIMS CV cycling state machine ported to C++, `ScanScheduler.cs` and `FAIMSScanProcessor.cs` deleted, all production paths route through `UnifiedScanProcessor`. See `Phase_6/compliance-report.md`.
+
+### Build #3 triggered and completed
+
+Phase 6 has C++ changes (FAIMS state machine in `FLASHIda.cpp/.h`, new test `FLASHIdaFAIMS_test.cpp`). Build #3 was triggered on `flashida-v9-bridge` and DLLs updated in `FlashIDA/dll/`.
+
+### Plan deviations
+
+9 deviations from the original Phase 6 implementation plan were documented in `Phase_6/lessons-learned.md`:
+
+| # | Deviation | Impact |
+|---|-----------|--------|
+| 1 | Per-CV arrays instead of single global skip counter | Would have produced wrong skip behavior |
+| 2 | `getNextScanCommand` returns 0 on empty (unchanged), not MS1 fallback | Would have caused infinite loop |
+| 3 | CV stamping at build time, not dequeue time | Would have broken MS2 parent CV relationship |
+| 4 | Two-function split preserved (updateCVSkip_ + advanceToNextCV_) | Cleaner than merged single function |
+| 5 | `faims_cv` parameter added to ProcessScan bridge | Required for C++ to know current CV |
+| 6 | `cv_precursor_threshold` added to JSON config pipeline | Was missing from serialization |
+| 7 | `ScanCommandRecord.FromScanCommand` populates FaimsCV | Would have lost CV data in test captures |
+| 8 | `ScanScheduler.cs` actual path is `Flash/` not `Flash/IDA/` | Confusion during audit |
+| 9 | P6-U07/U08 dead code tests removed from scope | Manual grep verification instead |
+
+### Test count update
+
+| Category | Count | Details |
+|----------|-------|---------|
+| C++ FAIMS unit tests | 6 | P6-U01 through P6-U06 in `FLASHIdaFAIMS_test.cpp` |
+| C++ boundary test | 1 | M1 skip threshold boundary (compliance finding) |
+| Continuity tests | 0 new | Existing CT09/CT10/CT27/CT28 unchanged; CT09/CT10 soft guards hardened |
+| Deleted | 1 | P5-U01 (`ProcessorTests.cs`) — always-pass test |
+
+### CI filter update
+
+`FLASHIdaFAIMS_test` was added to the `cmake --build --target` list and `ctest -R` filter in `flashida-ci.yml`. Without this, the 6 new C++ tests would never have run in CI. (Lessons 10, 11.)
+
+### Implementation status table update
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 5 | COMPLETE | C# simplification. 5 new tests (cumulative: ~77). 2 known deviations resolved in Phase 6. |
+| Phase 6 | COMPLETE | FAIMS absorption. 7 new C++ tests, 1 deleted C# test. ScanScheduler + FAIMSScanProcessor deleted. See Phase 6 compliance report. |
+
+Phases 7-8 remain "Not started."
