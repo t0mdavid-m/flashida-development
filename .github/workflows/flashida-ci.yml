@@ -55,12 +55,12 @@ jobs:
             -DWITH_GUI=OFF \
             -DPYOPENMS=OFF \
             -G Ninja
-          cmake --build OpenMS/build --target DeconvolvedSpectrum_OptimizationMetadata_test FLASHIdaQueueTracking_test FLASHIda_ProcessScan_test ScanCommandLayout_test FLASHIdaFAIMS_test
+          cmake --build OpenMS/build --target DeconvolvedSpectrum_OptimizationMetadata_test FLASHIdaQueueTracking_test FLASHIda_ProcessScan_test ScanCommandLayout_test FLASHIdaFAIMS_test FLASHIda_exploration_test
 
       - name: Run FLASH C++ unit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
-        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS" --output-on-failure
+        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration" --output-on-failure
 
   # ----------------------------------------------------------------
   # C# unit tests + regression + bridge verification — windows-latest.
