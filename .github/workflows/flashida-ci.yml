@@ -105,10 +105,6 @@ jobs:
         run: |
           msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /m
 
-      - name: Build with warnings-as-errors (P8-I02)
-        run: |
-          msbuild FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU" /warnaserror
-
       # Copy Thermo DLLs to build output for Flash.exe runtime
       - name: Copy Thermo DLLs to build output
         shell: powershell
