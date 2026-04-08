@@ -36,8 +36,7 @@ Additionally, MS1 precursor selection always sorts by QScore (or IDScore when en
 if (use_idscore_)
   → 4 existing IDScore branches (unchanged — IDScore replaces QScore, not intensity)
 else if (selection == Intensity)
-  → if consider_all_Charge_states_: sortByIntensityAllCharges()
-  → else: sortByIntensity()
+  → sortByIntensity()  (sorts by most intense charge per peak group)
 else (default: QScore)
   → if consider_all_Charge_states_: sortByQScoreAllCharges()
   → else: sortByQscore()
@@ -73,11 +72,16 @@ for (int j : mass_count_arr)
 
 Remove `IntList mass_count_;` member (line 743).
 
+#### `PeakGroup.h/.cpp`
+
+Add `float getMaxChargeIntensity() const` — returns the highest `per_charge_int_[c]` across all charge states (the intensity of the most intense charge). This is the value used for intensity-based sorting.
+
 #### `DeconvolvedSpectrum.h/.cpp`
 
-Add two new sort methods (analogous to existing `sortByQscore()`/`sortByQScoreAllCharges()`):
-- `sortByIntensity()` — sort by `getIntensity()` descending
-- `sortByIntensityAllCharges()` — sort by `getIntensity()` descending (same implementation; intensity is not charge-dependent, but the method exists for API symmetry with the QScore variants)
+Add one new sort method:
+- `sortByIntensity()` — sort by `getMaxChargeIntensity()` descending
+
+No `AllCharges` variant needed — unlike QScore (which has representative-charge vs best-across-charges variants), intensity sorting always uses the single most intense charge.
 
 #### `filterPeakGroupsUsingMassExclusion_` needs `selection` access
 
@@ -173,8 +177,10 @@ All embedded JSON configs in `FLASHIda_ProcessScan_test.cpp` (and other test fil
 |------|--------|
 | `OpenMS/.../FLASHIda.cpp` | Read cap from `level_configs_`, restructure sort branches, add none check, remove `mass_count_` parsing |
 | `OpenMS/.../FLASHIda.h` | Remove `mass_count_` member |
-| `OpenMS/.../DeconvolvedSpectrum.h` | Add `sortByIntensity()`, `sortByIntensityAllCharges()` declarations |
-| `OpenMS/.../DeconvolvedSpectrum.cpp` | Add `sortByIntensity()`, `sortByIntensityAllCharges()` implementations |
+| `OpenMS/.../PeakGroup.h` | Add `getMaxChargeIntensity()` declaration |
+| `OpenMS/.../PeakGroup.cpp` | Add `getMaxChargeIntensity()` implementation |
+| `OpenMS/.../DeconvolvedSpectrum.h` | Add `sortByIntensity()` declaration |
+| `OpenMS/.../DeconvolvedSpectrum.cpp` | Add `sortByIntensity()` implementation (sorts by `getMaxChargeIntensity()`) |
 | `OpenMS/.../FLASHIda_ProcessScan_test.cpp` | Update JSON configs, add new tests |
 | `FlashIDA/src/Flash/MethodConfig.cs` | Remove `MaxMs2CountPerMs1` from `MSSettingsConfig`, remove `max_mass_count` from `JsonPrecursorSelectionConfig` |
 | `FlashIDA/src/Flash/MethodParameters.cs` | Remove from `InitializeIDA()` and `ToLogString()` |
