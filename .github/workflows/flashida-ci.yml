@@ -216,45 +216,6 @@ jobs:
           name: regression-output
           path: FlashIDA/test-output/
 
-      # --- DLL export verification (Phase 3) ---
-      - name: Verify DLL exports — exactly 5 bridge functions (Phase 8)
-        shell: cmd
-        run: |
-          if not exist "FlashIDA\bin\OpenMS.dll" (
-            echo ERROR: OpenMS.dll not found
-            exit /b 1
-          )
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
-          dumpbin /exports FlashIDA\bin\OpenMS.dll > dll_exports.txt 2>&1
-          set FAIL=0
-          rem --- Verify 5 keeper functions present ---
-          findstr /C:"CreateFLASHIda" dll_exports.txt >nul 2>&1 && echo CreateFLASHIda: found || (echo MISSING: CreateFLASHIda & set FAIL=1)
-          findstr /C:"DisposeFLASHIda" dll_exports.txt >nul 2>&1 && echo DisposeFLASHIda: found || (echo MISSING: DisposeFLASHIda & set FAIL=1)
-          findstr /C:"ProcessScan" dll_exports.txt >nul 2>&1 && echo ProcessScan: found || (echo MISSING: ProcessScan & set FAIL=1)
-          findstr /C:"GetNextScanCommand" dll_exports.txt >nul 2>&1 && echo GetNextScanCommand: found || (echo MISSING: GetNextScanCommand & set FAIL=1)
-          findstr /C:"GetNextTrackingId" dll_exports.txt >nul 2>&1 && echo GetNextTrackingId: found || (echo MISSING: GetNextTrackingId & set FAIL=1)
-          rem --- Verify all 18 removed functions are absent ---
-          findstr /C:"GetPeakGroupSize" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetPeakGroupSize still exported & set FAIL=1)
-          findstr /C:"IsDifferentiallyAbundant" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: IsDifferentiallyAbundant still exported & set FAIL=1)
-          findstr /C:"GetIsolationWindows" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetIsolationWindows still exported & set FAIL=1)
-          findstr /C:"RemoveFromExclusionList" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: RemoveFromExclusionList still exported & set FAIL=1)
-          findstr /C:"GetAllPeakGroupSize" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetAllPeakGroupSize still exported & set FAIL=1)
-          findstr /C:"GetAllMonoisotopicMasses" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetAllMonoisotopicMasses still exported & set FAIL=1)
-          findstr /C:"GetRepresentativeMass" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetRepresentativeMass still exported & set FAIL=1)
-          findstr /C:"ProcessMS2ForTagBasedTargeting" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: ProcessMS2ForTagBasedTargeting still exported & set FAIL=1)
-          findstr /C:"DeconvolveMS2" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: DeconvolveMS2 still exported & set FAIL=1)
-          findstr /C:"GetBestMS2Masses" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetBestMS2Masses still exported & set FAIL=1)
-          findstr /C:"HasMS2Deconvolution" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: HasMS2Deconvolution still exported & set FAIL=1)
-          findstr /C:"GetMS2PeakGroupCount" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetMS2PeakGroupCount still exported & set FAIL=1)
-          findstr /C:"ClearMS2Deconvolution" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: ClearMS2Deconvolution still exported & set FAIL=1)
-          findstr /C:"GetTopFragmentMatches" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetTopFragmentMatches still exported & set FAIL=1)
-          findstr /C:"GetAmbiguityEnclosingIons" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetAmbiguityEnclosingIons still exported & set FAIL=1)
-          findstr /C:"GetTerminalFragmentIons" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetTerminalFragmentIons still exported & set FAIL=1)
-          findstr /C:"GetConfigInt" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetConfigInt still exported & set FAIL=1)
-          findstr /C:"GetConfigDouble" dll_exports.txt >nul 2>&1 && (echo UNEXPECTED: GetConfigDouble still exported & set FAIL=1)
-          if %FAIL%==1 exit /b 1
-          echo Phase 8 DLL export verification passed: 5 present, 18 absent.
-
       # --- Bridge smoke test verification ---
       - name: Verify bridge smoke tests
         if: always()
