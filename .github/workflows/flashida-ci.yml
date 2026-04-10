@@ -130,7 +130,7 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path FlashIDA\test-output | Out-Null
-          & FlashIDA\bin\Flash.exe FlashIDA\test-data\spectra\ms1_smoke_test.txt FlashIDA\test-output\baseline_phase0.tsv FlashIDA\test-data\configs\method_default.xml
+          & FlashIDA\bin\Flash.exe FlashIDA\test-data\spectra\ms1_smoke_test.txt FlashIDA\test-output\baseline_phase0.tsv FlashIDA\test-data\configs\method_default.json
 
       - name: Upload golden capture
         uses: actions/upload-artifact@v4
@@ -182,12 +182,12 @@ jobs:
         shell: powershell
         run: |
           $configsDir = "FlashIDA\test-data\configs"
-          if (-not (Test-Path "$configsDir\method_default.xml")) {
-              Write-Host "ERROR: method_default.xml not found"
+          if (-not (Test-Path "$configsDir\method_default.json")) {
+              Write-Host "ERROR: method_default.json not found"
               exit 1
           }
-          if (-not (Test-Path "$configsDir\method_json_roundtrip.xml")) {
-              Write-Host "ERROR: method_json_roundtrip.xml not found (required for Phase 1 tests)"
+          if (-not (Test-Path "$configsDir\method_json_roundtrip.json")) {
+              Write-Host "ERROR: method_json_roundtrip.json not found (required for Phase 1 tests)"
               exit 1
           }
           Write-Host "Test data verification passed."
