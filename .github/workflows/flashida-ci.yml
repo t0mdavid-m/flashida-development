@@ -8,67 +8,11 @@ on:
 
 jobs:
   # ----------------------------------------------------------------
-  # C++ unit tests — ubuntu-latest, no Thermo or .NET dependency.
-  # Skipped in Phase 0 (no C++ tests exist yet).
-  # Activated in Phase 2 when OptimizationMetadata tests are added.
+  # C++ unit tests with ThreadSanitizer — ubuntu-latest, GCC.
+  # Catches data races in addition to functional correctness.
   # ----------------------------------------------------------------
   cpp-unit-tests:
     runs-on: ubuntu-latest
-    # Activated in Phase 2 when OptimizationMetadata tests are added.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install OpenMS build dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential ccache ninja-build \
-            qt6-base-dev \
-            libeigen3-dev \
-            libboost-random-dev libboost-regex-dev libboost-iostreams-dev \
-            libboost-date-time-dev libboost-math-dev \
-            libxerces-c-dev zlib1g-dev libsvm-dev libbz2-dev \
-            liblzma-dev libzstd-dev \
-            coinor-libcoinmp-dev
-
-      - name: Get OpenMS submodule commit hash
-        id: openms-hash
-        shell: bash
-        run: echo "hash=$(git -C OpenMS rev-parse HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Restore ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-ubuntu-${{ steps.openms-hash.outputs.hash }}-${{ hashFiles('OpenMS/CMakeLists.txt') }}
-          restore-keys: |
-            ccache-ubuntu-${{ steps.openms-hash.outputs.hash }}-
-            ccache-ubuntu-
-
-      - name: Build C++ test binaries only
-        env:
-          CCACHE_DIR: ~/.ccache
-        run: |
-          cmake -S OpenMS -B OpenMS/build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DWITH_GUI=OFF \
-            -DPYOPENMS=OFF \
-            -G Ninja
-          cmake --build OpenMS/build --target DeconvolvedSpectrum_OptimizationMetadata_test FLASHIdaQueueTracking_test FLASHIda_ProcessScan_test ScanCommandLayout_test FLASHIdaFAIMS_test FLASHIda_exploration_test FLASHIda_LegacyConfig_test FLASHIda_Logging_test ScanCommandQueue_Concurrent_test
-
-      - name: Run FLASH C++ unit tests
-        env:
-          OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
-        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent" --output-on-failure
-
-  # ----------------------------------------------------------------
-  # ThreadSanitizer — catches data races in C++ code.
-  # Separate job: TSan builds are ~5x slower, GCC/Clang only.
-  # ----------------------------------------------------------------
-  tsan-tests:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,19 +30,16 @@ jobs:
             liblzma-dev libzstd-dev \
             coinor-libcoinmp-dev
 
-      - name: Configure with ThreadSanitizer
+      - name: Build C++ test binaries (TSan)
         run: |
-          cmake -S OpenMS -B OpenMS/build-tsan \
+          cmake -S OpenMS -B OpenMS/build \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
             -DWITH_GUI=OFF \
             -DPYOPENMS=OFF \
             -G Ninja
-
-      - name: Build FLASHIda test binaries (TSan)
-        run: |
-          cmake --build OpenMS/build-tsan --target \
+          cmake --build OpenMS/build --target \
             DeconvolvedSpectrum_OptimizationMetadata_test \
             FLASHIdaQueueTracking_test \
             FLASHIda_ProcessScan_test \
@@ -109,14 +50,11 @@ jobs:
             FLASHIda_Logging_test \
             ScanCommandQueue_Concurrent_test
 
-      - name: Run FLASHIda tests under TSan
+      - name: Run FLASH C++ unit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
           TSAN_OPTIONS: "halt_on_error=1"
-        run: |
-          ctest --test-dir OpenMS/build-tsan \
-            -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent" \
-            --output-on-failure
+        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent" --output-on-failure
 
   # ----------------------------------------------------------------
   # C# unit tests + regression + bridge verification — windows-latest.
