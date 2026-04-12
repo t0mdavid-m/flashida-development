@@ -54,7 +54,7 @@ jobs:
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
           TSAN_OPTIONS: "halt_on_error=1"
-        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent" --output-on-failure
+        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis" --output-on-failure
 
   # ----------------------------------------------------------------
   # C# unit tests + regression + bridge verification — windows-latest.
