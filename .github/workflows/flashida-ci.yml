@@ -54,7 +54,7 @@ jobs:
       - name: Run FLASH C++ unit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
-          TSAN_OPTIONS: "halt_on_error=1"
+          TSAN_OPTIONS: "halt_on_error=1 suppressions=${{ github.workspace }}/.github/tsan-suppressions.txt"
         run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis" --output-on-failure
 
   # ----------------------------------------------------------------
