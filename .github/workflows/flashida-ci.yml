@@ -48,7 +48,8 @@ jobs:
             FLASHIda_exploration_test \
             FLASHIda_LegacyConfig_test \
             FLASHIda_Logging_test \
-            ScanCommandQueue_Concurrent_test
+            ScanCommandQueue_Concurrent_test \
+            FragmentAnalysis_test
 
       - name: Run FLASH C++ unit tests
         env:
