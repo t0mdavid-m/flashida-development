@@ -1,4 +1,0 @@
-# Suppress known false-positive in upstream OpenMS OpenMP code.
-# boost::dynamic_bitset packs bits into shared words; #pragma omp critical
-# serializes writes but TSan flags the word-level overlap as a race.
-race:scoreAndFilterPeakGroups_

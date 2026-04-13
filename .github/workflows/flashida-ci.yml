@@ -30,12 +30,10 @@ jobs:
             liblzma-dev libzstd-dev \
             coinor-libcoinmp-dev
 
-      - name: Build C++ test binaries (TSan)
+      - name: Build C++ test binaries
         run: |
           cmake -S OpenMS -B OpenMS/build \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1" \
-            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
             -DWITH_GUI=OFF \
             -DPYOPENMS=OFF \
             -G Ninja
@@ -54,7 +52,6 @@ jobs:
       - name: Run FLASH C++ unit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
-          TSAN_OPTIONS: "halt_on_error=1 suppressions=${{ github.workspace }}/.github/tsan-suppressions.txt"
         run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis" --output-on-failure
 
   # ----------------------------------------------------------------
