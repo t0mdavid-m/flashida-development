@@ -114,6 +114,54 @@ For `MassCount`/`RemainingPrecursor`: `frag` stays default (`count=0`, empty str
 
 ---
 
+## Tests
+
+**File:** `FragmentAnalysis_test.cpp` (already runs in CI, passes)
+
+`FLASHIda_exploration_test` is excluded from CI due to unrelated issues. Instead, add two sections to `FragmentAnalysis_test.cpp` which already has cytochrome c data, deconvolution, and protein sequence infrastructure.
+
+**New includes needed:** `Exploration.h`, `ScanCommandQueue.h`, `PeakGroup.h`
+
+**New configs:** Two exploration-enabled variants of the existing `fragment_test_config`:
+- `fragment_count_exploration_config` — same as `fragment_test_config` but with `"exploration": { "metric": "fragment_count", "ce_min": 20.0, "ce_max": 30.0, "ce_step": 10.0 }` on the ms2 level
+- `mass_count_exploration_config` — same but with `"metric": "mass_count"`
+
+### Test 1: `fragment_count_populated_for_fragment_count_metric`
+
+1. Deconvolve real cytochrome c MS2 scan (reuses existing pattern from `getTopFragmentMatches_cytochrome_c`)
+2. Create `Exploration` with `fragment_count_exploration_config`
+3. Create a synthetic `PeakGroup`, call `exploration.initiate()` to create CE variants
+4. Call `exploration.feedResultForTest()` with the deconvolved spectrum
+5. Assert: `info.fragment_count > 0`, `info.matched_protein.empty() == false`, `info.proteoform_sequence == cytochrome_c_seq`
+
+### Test 2: `fragment_analysis_skipped_for_mass_count_metric`
+
+1. Same deconvolved spectrum (cytochrome c, would produce fragment matches)
+2. Create `Exploration` with `mass_count_exploration_config` (protein sequence present)
+3. Create synthetic `PeakGroup`, call `exploration.initiate()`
+4. Call `exploration.feedResultForTest()` with the same spectrum
+5. Assert: `info.fragment_count == 0`, `info.matched_protein.empty() == true`, `info.proteoform_sequence.empty() == true`
+
+This is the critical test: same data that produces matches with FragmentCount metric, but MassCount metric correctly skips fragment analysis.
+
+Both tests use `feedResultForTest()` which passes `nullptr` for raw mz/int arrays, bypassing the full deconvolution pipeline and avoiding the issues that caused `FLASHIda_exploration_test` to be excluded from CI.
+
+### Impact on existing `FLASHIda_exploration_test.cpp` (not in CI)
+
+`fragment_match_propagated_in_feed_result` (line 1427) uses `exploration_config` which has `metric: "mass_count"`. After this change it will fail because fragment analysis is no longer run for MassCount. This test is not in CI, so it won't block. If the exploration test is re-enabled later, it would need updating to use a `fragment_count` config.
+
+---
+
+## Files Modified
+
+| File | Nature of change |
+|---|---|
+| `Exploration.h` | Add `FragmentMatchResult* out_frag = nullptr` to `computeExplorationScore_` declaration |
+| `Exploration.cpp` | Score function: store result in out-param for FragmentCount case. `feedResultImpl_`: remove line 215, declare `frag{}`, pass `&frag` to score function |
+| `FragmentAnalysis_test.cpp` | Add includes, two exploration configs, two test sections |
+
+---
+
 ## Out of Scope
 
 - `initiateNextLevel()` fragment analysis (different purpose, different parameters)
