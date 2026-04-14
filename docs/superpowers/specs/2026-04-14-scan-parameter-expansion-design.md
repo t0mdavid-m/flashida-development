@@ -7,7 +7,13 @@
 
 Six scan parameters (Microscans, DataType, ScanRate, RFLens, SourceCID, SourceCIDScaling) exist in C# method configs but never reach the C++ engine. They are defined in `MethodParameters` structs, present in JSON config files, but `ToCppJson()` doesn't serialize them, `ScanConfig` doesn't store them, `ScanCommand` doesn't carry them, and `BuildFromCommand()` doesn't apply them.
 
-Additionally, FirstMass/LastMass are in the ScanCommand struct and flow correctly for MS1, but MS2 builders hardcode MS1 values and MS3 builders inherit from the MS2 context. The per-level config values are ignored.
+Additionally, FirstMass/LastMass have a three-layer disconnect:
+1. **JSON config files** contain per-level values (MS1: 500, MS2: 100, MS3: 200 for FirstMass in typical configs)
+2. **`ToCppJson()`** only serializes FirstMass/LastMass for MS1 — MS2/MS3 values are dropped
+3. **C++ Config parser** only reads `first_mass`/`last_mass` for MS1 — MS2/MS3 parsing loops skip them
+4. **Builders** hardcode MS1 values: `buildMS2()` uses `config_.level(1).scans[0].first_mass`, `buildMS3()` inherits from `ms2_ctx.first_mass`
+
+Net effect: MS2/MS3 FirstMass/LastMass values in JSON configs are silently ignored. All scans get MS1's values.
 
 Finally, every ScanCommand expansion requires lockstep updates across 5 files due to the fixed-size blittable struct with a tight static_assert.
 
@@ -54,7 +60,7 @@ std::string scan_rate;
 
 ### C++ Config.cpp — JSON parsing
 
-Parse new keys from each MSn level's JSON object:
+**MS1 parsing** — add new keys alongside existing `first_mass`/`last_mass` parsing:
 
 ```cpp
 scan.microscans = json.value("microscans", 0);
@@ -65,7 +71,20 @@ scan.source_cid = json.value("source_cid", 0.0);
 scan.source_cid_scaling = json.value("source_cid_scaling", 0.0);
 ```
 
-Applied to MS1, MS2, and MS3 parsing loops.
+**MS2/MS3 parsing loops** — add `first_mass`, `last_mass` (currently missing) plus all new keys:
+
+```cpp
+// These two are currently NOT parsed for MS2/MS3 — add them:
+scan.first_mass = m.value("first_mass", 0.0);
+scan.last_mass = m.value("last_mass", 0.0);
+// New keys:
+scan.microscans = m.value("microscans", 0);
+scan.data_type = m.value("data_type", "");
+scan.scan_rate = m.value("scan_rate", "");
+scan.rf_lens = m.value("rf_lens", 0.0);
+scan.source_cid = m.value("source_cid", 0.0);
+scan.source_cid_scaling = m.value("source_cid_scaling", 0.0);
+```
 
 ### C++ ScanCommandQueue.cpp — builders
 
@@ -102,7 +121,7 @@ public byte[] Reserved;
 
 Add to MS1 serialization: `microscans`, `data_type`, `scan_rate`, `rf_lens`, `source_cid`, `source_cid_scaling`.
 
-Add to MS2/MS3 serialization: `microscans`, `data_type`, `scan_rate`, `rf_lens`, `source_cid`, `source_cid_scaling`. (Values will be 0/empty for fields not in the MS2/MS3 config — C++ ignores zeros.)
+Add to MS2/MS3 serialization: `first_mass`, `last_mass` (currently missing — these exist in the C# structs but are not serialized for MS2/MS3), plus `microscans`, `data_type`, `scan_rate`, `rf_lens`, `source_cid`, `source_cid_scaling`. Values will be 0/empty for fields not in the MS2/MS3 config — C++ ignores zeros.
 
 ### C# ScanFactory.cs — BuildFromCommand()
 
@@ -136,12 +155,12 @@ if (!string.IsNullOrEmpty(cmd.ScanRate))
 
 | Test | Impact | Action |
 |---|---|---|
-| `ScanCommandLayout_test` | Struct size changes 1248→2048, new field offsets | Update expected size, add offset checks for new fields |
-| `FLASHIdaQueueTracking_test` | Uses ScanCommand but doesn't check new fields | Should pass as-is (new fields default to 0) |
-| `FLASHIdaFAIMS_test` | Uses ScanCommand but doesn't check new fields | Should pass as-is |
-| `DeconvolvedSpectrum_OptimizationMetadata_test` | Unrelated | No change |
-| `ScanCommandQueue_Concurrent_test` | Uses builders, may check field values | Verify; may need updates if it asserts first_mass/last_mass values |
-| `FragmentAnalysis_test` | Unrelated | No change |
+| `ScanCommandLayout_test` | **WILL BREAK**: prints sizeof and offsetof for all fields, CI validates output | Update expected size (2048), add offset prints for new fields |
+| `ScanCommandQueue_Concurrent_test` | No field value assertions, only queue mechanics | Pass as-is |
+| `FLASHIdaQueueTracking_test` | No field value assertions, only queue/tracking logic | Pass as-is |
+| `FLASHIdaFAIMS_test` | Only asserts faims_cv, msn_level, priority, analyzer | Pass as-is |
+| `DeconvolvedSpectrum_OptimizationMetadata_test` | Does not reference ScanCommand | No change |
+| `FragmentAnalysis_test` | Config parsing only, no struct validation | No change |
 
 ### Currently skipped (not our concern)
 
@@ -177,10 +196,9 @@ if (!string.IsNullOrEmpty(cmd.ScanRate))
 ### C++ (OpenMS)
 1. `src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h` — new fields, reserved block, static_assert
 2. `src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h` — ScanConfig fields
-3. `src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp` — JSON parsing
-4. `src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.cpp` — builders
-5. `src/tests/class_tests/openms/source/ScanCommandLayout_test.cpp` — layout assertions
-6. `src/tests/class_tests/openms/source/ScanCommandQueue_Concurrent_test.cpp` — verify builders (if needed)
+3. `src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp` — JSON parsing (MS1 new keys + MS2/MS3 first_mass/last_mass + new keys)
+4. `src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.cpp` — builders (new fields + first_mass/last_mass fix)
+5. `src/tests/class_tests/openms/source/ScanCommandLayout_test.cpp` — layout assertions (size 2048, new offsets)
 
 ### C# (FlashIDA)
 7. `src/Flash/IDA/FLASHIdaWrapper.cs` — ScanCommand struct
