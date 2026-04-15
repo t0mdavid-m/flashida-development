@@ -149,7 +149,7 @@ Deconvolution::Deconvolution(const Config& config, const DoubleList& tolerance_p
 | Location | Current | After |
 |----------|---------|-------|
 | `FLASHIda.cpp:55` (initializer list) | `deconv_(config_)` | `deconv_(config_, buildToleranceList_(config_))` |
-| `FLASHIda_exploration_test.cpp` (20 sites) | `Deconvolution deconv(cfg)` | `Deconvolution deconv(cfg, {10.0, 10.0})` (or appropriate values) |
+| `FLASHIda_exploration_test.cpp` (15 sites) | `Deconvolution deconv(cfg)` | `Deconvolution deconv(cfg, {10.0, 10.0})` (or appropriate values) |
 | `FragmentAnalysis_test.cpp` (5 sites) | `Deconvolution deconv(cfg)` | `Deconvolution deconv(cfg, {10.0, 10.0})` |
 
 `FLASHIda` gets a small private helper to build the list:
