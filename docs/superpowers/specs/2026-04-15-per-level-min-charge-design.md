@@ -44,7 +44,7 @@ Add `min_charge` to `JsonMsLevelConfig` (line 495):
 public int min_charge { get; set; }
 ```
 
-### Layer 2: C# BuildSelectionStrategy (`MethodParameters.cs:270-287`)
+### Layer 2: C# BuildSelectionStrategy (`MethodParameters.cs:259-325`)
 
 Wire `MinCharge` into each `JsonMsLevelConfig`:
 
@@ -84,7 +84,7 @@ if (config_.level(1).min_charge > 0 && charge < config_.level(1).min_charge)
   continue;
 ```
 
-### Layer 6: C++ MS2->MS3 filtering (`Exploration.cpp:437,459`)
+### Layer 6: C++ MS2->MS3 filtering (`Exploration.cpp:478-495,500-534`)
 
 In both command-building loops (exploration and direct), read the threshold from the current level (the one doing the picking), then skip fragments below it:
 
