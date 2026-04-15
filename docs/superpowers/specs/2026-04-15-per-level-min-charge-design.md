@@ -86,12 +86,18 @@ if (config_.level(2).min_charge > 0 && charge < config_.level(2).min_charge)
 
 ### Layer 6: C++ MS2->MS3 filtering (`Exploration.cpp:437,459`)
 
-In both command-building loops (exploration and direct), skip fragments below the threshold:
+In both command-building loops (exploration and direct), read the threshold once before the loop, then skip fragments below it:
 
 ```cpp
-int abs_charge = std::abs(charges[ti]);
-if (config_.level(next_level).min_charge > 0 && abs_charge < config_.level(next_level).min_charge)
-  continue;
+int charge_floor = config_.level(next_level).min_charge;
+
+for (int ti = 0; ti < num_targets; ++ti)
+{
+  int abs_charge = std::abs(charges[ti]);
+  if (charge_floor > 0 && abs_charge < charge_floor)
+    continue;
+  // ... existing command-building code ...
+}
 ```
 
 ## What doesn't change
