@@ -2,7 +2,7 @@
 
 ## Problem
 
-FLASHIda has a global deconvolution charge range (`min_charge`/`max_charge` in `DeconvolutionConfig`), but no per-MSn-level charge filtering for target selection. Users need to specify minimum charge thresholds per level — e.g., "only trigger MS2 on precursors with charge >= 5" or "only trigger MS3 on fragments with charge >= 2".
+FLASHIda has a global deconvolution charge range (`min_charge`/`max_charge` in `DeconvolutionConfig`), but no per-MSn-level charge filtering for target selection. Users need to specify minimum charge thresholds per level — e.g., "MS1 only picks precursors with charge >= 5" or "MS2 only picks fragment ions with charge >= 2".
 
 ## Solution
 
@@ -13,14 +13,14 @@ Add an optional `min_charge` field to each MSn level's `selection_strategy` conf
 ```json
 {
   "selection_strategy": {
-    "ms1": { "selection": "qscore", "max_targets": 4 },
-    "ms2": { "selection": "intensity", "max_targets": 4, "min_charge": 5 },
-    "ms3": { "selection": "intensity", "max_targets": 4, "min_charge": 2 }
+    "ms1": { "selection": "qscore", "max_targets": 4, "min_charge": 5 },
+    "ms2": { "selection": "intensity", "max_targets": 4, "min_charge": 2 },
+    "ms3": { "selection": "intensity", "max_targets": 4 }
   }
 }
 ```
 
-`min_charge` defaults to `0`, meaning no filter (uses global deconvolution `min_charge` only). Any positive value enables the filter at that level.
+`min_charge` on a level controls what **that level picks** as targets for the next level. `ms1.min_charge = 5` means MS1 only picks precursors with charge >= 5 (for MS2). `ms2.min_charge = 2` means MS2 only picks fragments with charge >= 2 (for MS3). Defaults to `0` (no filter).
 
 ## Changes
 
@@ -79,17 +79,17 @@ cfg.min_charge = level_obj.value("min_charge", 0);
 After the charge selection decision tree (line 428), before `mass = pg.getMonoMass()`:
 
 ```cpp
-// Per-level charge filter
-if (config_.level(2).min_charge > 0 && charge < config_.level(2).min_charge)
+// MS1 picks: skip precursors below ms1's min_charge
+if (config_.level(1).min_charge > 0 && charge < config_.level(1).min_charge)
   continue;
 ```
 
 ### Layer 6: C++ MS2->MS3 filtering (`Exploration.cpp:437,459`)
 
-In both command-building loops (exploration and direct), read the threshold once before the loop, then skip fragments below it:
+In both command-building loops (exploration and direct), read the threshold from the current level (the one doing the picking), then skip fragments below it:
 
 ```cpp
-int charge_floor = config_.level(next_level).min_charge;
+int charge_floor = config_.level(msn_level).min_charge;
 
 for (int ti = 0; ti < num_targets; ++ti)
 {
@@ -120,6 +120,6 @@ for (int ti = 0; ti < num_targets; ++ti)
 
 ## Testing
 
-- Set `min_charge` on MS2 level config, verify precursors with charge below threshold produce no MS2 commands
-- Set `min_charge` on MS3 level config, verify fragments with charge below threshold produce no MS3 commands
+- Set `min_charge` on MS1 level config, verify precursors with charge below threshold produce no MS2 commands
+- Set `min_charge` on MS2 level config, verify fragments with charge below threshold produce no MS3 commands
 - Verify `min_charge = 0` has no effect (backward compatible)
