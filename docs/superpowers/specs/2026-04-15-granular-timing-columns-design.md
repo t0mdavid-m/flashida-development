@@ -43,11 +43,27 @@ public ulong EnqueueTimestampMs;
 public ulong DequeueTimestampMs;
 ```
 
-### 2. Stamp dequeue time in `ScanCommandQueue::dequeue()`
+### 2. Move `pending_scan_map_` insert from `push()` to `dequeue()`
 
-**File:** `ScanCommandQueue.cpp:379-392`
+**Files:** `ScanCommandQueue.cpp:368-377` (push), `ScanCommandQueue.cpp:379-392` (dequeue)
 
-Stamp `cmd.dequeue_timestamp_ms = steady_clock::now()` before returning.
+A scan result can only arrive via `processScan()` **after** the command has been dequeued and sent to the instrument. Nothing reads `pending_scan_map_` between push and dequeue. `cleanupExpired()` runs before `dequeue()` in `getNextScanCommand()`, but commands still in the queue haven't been sent to the instrument yet — they shouldn't be timed out.
+
+**`push()`:** Remove the `pending_scan_map_` insert (line 374). Only stamp `enqueue_timestamp_ms` and add to the priority queue.
+
+```cpp
+void ScanCommandQueue::push(ScanCommand cmd)
+{
+  std::lock_guard<std::mutex> lock(queue_mutex_);
+  cmd.enqueue_timestamp_ms = static_cast<uint64_t>(
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count());
+  int p = std::clamp(cmd.priority, 0, 3);
+  queues_[p].push_back(cmd);
+}
+```
+
+**`dequeue()`:** Stamp `dequeue_timestamp_ms` and insert into `pending_scan_map_` before returning. The map entry now has both timestamps.
 
 ```cpp
 std::optional<ScanCommand> ScanCommandQueue::dequeue()
@@ -62,6 +78,7 @@ std::optional<ScanCommand> ScanCommandQueue::dequeue()
       cmd.dequeue_timestamp_ms = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::steady_clock::now().time_since_epoch()).count());
+      pending_scan_map_[cmd.scan_id] = cmd;
       return cmd;
     }
   }
@@ -121,25 +138,11 @@ All existing columns (`resolve_ts`, `duration_ms`, `received_ts`, `duration_rece
 - `duration_ms` = `queue_duration_ms` + `instrument_duration_ms` + `processing_duration_ms`
 - `duration_received_ms` = `queue_duration_ms` + `instrument_duration_ms`
 
-### 6. `pending_scan_map_` timing propagation
+### 6. Bypass commands: `pending_scan_map_` registration
 
-**File:** `ScanCommandQueue.cpp:368-377` (push), `ScanCommandQueue.cpp:379-392` (dequeue)
+Bypass commands (Step 1 AGC, Step 5a idle AGC) skip both `push()` and `dequeue()`, so they never enter `pending_scan_map_`. When the instrument returns their results, `peekPending()` returns `nullopt` and all timestamps are 0.
 
-`push()` stores the command in `pending_scan_map_[cmd.scan_id]` at line 374 **before** the command enters the priority queue. At push time, `dequeue_timestamp_ms` is 0. After `dequeue()` stamps it, the dequeued copy has the timestamp but `pending_scan_map_` still has `dequeue_timestamp_ms = 0`.
-
-`processScan()` reads timestamps via `peekPending(tracking_id)` (line 583), which returns from `pending_scan_map_`. So the map must have the dequeue timestamp.
-
-Fix: Update `pending_scan_map_` inside `dequeue()` after stamping:
-
-```cpp
-cmd.dequeue_timestamp_ms = static_cast<uint64_t>(...);
-pending_scan_map_[cmd.scan_id] = cmd;  // update with dequeue timestamp
-return cmd;
-```
-
-**Bypass commands (AGC):** Step 1 AGC (line 866) and Step 5a idle AGC (line 922) skip `push()` entirely, so they have no `pending_scan_map_` entry. When the instrument returns their results, `peekPending()` returns `nullopt` and all timestamps are 0.
-
-Fix: After stamping both `enqueue_timestamp_ms` and `dequeue_timestamp_ms` on bypass commands, insert them into `pending_scan_map_` via a new `ScanCommandQueue::registerPending(ScanCommand)` method that only writes to the map (no queue insertion):
+Fix: Add `ScanCommandQueue::registerPending(const ScanCommand&)` — writes to the map only (no queue insertion):
 
 ```cpp
 void ScanCommandQueue::registerPending(const ScanCommand& cmd)
@@ -149,7 +152,7 @@ void ScanCommandQueue::registerPending(const ScanCommand& cmd)
 }
 ```
 
-Call `queue_.registerPending(out)` after stamping in Step 1 and Step 5a.
+Call `queue_.registerPending(out)` after stamping both timestamps on bypass commands in Step 1 and Step 5a of `getNextScanCommand()`.
 
 ---
 
@@ -158,7 +161,7 @@ Call `queue_.registerPending(out)` after stamping in Step 1 and Step 5a.
 | File | Nature of change |
 |---|---|
 | `ScanCommand.h` | Add `dequeue_timestamp_ms` field, shrink `reserved_` 700→692 |
-| `ScanCommandQueue.cpp` | Stamp `dequeue_timestamp_ms` in `dequeue()`, update `pending_scan_map_`, add `registerPending()` |
+| `ScanCommandQueue.cpp` | Remove map insert from `push()`, stamp + insert in `dequeue()`, add `registerPending()` |
 | `ScanCommandQueue.h` | Declare `registerPending()` |
 | `FLASHIda.cpp` | Stamp bypass commands, read `dequeue_ts` in `processScan()`, add parameter + columns to `writeScanResultRow_()`, update header |
 | `FLASHIda.h` | Update `writeScanResultRow_()` declaration (add `dequeue_ts` param) |
