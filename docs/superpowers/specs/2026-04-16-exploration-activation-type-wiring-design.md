@@ -21,10 +21,10 @@ The activation type is also already tracked per exploration variant (`Exploratio
 
 | # | File | Function | Line | Calls | Current behavior |
 |---|------|----------|------|-------|------------------|
-| 1 | `Exploration.cpp` | `initiateNextLevel` | 479 | `getTopFragmentMatches` | No `fragmentation_method` passed (defaults to `"HCD"`) |
-| 2 | `Exploration.cpp` | `initiateNextLevel` | 485 | `getTerminalFragmentIons` | Same |
-| 3 | `Exploration.cpp` | `initiateNextLevel` | 491 | `getAmbiguityEnclosingIons` | Same |
-| 4 | `Exploration.cpp` | `computeFragmentMatch_` | 715 | `getTopFragmentMatches` | Hardcoded `"HCD"` |
+| 1 | `Exploration.cpp` | `initiateNextLevel` | 511 | `getTopFragmentMatches` | No `fragmentation_method` passed (defaults to `"HCD"`) |
+| 2 | `Exploration.cpp` | `initiateNextLevel` | 517 | `getTerminalFragmentIons` | Same |
+| 3 | `Exploration.cpp` | `initiateNextLevel` | 523 | `getAmbiguityEnclosingIons` | Same |
+| 4 | `Exploration.cpp` | `computeFragmentMatch_` | 786 | `getTopFragmentMatches` | Hardcoded `"HCD"` |
 | 5 | `PrecursorSelection.cpp` | `processMS2ForTagBasedTargeting` | 927-931 | `FLASHTaggerAlgorithm` | Does not set `ion_type` param (uses tagger default) |
 
 ### Out of scope
@@ -37,7 +37,7 @@ The activation type is also already tracked per exploration variant (`Exploratio
 
 ### FragmentAnalysis.h -- Make `getIonTypesForFragmentationMethod` public static
 
-Currently a file-local function in `FragmentAnalysis.cpp` (lines 80-93). Promote to a public static method on `FragmentAnalysis` so other classes (`PrecursorSelection`) can reuse the mapping:
+Currently a file-local function in `FragmentAnalysis.cpp` (lines 81-93). Promote to a public static method on `FragmentAnalysis` so other classes (`PrecursorSelection`) can reuse the mapping:
 
 ```cpp
 /// Map fragmentation method name to ion type strings for FLASHTagger/FLASHExtender
@@ -95,7 +95,7 @@ bool processMS2ForTagBasedTargeting(double precursor_mass, const std::string& ac
 }
 ```
 
-**`FLASHIda.cpp:778`** (caller in processScan): Extract activation from the resolved `ScanCommand ctx` and pass it:
+**`FLASHIda.cpp:849`** (caller in processScan): Extract activation from the resolved `ScanCommand ctx` and pass it:
 
 ```cpp
 // Before:
@@ -138,7 +138,7 @@ double computeExplorationScore_(ExplorationMetric metric, const DeconvolvedSpect
 
 ### Exploration.cpp -- Update 7 call sites
 
-**`computeFragmentMatch_` (line 715):** Replace `"HCD"` with `activation_type` parameter:
+**`computeFragmentMatch_` (line 786):** Replace `"HCD"` with `activation_type` parameter:
 
 ```cpp
 // Before:
@@ -148,7 +148,7 @@ spec_copy, "HCD",
 spec_copy, activation_type,
 ```
 
-**`computeExplorationScore_` (lines 628, 632, 637, 642):** Pass `activation_type` through to all 4 `computeFragmentMatch_` calls:
+**`computeExplorationScore_` (lines 699, 703, 708, 713):** Pass `activation_type` through to all 4 `computeFragmentMatch_` calls:
 
 ```cpp
 // Before:
@@ -170,7 +170,7 @@ v.score = computeExplorationScore_(group.exploration_metric, ms2_deconv, group,
     mzs, ints, length, &remaining_ratio, &frag, v.activation_type);
 ```
 
-**`initiateNextLevel` (lines 479, 485, 491):** Extract activation type from the scan command that produced this result, then pass to all three fragment matching calls:
+**`initiateNextLevel` (lines 511, 517, 523):** Extract activation type from the scan command that produced this result, then pass to all three fragment matching calls:
 
 ```cpp
 // Before the switch statement, extract activation type:
@@ -213,8 +213,6 @@ All existing exploration tests configure `"activation": "HCD"`. Since `getIonTyp
 
 ### New tests
 
-1. **`getIonTypesForFragmentationMethod` static method:** Verify the mapping returns correct ion types for each supported method (HCD, CID, ETD, EThcD, EtCID, UVPD) and the default fallback.
+1. **Activation type passthrough in exploration scoring:** Create an exploration group with an ETD variant. Verify that `computeExplorationScore_` passes the activation type through to fragment matching (can be verified indirectly by checking that fragment count differs between ETD and HCD on the same spectrum, or by inspecting ion_types in match results).
 
-2. **Activation type passthrough in exploration scoring:** Create an exploration group with an ETD variant. Verify that `computeExplorationScore_` passes the activation type through to fragment matching (can be verified indirectly by checking that fragment count differs between ETD and HCD on the same spectrum, or by inspecting ion_types in match results).
-
-3. **Activation type in `initiateNextLevel`:** Create a ScanCommand context with `activation_type = "ETD"`. Call `initiateNextLevel` and verify fragment matching output contains c/z ions rather than b/y ions.
+2. **Activation type in `initiateNextLevel`:** Create a ScanCommand context with `activation_type = "ETD"`. Call `initiateNextLevel` and verify fragment matching output contains c/z ions rather than b/y ions.
