@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+@docs/kb/index.md
+
 ## Repository Structure
 
 This workspace contains two tightly coupled projects for real-time intelligent data acquisition in top-down proteomics:
