@@ -37,11 +37,11 @@ Example: add `precursor_selection.new_knob: double = 0.5`.
 
 1. **C# POCO (`FlashIDA/src/Flash/MethodConfig.cs`).** Add a property on the section class
    (e.g., `PrecursorSelectionConfig`) with `[JsonKey("new_knob")]`. After adding it, grep for
-   every aggregate or brace initializer of that class: `grep -n "PrecursorSelectionConfig"
+   every aggregate or brace initializer of that class: `grep -rn "PrecursorSelectionConfig"
    FlashIDA/src/Flash/`. Update each init site to include the new field. Missed init sites
    compile silently and produce a field stuck at its type default rather than the method value.
 
-2. **C# JSON proxy class (`FlashIDA/src/Flash/MethodConfig.cs`, near line 569).**
+2. **C# JSON proxy class (`FlashIDA/src/Flash/MethodConfig.cs:412`).**
    Add the matching `new_knob` property (no attribute needed) to `JsonPrecursorSelectionConfig`.
 
 3. **C# re-serialization (`FlashIDA/src/Flash/MethodParameters.cs:100`, `ToCppJson`).** Inside
@@ -80,6 +80,10 @@ Same as Scenario 1 with these differences:
   `MethodConfigSerializer.Serialize` / `Deserialize` methods route it automatically, using
   the class-level `[JsonKey]` on `PrecursorSelectionConfig`.
 
+- **Step 2 (unchanged):** `JsonPrecursorSelectionConfig` still needs the matching property.
+  `[Developer]` routes the C#-facing JSON only; the C++-facing schema produced by `ToCppJson`
+  is flat regardless.
+
 - **Step 3 unchanged — most common foot-gun:** `ToCppJson` still writes the field into the
   flat, C++-facing JSON schema exactly as in Scenario 1. There is no `developer` top-level
   section on the C++ side. The `developer` partition is a C#-side routing convenience only.
@@ -98,7 +102,7 @@ Use this when adding a new MS level (e.g., MS4) or a new field on the shared `MS
 
 1. **C# POCO (`FlashIDA/src/Flash/MethodConfig.cs`).** Add the new level block or field to
    `SelectionStrategyConfig`. Add the corresponding block or field to the C++-facing proxy
-   classes `JsonSelectionStrategyConfig` / `JsonMsLevelConfig` (near `MethodConfig.cs:569`).
+   classes `JsonSelectionStrategyConfig` (MethodConfig.cs:541) / `JsonMsLevelConfig` (MethodConfig.cs:533).
 
 2. **C# re-serialization (`FlashIDA/src/Flash/MethodParameters.cs:266`,
    `BuildSelectionStrategy`).** For a new level, add a branch constructing the new level's
