@@ -7,6 +7,7 @@ subsystem guide — read the packet README first, drill down as needed.
 
 - [MS1 acquisition](ms1-acquisition/README.md) — precursor selection,
   targeting modes, exploration, FAIMS cycling.
+- [Config flow](config-flow/README.md) — method.json → C# → C++ bridge → engine config.
 
 ## Conventions
 
