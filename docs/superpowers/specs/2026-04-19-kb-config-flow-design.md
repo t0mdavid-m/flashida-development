@@ -1,6 +1,6 @@
 ---
 title: KB Packet — Config Flow (method.json → C# → C++ bridge)
-status: draft
+status: approved
 created: 2026-04-19
 ---
 
