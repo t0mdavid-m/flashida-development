@@ -1,6 +1,6 @@
 ---
 title: Agent-facing Knowledge Base for MS1 Acquisition (Pilot)
-status: approved
+status: implemented
 created: 2026-04-19
 ---
 
