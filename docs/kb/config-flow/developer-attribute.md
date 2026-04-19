@@ -6,6 +6,7 @@ code_anchors:
   - FlashIDA/src/Flash/IDA/JsonKeyAttribute.cs
   - FlashIDA/src/Flash/IDA/DeveloperAttribute.cs
   - FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs:23
+  - FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs:81
   - FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs:363
   - FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs:449
 see_also:
@@ -17,8 +18,8 @@ see_also:
 
 Two C# attributes live under `FlashIDA/src/Flash/IDA/` (not top-level `FlashIDA/src/Flash/`):
 
-- `JsonKeyAttribute` — `JsonKeyAttribute.cs`
-- `DeveloperAttribute` — `DeveloperAttribute.cs`
+- `JsonKeyAttribute` — `FlashIDA/src/Flash/IDA/JsonKeyAttribute.cs`
+- `DeveloperAttribute` — `FlashIDA/src/Flash/IDA/DeveloperAttribute.cs`
 
 Both are read by `MethodConfigSerializer` at serialize/deserialize time to route properties between user-facing and developer sections of `method.json`.
 
@@ -28,9 +29,9 @@ A class-level `[JsonKey("deconvolution")]` names the top-level JSON section the 
 
 ## How [Developer] Routing Works
 
-At serialize time (`MethodConfigSerializer.cs:363`), `SerializeObject()` partitions a class's properties into two dictionaries: `mainDict` (unmarked) and `devDict` (marked with `[Developer]`). Then `SerializeValue()` nests `devDict` under `root["developer"][<class-level JsonKey>]`.
+At serialize time, `Serialize()` (`MethodConfigSerializer.cs:81`) walks each section. For each, `SerializeObject()` (`MethodConfigSerializer.cs:363`) partitions the section's properties into two dictionaries: `mainDict` (unmarked) and `devDict` (marked with `[Developer]`). `Serialize()` then nests `devDict` under `root["developer"][<class-level JsonKey>]`.
 
-At deserialize time (`MethodConfigSerializer.cs:23`), `Deserialize()` extracts each property from either `raw[<section>]` or `raw["developer"][<section>]` depending on whether it has the `[Developer]` attribute.
+At deserialize time, `Deserialize()` (`MethodConfigSerializer.cs:23`) picks each section's main and developer dictionaries from `raw[<section>]` and `raw["developer"][<section>]`, then calls `PopulateObject()` (`MethodConfigSerializer.cs:136`) which pulls each property from whichever dict matches its `[Developer]` attribute.
 
 ## Why Bother
 
