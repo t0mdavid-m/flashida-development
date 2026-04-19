@@ -12,6 +12,7 @@ code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:277  # priority tie-break
 see_also:
   - precursor-selection.md
+  - exploration.md
 ---
 
 # Targeting Modes
@@ -26,11 +27,17 @@ logic.
 
 ## Mode 0 — None
 
-`mode = 0` disables targeted selection. `filterAndRank` still deconvolves the MS1 spectrum, but
-neither a target-inclusion list nor an exclusion map is loaded. The ranking loop therefore treats
-every deconvolved peak group as an equal candidate, subject only to the global `qscore_threshold`
-and `snr_threshold`. Use this for untargeted top-N acquisition where no prior knowledge guides
-precursor choice.
+`mode = 0` means **no target list is active**: neither an inclusion list nor an exclusion map is
+loaded or consulted. `filterAndRank` still runs in full — it deconvolves the MS1 spectrum, scores
+every peak group, and selects the top-N candidates ranked by whichever `SelectionMetric` is
+configured (typically `QScore`). What is absent is any target-list influence: no priority
+tie-break, no SNR waiver for explicit targets, and no tqscore-based suppression.
+
+> **Note — `mode = 0` is not the same as `SelectionMetric::None`.** These are two orthogonal
+> config dimensions. `SelectionMetric::None` (set on the level-1 `selection` field) is the
+> short-circuit that causes `processScan` to skip MS1 precursor selection entirely
+> (`FLASHIda.cpp:739`). `TargetingConfig::mode = 0` leaves selection running; it only disables
+> target-list machinery. Confusing the two produces hard-to-debug "no MS2 commands" symptoms.
 
 ## Mode 1 — Inclusion
 
@@ -74,9 +81,11 @@ that masses which exceed the exclusion threshold on the first pass can still be 
 second pass if no better candidates exist.
 
 **Exclusion skip rule** (:454-458): inside the ranking loop, on `iteration == 0`, a mass is
-skipped if `1 - tqscore_factor_for_exclusion > tqscore_threshold` — i.e. the running product of
-unexplained-fraction exceeds the threshold, meaning the mass has already been explained well
-enough across the RT window.
+skipped if `1 - tqscore_factor_for_exclusion > tqscore_threshold`. Here
+`tqscore_factor_for_exclusion` is the product of `(1 - qscore)` terms accumulated over the RT
+window — i.e., the running unexplained fraction. Therefore `1 - tqscore_factor_for_exclusion` is
+the explained fraction; the skip fires when the explained fraction exceeds `tqscore_threshold`,
+meaning the mass has already been sufficiently characterised.
 
 ## Mode 3 — Deep
 
