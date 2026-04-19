@@ -4,6 +4,7 @@ applies_to: FlashIDA/src/Flash/MethodConfig.cs, FlashIDA/src/Flash/MethodParamet
 last_verified: 2026-04-19
 code_anchors:
   - FlashIDA/src/Flash/MethodConfig.cs:344   # MethodConfig root
+  - FlashIDA/src/Flash/MethodConfig.cs:412   # JsonPrecursorSelectionConfig proxy
   - FlashIDA/src/Flash/MethodParameters.cs:100   # ToCppJson mapping point
   - FlashIDA/src/Flash/MethodParameters.cs:266   # BuildSelectionStrategy
   - FlashIDA/src/Flash/MethodParameters.cs:346   # ToLogString (sanity log dump)
