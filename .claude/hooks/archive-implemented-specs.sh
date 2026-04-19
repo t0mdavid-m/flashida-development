@@ -4,7 +4,9 @@
 
 set -euo pipefail
 
-SPEC_DIR="docs/superpowers/specs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SPEC_DIR="${REPO_ROOT}/docs/superpowers/specs"
 ARCHIVE_DIR="${SPEC_DIR}/archive"
 
 # Nothing to do if the spec dir doesn't exist (e.g. fresh clone).
@@ -26,6 +28,7 @@ for spec in "${SPEC_DIR}"/*.md; do
       sub(/^status:[[:space:]]*/, "")
       sub(/[[:space:]]*#.*$/, "")    # strip inline comment
       sub(/[[:space:]]+$/, "")       # trim trailing whitespace
+      gsub(/^[\x22\x27]|[\x22\x27]$/, "")  # strip surrounding quotes
       print
       exit
     }
