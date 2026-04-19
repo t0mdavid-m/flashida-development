@@ -38,21 +38,11 @@ Enable exploration by setting the metric in the JSON method config under the MS2
 ```
 
 `Config::hasExploration(msn_level)` (`Config.cpp:494`) returns true whenever
-`levels_[msn_level].exploration != ExplorationMetric::None`. The branch that gates the entire
-path lives at `FLASHIda.cpp:753`:
-
-```cpp
-if (config_.hasExploration(2))
-{
-    // Exploration path: initiate CE sweep variants INSTEAD of regular MS2
-    for (int i = 0; i < n; i++)
-    {
-        ...
-        auto cmds = exploration_.initiate(2, selected[i], sel_charges[i], faims_cv, queue_, &ms1_ctx);
-```
-
-When the branch is NOT taken, the code falls through to the standard `queue_.buildMS2` path.
-The two paths are mutually exclusive per scan cycle.
+`levels_[msn_level].exploration != ExplorationMetric::None`. When true, the branch at
+`FLASHIda.cpp:753` routes each selected precursor through `exploration_.initiate()` (called at
+`:760`) instead of issuing a single MS2 directly; when false, flow falls through to the
+standard `queue_.buildMS2` path at `FLASHIda.cpp:782`. The two paths are mutually exclusive
+per scan cycle.
 
 The sweep dimensions are configured per MSn level in `MSLevelConfig` (`Config.h:~95`):
 - `ce_min` / `ce_max` / `ce_step` — CE sweep range (eV).
@@ -120,20 +110,7 @@ exploration or selection is configured for the next level (see next section).
 
 ## Interaction with Precursor Selection
 
-Exploration operates downstream of selection, not in parallel with it. The sequence within
-one MS1 scan cycle is:
-
-```
-MS1 arrives
-  -> SpectralDeconvolution (deconvolve MS1)
-  -> filterAndRank() selects N precursors
-  -> for each selected precursor:
-       if hasExploration(2):
-           exploration_.initiate(...)   // issues M variants per precursor
-       else:
-           queue_.buildMS2(...)         // issues 1 MS2
-```
-
+Exploration operates downstream of selection, not in parallel with it.
 Exploration does not re-rank or filter precursors. Every precursor that passes `filterAndRank`
 gets its own `ExplorationGroup`; exploration then independently determines the best CE for
 each one. The selection metric (intensity, mass, charge, etc.) and the exploration metric are
