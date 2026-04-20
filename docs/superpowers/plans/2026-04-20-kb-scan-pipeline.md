@@ -506,7 +506,7 @@ The `ScanParameters` → Thermo custom-scan mapping elsewhere in `ScanFactory.cs
 ## Gotchas
 
 - **Reflection / name-match is silent on failure.** Renaming a C++ `ScanCommand` field requires renaming the C# mirror (byte-layout contract) *and* checking the `BuildFromCommand` mapping *and* verifying `ScanParameters` has a property with the same name (for reflection-driven emission elsewhere in `ScanFactory`).
-- **`ScanDescription`'s tracking-id suffix is the scan identity**. It returns with the scan result and drives exploration variant detection (`isExplorationVariant`) and other round-trip logic. Don't strip it or transform it before submission.
+- **`ScanDescription` is the scan identity**. It round-trips with the scan result and is the only channel by which the C++ engine re-identifies a returning scan (the encoded tracking ID is re-parsed out of the string on the return path). Don't strip it or transform it before submission.
 - **Precursor-scoring fields are diagnostic**. They cross the ABI but are not mapped to any instrument parameter.
 - **Conditional writes default to method.** Zero / empty `ScanCommand` fields leave `ScanParameters` unset, letting the Thermo method config provide the default. This is intentional — do not "helpfully" force values to zero for "clean" output.
 ````
