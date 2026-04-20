@@ -38,10 +38,10 @@ All five implementations are in `FLASHIdaBridgeFunctions.cpp:39-90`. They are th
 
 ## Body summaries (one-liners)
 
-Per this packet's scope, the heavy internals of `ProcessScan` and `GetNextScanCommand` live in a future packet. For this packet:
+Per this packet's scope, the heavy internals of `ProcessScan` and `GetNextScanCommand` live in [`../acquisition-loop/engine-entry-points.md`](../acquisition-loop/engine-entry-points.md). For this packet:
 
-- **`ProcessScan` → `FLASHIda::processScan` (`FLASHIda.cpp:700`).** Deconvolves the input spectrum, runs precursor selection and optional exploration, enqueues resulting commands via the queue's `build*` helpers. Body walkthrough deferred.
-- **`GetNextScanCommand` → `FLASHIda::getNextScanCommand` (`FLASHIda.cpp:1091`).** Opportunistically injects an AGC or cycle-time MS1, cleans up expired pending commands, dequeues the highest-priority remaining command. Body walkthrough deferred.
+- **`ProcessScan` → `FLASHIda::processScan` (`FLASHIda.cpp:700`).** Deconvolves the input spectrum, runs precursor selection and optional exploration, enqueues resulting commands via the queue's `build*` helpers. Body walkthrough: see acquisition-loop packet.
+- **`GetNextScanCommand` → `FLASHIda::getNextScanCommand` (`FLASHIda.cpp:1091`).** Opportunistically injects an AGC or cycle-time MS1, cleans up expired pending commands, dequeues the highest-priority remaining command. Body walkthrough: see acquisition-loop packet.
 
 ## ABI sync — the byte-layout contract
 
