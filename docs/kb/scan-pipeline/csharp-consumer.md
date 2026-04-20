@@ -29,9 +29,9 @@ see_also:
 
 Thin pass-throughs at `FLASHIdaWrapper.cs:179-211`:
 
-- `ProcessScan(double[] mzs, double[] ints, int length, double rt, int msLevel, string scanDesc, double faimsCv) → int` — marshals arrays and the scan description, calls the DllImport.
-- `GetNextScanCommand(ref ScanCommand output) → int` — direct pass-through; `1` means filled, `0` means queue empty.
-- `GetNextTrackingId() → int` — direct pass-through; rarely used.
+- `ProcessScan(double[] mzs, double[] ints, double rt, int msLevel, string scanDesc, double faimsCv = 0.0) → int` — derives `mzs.Length` internally and forwards to the DllImport overload. Wrapped in try/catch; returns `-1` on exception.
+- `GetNextScanCommand(ref ScanCommand cmd) → int` — wrapped in try/catch; forwards to the DllImport. Returns `1` if `cmd` was filled, `0` if the queue is empty or on exception.
+- `GetNextTrackingId() → int` — wrapped in try/catch; returns `-1` on exception. Rarely used.
 
 ## Input direction (C# → C++)
 
