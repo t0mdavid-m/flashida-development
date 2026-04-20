@@ -10,6 +10,7 @@ subsystem guide — read the packet README first, drill down as needed.
 - [Config flow](config-flow/README.md) — method.json → C# → C++ bridge → engine config.
 - [Exploration](exploration/README.md) — MS2 and MS3 exploration: variants, scoring, winner selection.
 - [Scan pipeline](scan-pipeline/README.md) — ScanCommand struct, queue, 5 bridge exports, C# consumer.
+- [Acquisition loop](acquisition-loop/README.md) — end-to-end round-trip: startup, per-scan event flow, C++ engine entry points, shutdown.
 
 ## Conventions
 
