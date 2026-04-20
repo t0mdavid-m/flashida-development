@@ -109,7 +109,7 @@ Briefly — see `../config-flow/` for full detail:
 
 ## Gotchas
 
-- **Silently-off on missing protein sequence.** `conditional_ms2_enabled = true` + empty `protein_sequence` means `tags_found` will never be `true`. The mode is configured but never fires. `Config::validate()` does *not* catch this — it only checks that `follow_up_scan` is populated when `conditional_ms2_enabled` is set. An operator may see zero conditional follow-ups and have no diagnostic.
+- **Silently-off on missing protein sequence.** `conditional_ms2_enabled = true` + empty `protein_sequence` means `tags_found` will never be `true`. The mode is configured but never fires. `Config::validate()` catches empty `protein_sequence` via other constraints (exploration with `FragmentCount`, or any level-≥2 `SelectionMetric` — see `../config-flow/config-flow.md` Stage 9), but there is *no direct validation* tied to `conditional_ms2_enabled`. A pathological config that enables conditional MS2 with no exploration/selection metric active will silently not fire, with no startup diagnostic.
 
 - **Sibling: quantification follow-up.** At `FLASHIda.cpp:900-908` there is a parallel mechanism that uses the same `buildFollowUp` machinery with suffix `'F'` (gated by `quantification.enabled` and `isDifferentiallyAbundant`, independent of tags). It is a different acquisition mode and is out of scope for this packet — a future quantification packet will cover it.
 
