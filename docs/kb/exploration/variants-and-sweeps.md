@@ -66,12 +66,12 @@ Field reference for the struct that tracks one variant through its lifecycle:
 | `tracking_id` | at construction | unique scan ID used by `feedResult` to match results |
 | `is_baseline` | at construction | `true` for the CE=0 reference scan (RemainingPrecursor only) |
 | `cmd` | at construction | the `ScanCommand` emitted for this variant |
-| `score` | on `feedResult` | assigned by `computeExplorationScore_`; `-1.0` sentinel until received |
+| `score` | on `feedResult` | from `computeExplorationScore_`; `-1.0` sentinel until received; MS3 FragmentCount overwrites after batch re-score |
 | `tic_coverage` | on `feedResult` | fraction of TIC explained by deconvolved peaks (used by some metrics) |
 | `fragment_count` | on `feedResult` | fragment-ion count from the deconvolved result |
 | `received` | on `feedResult` | `false` until the variant's scan result arrives |
 | `result` | on `feedResult` | deconvolved spectrum stored for downstream use |
-| `identification_result` | post-winner (MS3 only) | `FragmentAnalysis::ProteoformMatch` populated at batch eval |
+| `identification_result` | post-all-received (MS3 FragmentCount only) | `FragmentAnalysis::ProteoformMatch` from `MS3FragmentMatcher::calibrateAndScore` batch eval |
 
 ## Baseline variant for `RemainingPrecursor`
 
