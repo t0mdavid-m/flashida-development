@@ -9,6 +9,7 @@ see_also:
   - ../scan-pipeline/README.md
   - ../exploration/README.md
   - ../config-flow/README.md
+  - ../acquisition-loop/README.md
 ---
 
 ## Overview

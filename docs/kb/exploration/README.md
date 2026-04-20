@@ -12,6 +12,7 @@ code_anchors:
 see_also:
   - ../config-flow/README.md
   - ../ms1-acquisition/README.md
+  - ../acquisition-loop/README.md
 ---
 
 ## Overview

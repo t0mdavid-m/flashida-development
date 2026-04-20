@@ -10,6 +10,7 @@ code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:84   # Config::Config parse
 see_also:
   - ../ms1-acquisition/README.md
+  - ../acquisition-loop/README.md
 ---
 
 ## Overview
