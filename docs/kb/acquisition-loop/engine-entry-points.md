@@ -10,6 +10,7 @@ see_also:
   - ../ms1-acquisition/README.md
   - ../exploration/README.md
   - ../scan-pipeline/scan-command.md
+  - ../fragment-analysis/tag-follow-up.md
 ---
 
 ## Overview
