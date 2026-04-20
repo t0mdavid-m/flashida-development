@@ -20,7 +20,7 @@ see_also:
 
 ## `feedResult` flow
 
-`Exploration::feedResult` (decl `Exploration.h:186`, def `Exploration.cpp:229`) is called by the orchestrator whenever a returning MS2/MS3 scan carries an exploration tracking ID (`isExplorationVariant(tracking_id)` is true). It routes via `variant_tracking_map_` to find `{group_id, variant_index}`, deconvolves the raw spectrum with the correct precursor context and the per-level `exploration_tolerance_ppm`, calls `computeExplorationScore_` (`Exploration.h:240`), stores the score on the variant, marks `received=true`, and tests whether all variants have `received=true` (via `std::all_of` — see `Exploration.cpp:~388`). Once all variants have been received, runs winner selection (see below). On MS3 with the `FragmentCount` metric, also triggers `MS3FragmentMatcher::calibrateAndScore` (see `ms3-exploration.md`).
+`Exploration::feedResult` (decl `Exploration.h:186`, def `Exploration.cpp:229`) is called by the orchestrator whenever a returning MS2/MS3 scan carries an exploration tracking ID (`isExplorationVariant(tracking_id)` is true). It routes via `variant_tracking_map_` to find `{group_id, variant_index}`, deconvolves the raw spectrum with the correct precursor context and the per-level `exploration_tolerance_ppm`, calls `computeExplorationScore_` (`Exploration.h:240`), stores the score on the variant, marks `received=true`, and tests whether all variants have `received=true` (via `std::all_of` — see `Exploration.cpp:388`). Once all variants have been received, runs winner selection (see below). On MS3 with the `FragmentCount` metric, also triggers `MS3FragmentMatcher::calibrateAndScore` (see `ms3-exploration.md`).
 
 ## `computeExplorationScore_` dispatcher
 
