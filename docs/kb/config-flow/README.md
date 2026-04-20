@@ -11,6 +11,7 @@ code_anchors:
 see_also:
   - ../ms1-acquisition/README.md
   - ../acquisition-loop/README.md
+  - ../fragment-analysis/README.md
 ---
 
 ## Overview
