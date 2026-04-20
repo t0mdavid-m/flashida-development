@@ -14,7 +14,7 @@ code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:59         # ExplorationMetric enum
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:100        # MSLevelConfig::exploration field
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:422              # Config::validate
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:494              # Config::hasExploration
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:495              # Config::hasExploration
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:753                     # MS1 -> MS2 exploration branch
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:760                     # MS2 initiate call
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:927                     # non-exploration MS2 -> MS3 initiateNextLevel call
@@ -56,7 +56,7 @@ Group lifetime: a group is created in `initiate` with one `ExplorationVariant` e
 
 Exploration is driven entirely by fields on `MSLevelConfig`. The key field is `ExplorationMetric exploration` (`OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:100`), whose enum values are declared at `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:59`: `None` (exploration off), `MassCount`, `RemainingPrecursor`, `FragmentCount`. The sweep-shape neighbors on `MSLevelConfig` are `ce_min` / `ce_max` / `ce_step` (collision energy grid), `rt_min` / `rt_max` / `rt_step` (reaction time grid), `activations` (list of activation types to sweep), `overrides` (the map applied to the winner's production scan), and `exploration_tolerance_ppm` (deconvolution tolerance used specifically for variant spectra, kept separate from the base tolerance used for non-exploration deconvolution).
 
-`Config::hasExploration(msn_level)` (`OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:494`) is the cheap gate: it returns true whenever `levels_[msn_level].exploration != ExplorationMetric::None`. Callers use it to decide between the exploration code path and the direct-scan code path without inspecting the full config. For how the JSON method file lands in these fields, see `../config-flow/`.
+`Config::hasExploration(msn_level)` (`OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:495`) is the cheap gate: it returns true whenever `levels_[msn_level].exploration != ExplorationMetric::None`. Callers use it to decide between the exploration code path and the direct-scan code path without inspecting the full config. For how the JSON method file lands in these fields, see `../config-flow/`.
 
 ## Entry points
 
