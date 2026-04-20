@@ -82,6 +82,7 @@ Called once per incoming instrument scan from the C# side.
      → `queue_.buildFollowUp(..., 'F')`).
    - Optional conditional MS2 (if tags found and
      `conditional_ms2_enabled` → `queue_.buildFollowUp(..., 'C')`).
+     Full mode write-up: [`../fragment-analysis/tag-follow-up.md`](../fragment-analysis/tag-follow-up.md).
    - MS3 targeting: `exploration_.initiateNextLevel` (cached MS2 context is
      stashed for MS3 identification lookup).
    - Write MS2 identification row if a proteoform was matched.

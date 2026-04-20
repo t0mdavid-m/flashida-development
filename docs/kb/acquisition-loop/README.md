@@ -13,6 +13,7 @@ see_also:
   - ../scan-pipeline/README.md
   - ../ms1-acquisition/README.md
   - ../exploration/README.md
+  - ../fragment-analysis/README.md
 ---
 
 ## Overview
