@@ -7,6 +7,7 @@ code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:986                     # MS3 isExplorationVariant routing
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:181         # MS3 context wiring inside initiate
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:183         # queue.buildMS3 variant build
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:159         # group field population (fragment_ion_type / fragment_ion_index / proteoform_ctx)
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:400         # MS3FragmentMatcher::calibrateAndScore call
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:470         # queue.buildMS3 production scan from winner
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:504         # initiateNextLevel definition (shared with MS2-winner path)
@@ -34,7 +35,7 @@ Both callers pass the same argument shape `(msn_level=2, MS2 deconvolved spectru
 
 ## Context plumbing
 
-`ms_ctx` at MS3 is the originating MS2 `ScanCommand` (not a scan ID — `buildMS3` needs full two-stage isolation context including the MS1 precursor). When `msn_level >= 3 && ms_ctx != nullptr` (check at `Exploration.cpp:181`), the MS3-specific fields on `ExplorationGroup` (`Exploration.h:119-121`) are populated:
+`ms_ctx` at MS3 is the originating MS2 `ScanCommand` (not a scan ID — `buildMS3` needs full two-stage isolation context including the MS1 precursor). The group's MS3-specific fields — `fragment_ion_type`, `fragment_ion_index`, and `proteoform_ctx` (`ExplorationGroup`, `Exploration.h:119-121`) — are populated unconditionally at `Exploration.cpp:159-162`; for MS2 the caller passes `'\0'` / `0` / empty-context, so they take default values. Separately, the per-variant `ScanCommand` build branches on `msn_level >= 3 && ms_ctx != nullptr` at `Exploration.cpp:181`: MS3 variants are built with `queue.buildMS3(*ms_ctx, variant_config, precursor_mz, charge, isolation_width, ion_type, frag_index, ...)` at `:183`; MS2 variants fall through to `queue.buildMS2` at `:189`.
 
 - `fragment_ion_type` and `fragment_ion_index` identify which fragment from the parent MS2 is the MS3 target (e.g. `'b'` + 7 for the 7th b-ion).
 - `proteoform_ctx` (type `MS3FragmentMatcher::ProteoformContext`, defined at `MS3FragmentMatcher.h:58`) caches the candidate protein sequence bounds (`region_start`/`region_end`) and PTM sites from MS2 tag-based matching. This cache lets batch re-scoring skip re-running proteoform identification against the protein database.
