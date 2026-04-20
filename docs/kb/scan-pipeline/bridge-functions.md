@@ -34,7 +34,7 @@ The entire C++↔C# surface consists of exactly five `extern "C" OPENMS_DLLAPI` 
 | `GetNextScanCommand` (`:60`) | `(FLASHIda* obj, ScanCommand* output)` | `int` | `1` if `output` was filled, `0` if the queue is empty. |
 | `GetNextTrackingId` (`:63`) | `(FLASHIda* obj)` | `int` | Thread-safe allocator for a new tracking ID. Rarely used by C# — internal bookkeeping. |
 
-All five implementations are in `FLASHIdaBridgeFunctions.cpp:39-90`. They are thin wrappers: null-check the `FLASHIda*`, dispatch to the matching method on the C++ object, and catch any `std::exception` with a `std::cerr` log.
+All five implementations are in `FLASHIdaBridgeFunctions.cpp:39-90`. They are thin wrappers — null-check arguments and dispatch to the matching method on the C++ object. **Only `CreateFLASHIda` wraps its construction in a `try/catch (std::exception&)` with a `std::cerr` log**; the other four exports have no exception handling. An exception thrown from within `DisposeFLASHIda`, `ProcessScan`, `GetNextScanCommand`, or `GetNextTrackingId` propagates across the P/Invoke boundary, which is undefined behavior — the C++ methods they dispatch to must not throw across the ABI.
 
 ## Body summaries (one-liners)
 
@@ -75,9 +75,10 @@ This is the critical section. Breaking the contract produces **silent memory cor
 
 ## Error contracts
 
-- All five implementations null-check the `FLASHIda*` argument. A null pointer returns a safe default (`0` / no-op).
-- All five `try/catch (const std::exception& e)` with a `std::cerr` log. No structured error channel back to C#.
-- `GetNextScanCommand` returns `0` when the queue is empty — this is the normal "nothing to do" signal, not an error.
+- **Null-checks.** Four of the five exports take a `FLASHIda*` and null-check it (`DisposeFLASHIda`, `ProcessScan`, `GetNextScanCommand`, `GetNextTrackingId`). `CreateFLASHIda` takes a `char*` and has no null-check on it. `GetNextScanCommand` also null-checks its `ScanCommand* output` argument.
+- **Null-argument return values** differ per function: `DisposeFLASHIda` no-ops; `GetNextScanCommand` returns `0` (queue-empty sentinel); `ProcessScan` and `GetNextTrackingId` return `-1`.
+- **Exception handling is only in `CreateFLASHIda`.** It catches `std::exception` and returns `nullptr` after a `std::cerr` log. The other four assume their C++ methods don't throw. No structured error channel back to C#.
+- `GetNextScanCommand` returning `0` is ambiguous: it means either "arguments invalid" or "queue empty". Callers must treat `0` as "nothing to do, try again later".
 - `ProcessScan` return value is int but **treat it as advisory**. Do not use it as a command count.
 
 ## Gotchas
