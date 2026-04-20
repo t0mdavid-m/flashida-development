@@ -31,194 +31,164 @@ A new **developer-only** boolean flag gates a candidate-expansion change inside
 
 ### When the flag is ON
 
-The change is confined to `filterAndRank`'s selection loop. Everything below
-is gated by `if (config_.targeting().charge_based_exclusion)` — every
-mutation to existing lines is branched so the default path is untouched.
+**Design principle:** change the existing precursor-picking code as little
+as possible. Every modification is a small, clearly-gated drop-in — either
+a `if (config_.targeting().charge_based_exclusion)` block added at a
+specific site, or a one-line guard that disables an existing skip. No
+refactor into helpers; no new control flow; no reshape of the phase loop.
+The outer `for (const auto& pg : deconv_.deconvolvedMS1())` at
+`PrecursorSelection.cpp:395` stays.
 
-#### 1. Candidate generation (replaces the peak-group iterator)
+There are **four drop-ins**, all inside `filterAndRank`. Behavior outside
+the flag is byte-for-byte unchanged.
 
-Replace the outer `for (const auto& pg : deconv_.deconvolvedMS1())` at
-`PrecursorSelection.cpp:395` with iteration over a **flat candidate list**.
+#### Drop-in A — Per-peak-group charge expansion (line ~395–429)
 
-**Structure:**
+Today the outer loop processes each peak group once and picks one charge
+via the `if/else if/... else` ladder at `:404-429`. Under the flag we want
+to run the existing per-candidate filter/commit block **once per observed
+charge** of the peak group.
+
+Minimal-diff shape: wrap the existing per-candidate body in a one-level
+inner `for (int charge : charges_to_process)`. When the flag is off,
+`charges_to_process` is a single-element vector computed from the existing
+ladder (byte-equivalent to today). When the flag is on, it is the set of
+charges in `pg.getAbsChargeRange()` that are actually scored — i.e.
+`pg.getAllQscores()` keys intersected with the closed `[min, max]` range —
+sorted by per-charge qscore descending.
+
+Score / HCD per charge, under the flag, mirror the branches already at
+`:404-429`:
+
+- `use_idscore && hcd_energy < 0` → `score = pg.getBestIDScoreForCharge(c)`;
+  `hcd = pg.getBestHCDForCharge(c)`
+- `use_idscore && hcd_energy >= 0` →
+  `score = pg.getIDScoreForChargeAndHCD(c, hcd_energy)`; `hcd = hcd_energy`
+- `!use_idscore` → `score = pg.getAllQscores().at(c)`; `hcd = hcd_energy`
+
+Under the flag `consider_all_charges` has no effect on which charges are
+emitted (we emit all of them) — only on the HCD-selection arm above.
+
+Everything inside the per-candidate body (`:432-655`) is unchanged, just
+indented one extra level and parameterised on the inner `charge` variable
+instead of the scalar from the ladder.
+
+**Sort scope:** per-peak-group, qscore-descending within the inner list.
+The outer peak-group order is whatever `filterPeakGroupsUsingMassExclusion_`
+already produced. This keeps the diff local (no cross-peak-group flat list,
+no rebuild of `stable_sort`/priority-tie logic on a flat list). Practical
+consequence: all charges of the top-ranked peak group are evaluated before
+the next peak group. This was the trade-off you asked for: minimal change
+over strictly global qscore order.
+
+#### Drop-in B — Per-(mass, charge) cross-scan exclusion skip
+
+Add a new `std::set<std::pair<int, int>> tqscore_exceeding_mass_charge_set_`
+member on `PrecursorSelection`. Immediately after the existing
+same-m/z-avoidance block (`:574-581`) and before the phase-gated tqscore
+check (`:584-591`), insert:
+
 ```cpp
-struct FlatCandidate {
-  const PeakGroup* pg;
-  int charge;
-  double score;
-  int hcd;
-  double center_mz;
-  double mz1;
-  double mz2;
-  int integer_mz;
-  double mass;            // mono mass
-  int nominal_mass;
-};
-std::vector<FlatCandidate> flat_candidates_;
+if (config_.targeting().charge_based_exclusion
+    && tqscore_exceeding_mass_charge_set_.count({nominal_mass, charge}) > 0)
+{
+  continue;
+}
 ```
 
-**Population (once per scan, before the phase loop at line 381).** For each
-peak group `pg` in `deconv_.deconvolvedMS1()`:
+This is the only **new** skip added to the filter chain. It is a pure
+drop-in: no existing line changes.
 
-- **Charges to expand.** Iterate every charge `c` in the closed interval
-  `pg.getAbsChargeRange()`. For each `c`, only emit a candidate if
-  `pg.getAllQscores().count(c) > 0` — i.e. the charge was actually scored
-  during deconvolution. This silently drops holes in the charge range and
-  avoids fabricating candidates with undefined qscore.
-- **Score per candidate, by config branch (mirrors lines 404-429):**
-  - `use_idscore && consider_all_charges && hcd_energy < 0`:
-    `score = pg.getBestIDScoreForCharge(c)`; `hcd = pg.getBestHCDForCharge(c)`
-  - `use_idscore && consider_all_charges` (fixed hcd):
-    `score = pg.getIDScoreForChargeAndHCD(c, hcd_energy)`;
-    `hcd = hcd_energy`
-  - `use_idscore && !consider_all_charges && hcd_energy < 0`:
-    `score = pg.getBestIDScoreForCharge(c)`; `hcd = pg.getBestHCDForCharge(c)`
-  - `use_idscore && !consider_all_charges` (fixed hcd):
-    `score = pg.getIDScoreForChargeAndHCD(c, hcd_energy)`;
-    `hcd = hcd_energy`
-  - non-idscore (both `consider_all_charges` values):
-    `score = pg.getAllQscores().at(c)`; `hcd = hcd_energy`
+#### Drop-in C — One-line bypass of the `mass_qscore_map_` max-tracking skip
 
-  Note that under the flag `consider_all_charges` has no effect on
-  candidate generation — we emit all observed charges anyway — but it still
-  affects which scoring function is chosen for consistency with the default
-  path. (Specifically, whether HCD energy is picked per-charge or fixed.)
+The existing skip at `:604-607`
 
-- **Geometry per candidate:** `[mz1, mz2] = pg.getMzRange(c)`;
-  `center_mz = (mz1 + mz2) / 2`; `integer_mz = round(center_mz)`;
-  `mass = pg.getMonoMass()`; `nominal_mass = int(round(mass))`.
-- **Isolation margin:** apply `optimal_window_margin_` to `mz1` / `mz2`
-  at candidate-build time (matching line 441-442 in today's loop).
+```cpp
+if (score < mass_qscore_map_[nominal_mass]) {
+  continue;
+}
+```
 
-**Sort.** One primary sort: `std::sort(flat_candidates_.begin(), .end(),
-cmp_by_score_desc)`. Secondary priority tie-break (mode 1 TSV targets):
-apply the same `stable_sort` logic as today (line 277-282) but on the flat
-list — `tie_threshold` comparisons use the priority-map entry for the
-candidate's `nominal_mass`. A target's priority applies uniformly to all
-its (mass, charge) candidates, so the tie-break is well-defined.
+would otherwise block any lower-qscore charge of a mass that has already
+been acquired with a higher-qscore charge, defeating exhaustive acquisition.
+Gate it:
 
-**Phase-local filtering.** The three-phase loop at line 381 stays intact.
-Each phase iterates the SAME `flat_candidates_`. Phase-0 / phase-1 /
-phase-2 semantics (target-only vs non-target backfill vs permissive
-fallback) are preserved by reusing the existing inner-loop branches — only
-the iteration source changes.
+```cpp
+if (!config_.targeting().charge_based_exclusion
+    && score < mass_qscore_map_[nominal_mass]) {
+  continue;
+}
+```
 
-**Mode 2 outer iteration.** The outer iteration loop at line 378 still
-runs twice for mode 2. `flat_candidates_` is rebuilt once per scan (not
-per outer iteration) — the two iterations apply different exclusion views
-to the same candidate list.
+This is a single-condition edit to one `if`. It is the one deliberate
+semantic change to existing logic; nothing else in the `mass_qscore_map_`
+handling is touched (the map still updates as today, per §Commit below).
 
-#### 2. Per-candidate filter block (preserved, with two gates swapped)
+#### Drop-in D — Per-(mass, charge) exclusion set insertion
 
-Inside the main loop the existing filters run in this order. Line numbers
-refer to today's code at the equivalent per-candidate site.
+Inside the existing `tqscore_threshold` trigger block (`:612-616`
+non-idscore branch and `:625-629` idscore branch) — i.e. the lines that
+already write `tqscore_exceeding_mass_rt_map_[nominal_mass]` — append
+one line under the flag:
 
-| # | Filter | Behavior under flag |
-|---|--------|---------------------|
-| a | `charge < config_.level(ms_level).min_charge` (`:432`) | **Unchanged** — `continue`. The min_charge check now fires per-charge naturally. |
-| b | Inclusion-mode target match (`:461-:530`) | **Unchanged.** Target matching uses nominal mass and optional charge range; per-charge candidates honour the target's charge spec without modification. |
-| c | `score < qscore_threshold` (`:569`, `break`) | **Unchanged.** Flat list is sorted descending; break is still safe. Target-matched candidates still waive via threshold=0. |
-| d | `pg.getChargeSNR(charge) < snr_threshold` (`:572`, `continue`) | **Unchanged.** SNR is already per-charge. Target match still waives. |
-| e | Same-m/z avoidance (`:574-:581`) | **Unchanged.** Different charges of the same mass produce different `center_mz` values and therefore do not collide. The existing phase-2 relaxation also carries over unchanged. |
-| f | Mass-level `tqscore_exceeding_mass_rt_map_` / `_mz_rt_map_` gate (`:586-:590`, phase 0 and 1 only) | **Gate preserved**, but the maps are populated differently (see §4). In practice, under the flag they are only written once every observed charge of a mass has been acquired; until then they remain empty for that mass, so this gate is effectively dormant. |
-| g | **NEW**: `tqscore_exceeding_mass_charge_set_.count({nominal_mass, charge})` | Insert this check immediately after filter (e) and before filter (f). If true → `continue`. This is the per-(mass, charge) cross-scan exclusion. |
-| h | `mass_qscore_map_` max-tracking skip (`:605`, `continue`) | **Bypassed under flag.** Flag-on path does NOT consult `mass_qscore_map_` for skipping. See §3 for why the map itself still updates. |
+```cpp
+if (config_.targeting().charge_based_exclusion) {
+  tqscore_exceeding_mass_charge_set_.insert({nominal_mass, charge});
+}
+```
 
-Filters a-e run identically. Filter f stays in place for correctness even
-though it rarely fires under the flag. Filter g is the one new early-exit.
-Filter h's skip-behavior is the ONE deliberate semantic divergence: without
-this bypass, the max-tracking rule would block any lower-qscore charge of
-a mass that has already been acquired with a higher-qscore charge, which
-defeats the feature.
+This reuses the **existing** mass-level threshold-crossing condition
+verbatim — no separate per-charge accumulator, no second threshold. The
+interpretation is: "when the mass-keyed tqscore criterion for this mass
+crosses the threshold while we were acquiring charge `c`, mark `(mass, c)`
+as done." Because under the flag we keep acquiring multiple charges per
+mass, this insertion fires once per charge that we saw cross the
+threshold boundary while selected.
 
-#### 3. Commit path & map updates
+This is the minimally invasive choice: no new accumulator, no parallel
+idscore product map. It accepts that the per-charge "done" semantics
+inherit from the mass-keyed accumulator's definition of "done."
 
-When a candidate passes all filters, the existing commit block
-(`:641-:655`) runs unchanged: `trigger_ids_`, `selected_peak_groups_`,
-`trigger_charges_`, `trigger_hcds_`, `trigger_scores_`,
-`trigger_left_isolation_mzs_`, `trigger_right_isolation_mzs_`,
-`current_selected_masses`, `current_selected_mzs` all populate as today.
+#### What is explicitly NOT added
 
-Then, **still under the flag**:
+- **No mass-level "done" promotion.** We do not track "have all observed
+  charges been acquired" and we do not write into
+  `tqscore_exceeding_mass_rt_map_` on that basis. The existing
+  threshold-crossing condition (mass-keyed accumulator > threshold) is the
+  only writer into those maps, unchanged.
+- **No new per-charge accumulator map.** We do not introduce
+  `mass_charge_qscore_map_`. Per-charge state is a single `std::set`.
+- **No flat global sort across peak groups.** Candidates remain grouped
+  by peak group; charges are sorted within each group.
+- **No changes to phase logic, mode-2 outer loop, SNR handling, target
+  matching, isolation-window handling, or any output vector.**
 
-- **Update `mass_qscore_map_` (unchanged logic).** The lines 596-630 block
-  runs byte-for-byte as today. The map stays mass-keyed; non-idscore branch
-  still tracks max qscore; idscore branch still accumulates `(1 - score)`
-  products. The only behavioral change is filter (h) no longer reads the
-  map for skipping.
-  - **Why keep updating it?** Downstream consumers (`removeFromExclusionList`
-    called from the bridge on MS2 result, plus logging) read this map.
-    Breaking its write path risks silent downstream bugs.
-- **Write to `tqscore_exceeding_mass_rt_map_` / `_mz_rt_map_`
-  (unchanged condition).** Lines 612-616 still fire when the mass-keyed
-  accumulator crosses `tqscore_threshold`. Under the flag this will still
-  happen once a mass's best charge has been acquired; §4 describes the
-  extra per-charge criterion that layers on top.
-- **NEW: update `tqscore_exceeding_mass_charge_set_`.** Insertion condition
-  mirrors the mass-level condition, but evaluated per-charge:
-  - non-idscore branch: insert `(nominal_mass, charge)` if `score > tqscore_threshold`.
-  - idscore branch: insert `(nominal_mass, charge)` if
-    `1 - per_charge_accumulator[(nominal_mass, charge)] *
-    tqscore_factor_for_exclusion > tqscore_threshold`, where
-    `per_charge_accumulator` is a new `std::map<std::pair<int,int>, double>`
-    tracking per-charge product of `(1 - score)` terms (parallel to
-    `mass_qscore_map_`'s idscore accumulation semantics).
+#### Commit path & map updates (unchanged)
 
-  Store a per-charge accumulator map (`mass_charge_qscore_map_`) alongside
-  `mass_qscore_map_`. It is only touched when the flag is on.
+The commit block (`:641-:655`) runs exactly as today for every candidate,
+including repeated invocations for different charges of the same peak
+group. `mass_qscore_map_` updates (`:596-630`) also run unchanged — drop-in
+D just piggybacks on the already-existing threshold-crossing branch to
+record the per-charge entry.
 
-#### 4. Mass-level "done" promotion
-
-After the per-charge insertion in §3, check whether every observed charge of
-this peak group's original `getAbsChargeRange()` now has an entry in
-`tqscore_exceeding_mass_charge_set_` for this `nominal_mass`. If yes, write
-`nominal_mass` / `integer_mz` into `tqscore_exceeding_mass_rt_map_` /
-`tqscore_exceeding_mz_rt_map_` (idempotent — just overwrite).
-
-This gives a well-defined "mass fully covered" signal that future scans can
-consume through filter (f) without needing to also check the per-charge set.
-It also keeps the mass-level exclusion semantics the same for anything that
-reads those maps from outside `filterAndRank`.
-
-**Source of truth for "observed charges":** the peak group's
-`getAbsChargeRange()` on the scan where §3 fires — i.e. the current scan.
-If a later scan reports a wider range for the same mass, the "done" check
-will not have seen those new charges, and the mass may exit the
-`tqscore_exceeding_mass_rt_map_` state dynamically (the new charges would
-need to be acquired before promotion fires again). This matches your
-"minimal, dynamic" intent.
-
-#### 5. Output invariants (unchanged)
-
-All output vectors remain consistent with the documented guarantees in
-`docs/kb/ms1-acquisition/precursor-selection.md`:
-
-- `selected_peak_groups_` in descending rank order.
-- `trigger_charges_[i]` is the charge for selection `i` (now possibly
-  repeating a peak group across successive indices when multiple charges of
-  the same mass are selected within one scan).
-- `trigger_hcds_[i]`, `trigger_scores_[i]`, isolation m/z bounds, and
-  `trigger_ids_[i]` all align by index as today.
-
-**One consequence worth flagging:** `selected_peak_groups_[i]` and
+**Consequence worth flagging:** `selected_peak_groups_[i]` and
 `selected_peak_groups_[j]` (i ≠ j) may now reference the same `PeakGroup`
-instance when the flag is on. Consumers that assume uniqueness need to use
-`trigger_charges_[i]` to disambiguate. Scan through the MS2 command
-builders and `removeFromExclusionList` callers to confirm.
+instance within one scan. Consumers that assume uniqueness must
+disambiguate via `trigger_charges_[i]`. Review the MS2 command builders
+(`FLASHIdaBridgeFunctions.cpp`) and `removeFromExclusionList` callers to
+confirm no such assumption exists; file a follow-up only if found.
 
-#### 6. Knobs and surface area
-
-The flag interacts with these existing config knobs:
+#### Knobs and surface area
 
 | Knob | Effect under flag |
 |---|---|
-| `qscore_threshold` | Same — cuts off the low end of the flat list. |
-| `snr_threshold` | Same — per-charge SNR still filters individual charges. |
-| `tqscore_threshold` | Now used by BOTH the mass-keyed map (unchanged) and the new per-charge map (new). Same numeric value applies to both. |
-| `consider_all_charges` | See §1 — affects only score-selection branch inside candidate generation, not the expansion itself. |
-| `use_idscore` | See §1 — picks IDScore getters. §3 commit path also branches on it for per-charge accumulator semantics. |
-| `tie_threshold` | Same — applied via `stable_sort` after the primary qscore sort. |
-| `mass_count` | Same hard budget on total selections per scan. |
+| `qscore_threshold` | Unchanged — still gates the inner loop via `break` at `:569`. |
+| `snr_threshold` | Unchanged — per-charge SNR still filters. |
+| `tqscore_threshold` | Unchanged — same threshold gates both the mass-keyed write (existing) and the new per-(mass, charge) set insert (drop-in D). |
+| `consider_all_charges` | Only affects the HCD-selection branch inside drop-in A; does not affect which charges are expanded. |
+| `use_idscore` | Picks the IDScore getter inside drop-in A; does not change the per-charge set mechanics. |
+| `tie_threshold` | Unchanged — applied as today at `:277-282` on peak groups. |
+| `mass_count` | Unchanged — same hard budget across all selections in a scan. |
 
 No new config knob beyond `charge_based_exclusion` itself.
 
@@ -288,63 +258,53 @@ Following `docs/kb/config-flow/adding-a-config-field.md`:
 ## Code Changes (C++)
 
 Scope: `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.h`
-and the corresponding `.cpp`.
+and the corresponding `.cpp`. No header API changes — the one added member
+is private.
 
-**New members on `PrecursorSelection`:**
+**New member on `PrecursorSelection`:**
 ```cpp
-// Per-(nominal_mass, charge) cross-scan exclusion set.
+// Per-(nominal_mass, charge) cross-scan exclusion set. Populated by
+// drop-in D when the mass-keyed tqscore criterion trips while acquiring
+// a given charge. Consulted by drop-in B to skip re-acquisition of the
+// same (mass, charge) on later scans.
 std::set<std::pair<int, int>> tqscore_exceeding_mass_charge_set_;
-
-// Per-(nominal_mass, charge) qscore accumulator. Parallel semantics to
-// mass_qscore_map_: max for non-idscore, product of (1 - score) for idscore.
-std::map<std::pair<int, int>, double> mass_charge_qscore_map_;
 ```
 
-**New private type (internal to the `.cpp`):**
-```cpp
-struct FlatCandidate {
-  const PeakGroup* pg;
-  int charge;
-  double score;
-  int hcd;
-  double center_mz;
-  double mz1;
-  double mz2;
-  int integer_mz;
-  double mass;
-  int nominal_mass;
-};
-```
+No other members added. No new accumulator map. No new struct.
 
-**Function-level edits in `filterAndRank`:**
+**Edits in `filterAndRank`:**
 
-1. **Extract the per-candidate filter+commit body** (currently lines
-   `400-655` inside the peak-group loop) into a private helper
-   `tryCommitCandidate(const FlatCandidate&, int selection_phase, ...)`.
-   The helper returns `true` if the candidate was committed (so callers
-   can enforce the `mass_count` break). Both the flag-off and flag-on
-   paths call this helper; the only parameterization is how the candidate
-   is constructed.
-2. **Flag-off path:** keep the existing peak-group loop. For each `pg`,
-   build a single `FlatCandidate` using the existing rep-charge / best-
-   charge branch logic and invoke the helper. This is a pure refactor —
-   no behavior change.
-3. **Flag-on path:** before the phase loop, populate `flat_candidates_`
-   as described in §1. Inside each phase, iterate `flat_candidates_` and
-   invoke the helper.
-4. **Inside the helper, under the flag:**
-   - Between existing filters (e) and (f), consult
-     `tqscore_exceeding_mass_charge_set_` and `continue` if present.
-   - In the commit block, after the existing `mass_qscore_map_` update,
-     also update `mass_charge_qscore_map_` and insert into
-     `tqscore_exceeding_mass_charge_set_` when its per-charge threshold
-     is crossed.
-   - After insertion, run the "all observed charges done" check from §4
-     and, if satisfied, write into `tqscore_exceeding_mass_rt_map_` /
-     `tqscore_exceeding_mz_rt_map_`.
-   - Skip the line 605 max-tracking `continue` when the flag is on.
+A. **Drop-in A — inner charge loop around the existing per-candidate
+   body (`:400-655`).** Wrap the existing body in
+   `for (int charge : charges_to_process)`. Compute `charges_to_process`
+   once just inside the outer `for (pg : ...)` loop:
+   - flag off → single-element vector containing the charge picked by the
+     existing `:404-429` ladder (score/hcd also precomputed as today).
+   - flag on → all charges in `pg.getAbsChargeRange()` that appear in
+     `pg.getAllQscores()`, sorted by per-charge qscore descending, with
+     per-charge score and hcd derived by the branch rules in §Drop-in A
+     above.
 
-**No header API changes** — all additions are private members.
+   Everything inside the inner loop is the current per-candidate body with
+   the `charge` / `score` / `hcd` variables taken from the inner iterator
+   instead of from the scalar ladder.
+
+B. **Drop-in B — new skip between `:581` and `:584`.** The two-line
+   gated `continue` shown in §Drop-in B above. Pure addition.
+
+C. **Drop-in C — gate existing `:604-607` skip.** Change the existing
+   `if (score < mass_qscore_map_[nominal_mass])` to also require
+   `!config_.targeting().charge_based_exclusion`. One condition added to
+   one `if`.
+
+D. **Drop-in D — one-line append inside existing `:612-616` and
+   `:625-629` trigger blocks.** The gated `insert({nominal_mass, charge})`
+   shown in §Drop-in D above. Added twice (once per idscore branch) so the
+   per-charge set mirrors whichever mass-keyed threshold-crossing condition
+   actually fired.
+
+That is the full set of code edits in the picking loop. All other lines
+in `filterAndRank` are untouched.
 
 ## Testing
 
@@ -362,14 +322,24 @@ struct FlatCandidate {
    scores. Assert `trigger_charges_` on scan 2 excludes 6 but still contains
    5 and 7.
 
-4. **Mass promotion.** Run scans until every charge in the observed range
-   crosses `tqscore_threshold`. Assert
-   `tqscore_exceeding_mass_rt_map_[nominal_mass]` is set and subsequent
-   scans reject the mass entirely.
+4. **Mass-level exclusion still mass-keyed.** Run scans until the
+   mass-keyed tqscore criterion trips. Assert
+   `tqscore_exceeding_mass_rt_map_[nominal_mass]` is set by the existing
+   (unchanged) write — i.e. by the same mass-keyed condition that fires
+   when the flag is off. Assert the per-charge set
+   `tqscore_exceeding_mass_charge_set_` also contains the entry for the
+   charge acquired on the trigger scan.
 
 5. **Interaction with mode 2 two-pass loop.** With mode 2 enabled and the
    flag on, assert the exclusion-lifting pass still respects the per-charge
    set (i.e. does not replay an already-acquired charge).
+
+6. **Drop-in C bypass.** With the flag on, seed a first scan that acquires
+   `(mass, 6)` with qscore 0.9 (below `tqscore_threshold`). On a second
+   scan, introduce `(mass, 5)` with qscore 0.7. Assert charge 5 is
+   acquired — i.e. the max-tracking skip at `:604-607` does NOT block it.
+   With the flag off, the same sequence must skip charge 5 (regression
+   guard).
 
 ### C# (Flash.Tests)
 
@@ -383,21 +353,29 @@ struct FlatCandidate {
 
 ## Risks & Gotchas
 
-- **Candidate-count inflation.** A peak group with 20 observed charges now
-  produces 20 candidates. Per-scan CPU scales linearly; the existing
-  `mass_count` budget still caps selections, so end-to-end time is bounded
-  — but sort cost on the flat list grows. Acceptable for developer flag.
-- **Log-file semantics.** `all_mass_rt_map_` / `mass_qscore_map_` writes at
-  lines 594, 601, 608, 621 still key on nominal mass. The per-charge set
-  is **in-memory only**; no log-file format change. If log-file resumption
-  is later wanted, it's a follow-up.
-- **IDScore branch.** The IDScore-driven accumulation at lines 618-629
-  operates on `mass_qscore_map_` (mass-keyed). Under the flag, we bypass
-  the line 605 skip but leave this accumulation untouched; per-charge
-  exclusion uses the score of each committed candidate independently.
-- **Consumer assumptions.** Downstream calls like
-  `removeFromExclusionList` assume mass-keyed state. Confirm those still
-  work when the per-charge set co-exists with the mass map.
+- **Candidate-count inflation.** A peak group with N observed charges now
+  runs the filter/commit body N times. Per-scan CPU scales linearly; the
+  existing `mass_count` budget still caps total selections, so end-to-end
+  time is bounded. Acceptable for a developer flag.
+- **Per-peak-group sort scope.** Candidates are qscore-sorted **within**
+  each peak group, not globally across peak groups. This was a deliberate
+  minimal-diff choice. If a later experiment shows a real coverage gap,
+  a global flat sort can be added as a follow-up (with more invasive
+  changes).
+- **Log-file semantics unchanged.** `all_mass_rt_map_` / `mass_qscore_map_`
+  writes at `:594, :601, :608, :621` still key on nominal mass. The new
+  per-charge set is in-memory only; no log-file format change. Log-file
+  resumption is a follow-up if needed.
+- **Repeated `PeakGroup*` in outputs.** Under the flag, multiple entries
+  in `selected_peak_groups_` can reference the same peak group.
+  `removeFromExclusionList` and the MS2 command builders index by
+  selection slot, not peak group identity, so current consumers should be
+  fine — but confirm during implementation.
+- **Drop-in D inherits the mass-keyed trigger.** Because we insert into
+  the per-charge set exactly when the mass-keyed tqscore condition fires,
+  the "done" semantics per charge match the mass-level one. If a
+  finer-grained per-charge threshold is later wanted, it becomes a new
+  accumulator (out of scope here).
 
 ## Out of Scope
 
