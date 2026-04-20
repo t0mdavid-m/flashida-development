@@ -495,7 +495,7 @@ The `ScanParameters` → Thermo custom-scan mapping elsewhere in `ScanFactory.cs
 | `ScanId` | `ICustomScan.RunningNumber` (via `CreateFusionCustomScan`) | Passed as `id` to the terminal helper — this is how the instrument returns the ID on scan completion. |
 | `IsAgc` | `CreateFusionCustomScan(..., IsAGC: ...)` | Non-zero → true; controls the Thermo AGC code path. |
 
-**Diagnostic-only fields** — cross the ABI but are NOT mapped to any `ScanParameters` property: `Qscore`, `MonoMass`, `ChargeCos`, `ChargeSnr`, `IsoCos`, `Snr`, `ChargeScore`, `PpmError`, `PrecursorIntensity`, `PeakgroupIntensity`. These ride along for TSV logging / diagnostics. `HcdEnergy` is unused on the C# side (collision energy is driven per-stage through `Stages[].CollisionEnergy`).
+**Diagnostic-only fields** — cross the ABI but are NOT mapped to any `ScanParameters` property: `Qscore`, `MonoMass`, `ChargeCos`, `ChargeSnr`, `IsoCos`, `Snr`, `ChargeScore`, `PpmError`, `PrecursorIntensity`, `PeakgroupIntensity`, `HcdEnergy`. All ride along for TSV logging / diagnostics only — see the test-mode TSV write at `FLASHIdaWrapper.cs:372-376`. The actual instrument collision energy is driven per-stage through `Stages[].CollisionEnergy` (emitted as `ActivationType[]` + `CollisionEnergy[]` arrays).
 
 **Bookkeeping fields** not in the mapping: `Priority`, `NumStages` (used to bound the stage loop, not copied), `EnqueueTimestampMs` / `DequeueTimestampMs` (diagnostic), `ParentScanId` (not currently mapped to instrument — reserved for future lineage work).
 

@@ -146,10 +146,10 @@ The packet documents **contracts and data structures**, not the orchestration lo
    - **Intro paragraph:** `BuildFromCommand` (at `ScanFactory.cs:153`) reads each `ScanCommand` field and writes the corresponding Thermo `ScanParameters` / `IFusionCustomScan` property. The mapping is reflection-driven: field names on the C# `ScanCommand` struct must match property names on `ScanParameters`. This is the *second* ABI contract — C#-internal, but a rename breaks the mapping silently (no compile error).
    - **Mapping table**, three columns (ScanCommand field → ScanParameters / Thermo property → notes). Groups:
      - Instrument: `Analyzer`, `FirstMass`, `LastMass`, `OrbitrapResolution`, `AgcTarget`, `MaxIt`, `Microscans`, `RfLens`, `SourceCid` / `SourceCidScaling`, `ScanRate`, `DataType`.
-     - Isolation: `Stages[]` → how the array-of-`IsolationStage` becomes the isolation + activation configuration on the custom scan; `HcdEnergy` applied per stage.
+     - Isolation: `Stages[]` → how the array-of-`IsolationStage` becomes the isolation + activation configuration on the custom scan. Collision energy is driven per-stage through `Stages[].CollisionEnergy`, not through the top-level `HcdEnergy` field.
      - Environment: `FaimsCv`.
-     - Identity: `ScanDescription` carries the tracking-id+suffix and is essential for round-trip identification on the returning scan — **do not strip**; `ParentScanId` for MS2→MS3 lineage.
-     - Diagnostic-only (not mapped to instrument): `Qscore`, `MonoMass`, `ChargeCos`, `ChargeSnr`, `IsoCos`, `Snr`, `ChargeScore`, `PpmError`, `PrecursorIntensity`, `PeakgroupIntensity` — passed across the ABI for TSV logging, not written to the custom scan.
+     - Identity: `ScanDescription` carries the encoded tracking ID + per-helper annotation and is essential for round-trip identification on the returning scan — **do not strip**; `ParentScanId` holds the parent's encoded ID (currently not mapped to any `ScanParameters` property; reserved for future lineage work).
+     - Diagnostic-only (not mapped to instrument): `Qscore`, `MonoMass`, `ChargeCos`, `ChargeSnr`, `IsoCos`, `Snr`, `ChargeScore`, `PpmError`, `PrecursorIntensity`, `PeakgroupIntensity`, `HcdEnergy` — passed across the ABI for TSV logging, not written to the custom scan.
 
 5. **Thermo submission.** Closing pointer: `BuildFromCommand` returns an `IFusionCustomScan`; submission is via the Thermo instrument API (scope-ends-here). Thermo internals out of scope.
 
