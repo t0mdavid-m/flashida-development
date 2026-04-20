@@ -121,7 +121,7 @@ The packet documents **contracts and data structures**, not the orchestration lo
    - `reserved[692]` is the tail absorbing future additions. When adding a field, shrink `reserved` by the field size on both sides, keep the totals at 2048.
    - Adding a field ritual: update C++ struct → rebuild OpenMS.dll → update C# struct to mirror exactly → ship both in lockstep (see global `CLAUDE.md` note on DLL-export staging).
 
-4. **Error contracts.** All bridge functions null-check the `FLASHIda*` argument and catch exceptions, logging to `std::cerr`. Return codes are per-function (see table). No structured error channel — stderr is the log.
+4. **Error contracts.** Only `CreateFLASHIda` has a `try/catch (std::exception&)`; the other four exports have no exception handling (UB if their C++ methods throw across the P/Invoke boundary). Four exports null-check `FLASHIda*` (`CreateFLASHIda` takes `char*`); `GetNextScanCommand` additionally null-checks its `ScanCommand*` output. Null-argument return values differ: `DisposeFLASHIda` no-ops, `GetNextScanCommand` returns `0`, `ProcessScan` and `GetNextTrackingId` return `-1`. No structured error channel — stderr is the log.
 
 5. **Gotchas.**
    - `CharSet.Ansi` + `[ByValTStr]`: a Unicode string across the boundary silently corrupts.
