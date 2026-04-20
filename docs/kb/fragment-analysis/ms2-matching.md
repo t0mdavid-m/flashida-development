@@ -64,12 +64,12 @@ Hardcoded `100` inside `computeFragmentMatch_`. The caller-facing `FragmentAnaly
 
 ## Underlying matching function
 
-`FragmentAnalysis::getTopFragmentMatches` (`FragmentAnalysis.cpp:759`) runs tag-based fragment matching using the stored MS2 deconvolution results. It is the same function invoked (with different tolerance parameters) by the tag+follow-up mode's `PrecursorSelection::processMS2ForTagBasedTargeting` path. Internals (FLASHTagger / FLASHExtender orchestration, fragment indexing) are out of scope for this packet; see the OpenMS source or a future deep-dive packet.
+`FragmentAnalysis::getTopFragmentMatches` (`FragmentAnalysis.cpp:759`) runs tag-based fragment matching using the stored MS2 deconvolution results. It orchestrates FLASHTagger + FLASHExtender internally to produce a full `ProteoformMatch` (region bounds, PTM sites, matched fragments). Internals (FLASHTagger / FLASHExtender orchestration, fragment indexing) are out of scope for this packet; see the OpenMS source or a future deep-dive packet.
+
+**Not the same as tag+follow-up's tag detection.** `PrecursorSelection::processMS2ForTagBasedTargeting` (used by the tag+follow-up mode) invokes `FLASHTaggerAlgorithm::run()` directly for tag detection only — it does not call `getTopFragmentMatches` and does not produce a full `ProteoformMatch`. Both paths use FLASHTagger as a component, but at different levels.
 
 ## Gotchas
 
 - **Silent zero-score on missing config.** An empty `protein_sequence` returns an empty `ProteoformMatch` with `total_match_count = 0`. This is indistinguishable downstream from a legitimate zero-match result. Empty protein + `FragmentCount` metric means all variants score 0 and winner selection picks the first non-baseline variant (strict `>` comparator; see `../exploration/scoring-and-winner.md`).
-
-- **Shared function, different tolerance paths.** `getTopFragmentMatches` is also used for tag detection in tag+follow-up mode (via `PrecursorSelection::processMS2ForTagBasedTargeting`). That caller reaches it with a *different* tolerance argument — check the specific call site when debugging tolerance drift across modes.
 
 - **`exploration_tolerance_ppm` vs. `tolerance_ppm`.** Config divergence risk. When adjusting `method.json` for MS2 scoring tolerance, the relevant key is `ms_settings.ms2.exploration_tolerance_ppm` (not `tolerance_ppm`). Both exist; both flow from config-flow into per-level config; only the former is read by `computeFragmentMatch_`.
