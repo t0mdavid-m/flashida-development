@@ -5,7 +5,10 @@ last_verified: 2026-04-19
 code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:700   # FLASHIda::processScan entry
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:177  # filterAndRank entry
-see_also: []
+see_also:
+  - ../scan-pipeline/README.md
+  - ../exploration/README.md
+  - ../config-flow/README.md
 ---
 
 ## Overview
@@ -40,5 +43,6 @@ Exploration (MS2 and MS3) now has its own packet — see
 
 ## Related Packets
 
+- [`../scan-pipeline/`](../scan-pipeline/README.md) — `ScanCommand` struct, queue, 5 bridge exports, C# consumer. The `ScanCommand`s produced by this packet's code cross to C# via that packet's plumbing.
 - [`../exploration/`](../exploration/README.md) — MS2 and MS3 exploration: variants, scoring, winner selection. Selection and targeting here are upstream of MS2 exploration.
 - [`../config-flow/`](../config-flow/README.md) — how `method.json` becomes the `Config` structs that this packet's code reads.

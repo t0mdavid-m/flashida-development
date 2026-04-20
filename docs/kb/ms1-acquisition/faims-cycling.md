@@ -79,11 +79,10 @@ groups from other CVs. Consequently:
   logic. `advanceToNextCV` always moves forward; skipping happens at a higher level when
   `updateSkip` has accumulated enough credit for a given CV.
 
-- **`faims_cv` sits at byte offset 1240 in `ScanCommand` (struct size 1248, post-Phase-6).**
-  Any serialization change to this field requires the full P/Invoke lockstep update:
-  C++ struct + static assert, C++ test (`ScanCommandLayout_test.cpp`), C# struct
-  (`FLASHIdaWrapper.cs`), and C# layout test (`ScanCommandLayoutTests.cs`). See the
-  parent-repo `CLAUDE.md` for the five-file checklist.
+- **`faims_cv` is part of the `ScanCommand` blittable struct (total size 2048B,
+  `static_assert` at `ScanCommand.h:107`).** Any serialization change to this field
+  requires the full P/Invoke lockstep update. See [`../scan-pipeline/bridge-functions.md`](../scan-pipeline/bridge-functions.md)
+  for the authoritative byte-layout contract and the "Adding a new field" ritual.
 
 - **Post-Phase-6, there is no C# FAIMS state.** `FAIMSScanProcessor.cs` was deleted.
   Searching the C# codebase for CV state or cycling logic will yield nothing; all of it
