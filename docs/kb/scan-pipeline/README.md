@@ -10,6 +10,7 @@ see_also:
   - ../ms1-acquisition/README.md
   - ../exploration/README.md
   - ../config-flow/README.md
+  - ../acquisition-loop/README.md
 ---
 
 ## Overview
@@ -37,6 +38,8 @@ C# acquisition loop → GetNextScanCommand (bridge) → queue.dequeue
 
 ## Out of Scope
 
-- Bodies of `FLASHIda::processScan` and `FLASHIda::getNextScanCommand` — a future packet.
-- C# acquisition-loop mechanics (error handling, shutdown, submission timing) — a future packet.
+- Bodies of `FLASHIda::processScan` and `FLASHIda::getNextScanCommand` —
+  see [`../acquisition-loop/engine-entry-points.md`](../acquisition-loop/engine-entry-points.md).
+- C# acquisition-loop mechanics (error handling, shutdown, submission timing) —
+  see [`../acquisition-loop/csharp-orchestration.md`](../acquisition-loop/csharp-orchestration.md).
 - Thermo `IFusionCustomScan` submission internals — out of scope.
