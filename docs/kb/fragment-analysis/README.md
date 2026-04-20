@@ -3,7 +3,7 @@ title: Fragment Analysis Packet
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.cpp, OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.cpp, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp
 last_verified: 2026-04-20
 code_anchors:
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:913         # Mode 1 entry: conditional follow-up emit
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:914         # Mode 1 entry: conditional follow-up gate
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:793   # Mode 2 entry: computeFragmentMatch_
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:400   # Mode 3 entry: calibrateAndScore call
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:69    # ProteoformMatch struct
@@ -25,7 +25,7 @@ The three modes live in one packet because they share `FragmentAnalysis::Proteof
 
 | Mode | Entry point | Purpose |
 |---|---|---|
-| Tag + follow-up | `FLASHIda.cpp:913` | After MS2, if the precursor tag-matches the configured protein, enqueue a conditional follow-up MS2 scan |
+| Tag + follow-up | `FLASHIda.cpp:914` | After MS2, if the precursor tag-matches the configured protein, enqueue a conditional follow-up MS2 scan |
 | MS2 matching | `Exploration.cpp:793` (`computeFragmentMatch_`) | Populate `ProteoformMatch` for the `FragmentCount` exploration metric |
 | MS3 matching | `Exploration.cpp:400` (`calibrateAndScore`) | Two-pass calibration + tight rematch, batch-re-score MS3 variants post-all-received |
 
@@ -45,10 +45,10 @@ MS3-local ion types, selected per precursor-fragment class via `MS3FragmentMatch
 
 | Precursor fragment class | MS3-local ion types |
 |---|---|
-| `b`-precursor (subsequence from N-terminus) | `a`, `b`, `yb`, `ya` |
-| `y`-precursor (subsequence from C-terminus) | `a`, `b`, `y` |
+| `a` / `b` / `c` — N-terminal subsequence | `a`, `b`, `yb`, `ya` |
+| `y` / `x` / `z` — C-terminal subsequence (also default) | `a`, `b`, `y` |
 
-The cross-direction ion types (`yb`, `ya`) are MS3-only and only appear for b-precursor subsequences. They carry no water loss.
+The cross-direction ion types (`yb`, `ya`) are MS3-only and only appear for N-terminal-subsequence precursors (`a`/`b`/`c`). They carry no water loss.
 
 ## Read Order
 
