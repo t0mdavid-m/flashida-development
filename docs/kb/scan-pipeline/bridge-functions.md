@@ -85,5 +85,5 @@ This is the critical section. Breaking the contract produces **silent memory cor
 
 - **`CharSet = CharSet.Ansi` + `[ByValTStr]`.** Any Unicode string that reaches this boundary silently corrupts the blittable layout. Use 7-bit ASCII for all `scan_description`, `analyzer`, `activation_type`, etc.
 - **DLL name hardcoded.** The C# side declares `const string dllName = "OpenMS.dll"`. The DLL must resolve at runtime — either on `PATH` or alongside `Flash.exe` (see `FlashIDA/dll/`).
-- **`ProcessScan` is not thread-safe against `GetNextScanCommand` at the bridge layer.** Caller-side serialization required, OR rely on the C++ engine's internal locking (documented in the future internals packet).
+- **`ProcessScan` is not thread-safe against `GetNextScanCommand` at the bridge layer.** Caller-side serialization required, OR rely on the C++ engine's internal locking — see [`../acquisition-loop/engine-entry-points.md`](../acquisition-loop/engine-entry-points.md) for the `analysis_mutex_` / atomics split.
 - **No size assertion on the C# side.** If you change the C# struct without matching C++, you get silent corruption. Keep the `SizeConst` annotations correct and keep `Reserved` the sole free-size field.
