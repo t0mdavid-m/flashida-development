@@ -1,6 +1,6 @@
 ---
 title: KB Packet — MS2 / MS3 Exploration
-status: draft
+status: approved
 created: 2026-04-20
 ---
 
