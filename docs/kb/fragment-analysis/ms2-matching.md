@@ -54,7 +54,9 @@ Inside `Exploration::computeFragmentMatch_` at `Exploration.cpp:793`:
 
 ## Tolerance source
 
-`config_.level(msn_level).exploration_tolerance_ppm`, NOT `level(msn_level).tolerance_ppm`. These are separate per-level config fields — `exploration_tolerance_ppm` is used by exploration scoring (here and in MS3 calibration); `tolerance_ppm` is used elsewhere in the MS2 deconvolution and matching pipeline.
+`config_.level(msn_level).exploration_tolerance_ppm`, NOT `level(msn_level).tolerance_ppm`. These are separate per-level config fields. In MS2 exploration scoring, only `exploration_tolerance_ppm` is read here — `tolerance_ppm` is used elsewhere in the deconvolution and matching pipeline.
+
+Note the cross-mode divergence: MS3 calibration (`MS3FragmentMatcher::calibrateAndScore`, see `ms3-matching.md`) reads the **other** field, `config_.level(group.msn_level).tolerance_ppm`. MS2 exploration scoring and MS3 calibration do not share a tolerance source.
 
 When debugging tolerance-related behavior in MS2 exploration scoring, check `exploration_tolerance_ppm` in the relevant level config first.
 

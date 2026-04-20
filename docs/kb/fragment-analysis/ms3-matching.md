@@ -41,11 +41,11 @@ For MS3 with `MassCount`, `RemainingPrecursor`, or any other metric, `calibrateA
        variant_spectra, protein_sequence, proteoform_ctx,
        fragment_ion_type, fragment_ion_index,
        MS3FragmentMatcher::LOOSE_TOLERANCE_PPM,
-       config_.level(3).exploration_tolerance_ppm,
+       config_.level(group.msn_level).tolerance_ppm,
        &detailed_results);
    ```
 3. **Pass 1 — calibration.** For each variant, match observed deconvolved masses against theoretical masses computed from the precursor subsequence, using the **loose tolerance** `LOOSE_TOLERANCE_PPM = 500.0` (compile-time constant, `MS3FragmentMatcher.h:66`). Collect PPM errors of matched pairs; compute the median → `ppm_offset`. Derive `correction_factor = 1 / (1 + ppm_offset * 1e-6)`.
-4. **Pass 2 — tight rematch.** Apply `correction_factor` to observed masses; rematch at the **tight tolerance** `config_.level(3).exploration_tolerance_ppm`. The resulting match count becomes the variant's calibrated score.
+4. **Pass 2 — tight rematch.** Apply `correction_factor` to observed masses; rematch at the **tight tolerance** `config_.level(group.msn_level).tolerance_ppm` (note: `tolerance_ppm`, not `exploration_tolerance_ppm`, and the level is taken dynamically from the group — typically 3). The resulting match count becomes the variant's calibrated score.
 5. **Return.** Two aligned outputs, one entry per variant:
    - `calibrated_scores[vi]` — overwrites `group.variants[vi].score` and casts to `int` into `fragment_count`.
    - `detailed_results[vi]` — a `FragmentAnalysis::ProteoformMatch` (with `ppm_offset` and `correction_factor` populated) copied into each variant's `identification_result` field.
