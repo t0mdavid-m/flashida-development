@@ -16,6 +16,8 @@ see_also:
   - exploration.md
   - variants-and-sweeps.md
   - ms3-exploration.md
+  - ../fragment-analysis/ms2-matching.md
+  - ../fragment-analysis/ms3-matching.md
 ---
 
 ## `feedResult` flow
@@ -30,7 +32,7 @@ A single `switch` at `Exploration.cpp:716` over `ExplorationMetric` (`Config.h:5
 
 - **`MassCount` — `computeMassCount_` (`Exploration.cpp:747`)**: counts deconvolved masses in the variant's spectrum (`spec.size()`). A spectral-richness proxy: more distinct masses = better fragmentation. Cheap; no reference needed.
 - **`RemainingPrecursor` — `computeRemainingPrecursorScore_` (`Exploration.cpp:752`)**: computes `ratio = remaining_intensity / baseline_reference` in the isolation window, then `score = 1.0 - |ratio - remaining_precursor_target|`, where `remaining_precursor_target` is a per-level config value. Rewards matching the configured target depletion, not maximizing it — a ratio equal to the target scores `1.0`; both over- and under-depletion lose score. Returns four sentinel values on error: `0.0` (empty input), `-1.0` (baseline reference intensity ≤ 0), `-2.0` (baseline variant not yet received), `-3.0` (score clamped when it would be negative). The `out_ratio` out-parameter also carries `-1.0` when the ratio can't be computed.
-- **`FragmentCount` — inlined (`Exploration.cpp:734-739`)**: no separate helper function. The dispatcher's case inlines `return static_cast<double>(fmr.total_match_count);` using the `FragmentMatchResult` produced by `computeFragmentMatch_`. On MS3, pairs with `MS3FragmentMatcher::calibrateAndScore` (`Exploration.cpp:400`), which re-scores variants with calibrated per-variant fragment m/z tolerance **after** the initial winner is selected (see `ms3-exploration.md`).
+- **`FragmentCount` — inlined (`Exploration.cpp:734-739`)**: no separate helper function. The dispatcher's case inlines `return static_cast<double>(fmr.total_match_count);` using the `FragmentMatchResult` produced by `computeFragmentMatch_`. For the MS2 fragment-matching integration (what it calls, tolerance source, gotchas), see [`../fragment-analysis/ms2-matching.md`](../fragment-analysis/ms2-matching.md). On MS3, pairs with `MS3FragmentMatcher::calibrateAndScore` (`Exploration.cpp:400`), which re-scores variants with calibrated per-variant fragment m/z tolerance **after** the initial winner is selected (see `ms3-exploration.md` for the exploration-flow view; [`../fragment-analysis/ms3-matching.md`](../fragment-analysis/ms3-matching.md) for the matcher-side view).
 
 ## Winner selection
 

@@ -13,6 +13,7 @@ see_also:
   - ../config-flow/README.md
   - ../ms1-acquisition/README.md
   - ../acquisition-loop/README.md
+  - ../fragment-analysis/README.md
 ---
 
 ## Overview

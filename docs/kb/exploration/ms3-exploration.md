@@ -22,6 +22,7 @@ see_also:
   - variants-and-sweeps.md
   - scoring-and-winner.md
   - ms2-exploration.md
+  - ../fragment-analysis/ms3-matching.md
 ---
 
 ## Two trigger paths
@@ -49,6 +50,8 @@ After winner selection, a separate production MS3 scan is built with `queue.buil
 MS3 variants share the same state machine and scoring scaffold as MS2; the level-specific differences are *what* gets fragmented (an MS2 fragment, not an MS1 precursor) and *what context* rides along (`fragment_ion_type`, `fragment_ion_index`, `proteoform_ctx`).
 
 ## Post-all-received: `MS3FragmentMatcher::calibrateAndScore`
+
+> For the matcher-side view (two-pass calibration mechanics, MS3 ion types, dual theoreticals), see [`../fragment-analysis/ms3-matching.md`](../fragment-analysis/ms3-matching.md).
 
 MS3-only, `FragmentCount`-metric-only. After `all_received` flips true but **before** winner selection, `feedResult` calls `MS3FragmentMatcher::calibrateAndScore(...)` at `Exploration.cpp:400`. The gate is `group.exploration_metric == ExplorationMetric::FragmentCount && group.msn_level >= 3`.
 

@@ -13,6 +13,7 @@ see_also:
   - scoring-and-winner.md
   - ms2-exploration.md
   - ms3-exploration.md
+  - ../fragment-analysis/data-model.md
 ---
 
 # Exploration — Variants and Sweeps
