@@ -37,7 +37,8 @@ Thin pass-throughs at `FLASHIdaWrapper.cs:179-211`:
 
 `UnifiedScanProcessor.cs:28` is the single call site that drives the input direction: on every incoming `IMsScan` from the instrument, the processor calls `wrapper.ProcessScan(mzs, ints, rt, msLevel, scanDesc ?? "", faimsCv)`. This ingests the raw spectrum into the C++ engine, which runs deconvolution/selection and enqueues resulting `ScanCommand`s.
 
-Loop mechanics (pipeline staging, error handling, shutdown) — out of scope for this packet.
+Loop mechanics (pipeline staging, error handling, shutdown) —
+see [`../acquisition-loop/csharp-orchestration.md`](../acquisition-loop/csharp-orchestration.md).
 
 ## Output direction — acquisition-loop entry
 
@@ -46,7 +47,8 @@ The C# drain loop has two sites, both in `Flash.cs`:
 - **Startup** (`Flash.cs:379-380`): the very first MS1 is pulled via `wrapper.GetNextScanCommand(ref startupCmd2)` and submitted directly through `scanControl.SetFusionCustomScan(scanFactory.BuildFromCommand(startupCmd2))`. This kicks the instrument out of idle.
 - **Steady state** (`Flash.cs:461-463`): the main loop tests `if (wrapper.GetNextScanCommand(ref cmd) == 1)` and on success calls `SendCustomScan(scanFactory.BuildFromCommand(cmd))`.
 
-Loop mechanics (timing, backpressure, shutdown) — out of scope for this packet.
+Loop mechanics (timing, backpressure, shutdown) —
+see [`../acquisition-loop/csharp-orchestration.md`](../acquisition-loop/csharp-orchestration.md).
 
 ## `ScanFactory.BuildFromCommand` — the field mapping
 
