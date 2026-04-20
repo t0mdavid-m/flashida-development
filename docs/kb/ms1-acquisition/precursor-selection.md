@@ -1,7 +1,7 @@
 ---
 title: MS1 Precursor Selection
 applies_to: OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp
-last_verified: 2026-04-19
+last_verified: 2026-04-20
 code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:177   # filterAndRank entry
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:238   # deconvolveMS1 call
@@ -150,3 +150,12 @@ filters.
   candidates stranded if later filters reject them without `break`. SNR failure uses `continue`
   for exactly this reason: a low-SNR peak group may be followed by a high-SNR one at the same
   or lower score.
+
+- `charge_based_exclusion` (developer flag, default off) changes the accumulation
+  block at `:596-630` to use a per-`(nominal_mass, charge)` key
+  (`mass_charge_qscore_map_`) and replaces the mass-level write into
+  `tqscore_exceeding_mass_rt_map_` / `_mz_rt_map_` with an insert into
+  `tqscore_exceeding_mass_charge_set_`. When on, the mass is never globally
+  excluded; instead, specific charges are excluded individually. The candidate
+  loop also expands per-peak-group to one iteration per observed charge. See
+  `docs/superpowers/specs/2026-04-19-charge-based-exclusion-design.md`.
