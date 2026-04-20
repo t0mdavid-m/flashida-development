@@ -140,7 +140,7 @@ git commit -m "docs(kb/exploration): add packet README"
 sed -n '65p;100p;178p;186p;200p;240p' OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Exploration.h
 sed -n '115p;229p;504p' OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp
 sed -n '59p;100p' OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h
-sed -n '422p;494p' OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp
+sed -n '422p;495p' OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp
 sed -n '753p;760p;927p' OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp
 ```
 
@@ -157,7 +157,7 @@ Expected:
 - `Config.h:59` → `enum class ExplorationMetric`
 - `Config.h:100` → `ExplorationMetric exploration = ExplorationMetric::None;`
 - `Config.cpp:422` → `void Config::validate() const` (function definition)
-- `Config.cpp:494` → `bool Config::hasExploration(int msn_level) const` (function definition)
+- `Config.cpp:495` → `bool Config::hasExploration(int msn_level) const` (function definition)
 - `FLASHIda.cpp:753` → `if (config_.hasExploration(2))`
 - `FLASHIda.cpp:760` → `auto cmds = exploration_.initiate(2, selected[i], sel_charges[i], faims_cv, queue_, &ms1_ctx);`
 - `FLASHIda.cpp:927` → `nlr = exploration_.initiateNextLevel(2, deconv_.storedMS2(), ctx.faims_cv, queue_, &ctx);`
@@ -185,7 +185,7 @@ code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:59         # ExplorationMetric enum
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:100        # MSLevelConfig::exploration field
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:422              # Config::validate
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:494              # Config::hasExploration
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:495              # Config::hasExploration
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:753                     # MS1 → MS2 exploration branch
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:760                     # MS2 initiate call
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:927                     # non-exploration MS2 → MS3 initiateNextLevel call
@@ -209,16 +209,16 @@ Body sections (≤150 lines total). Prose only — no multi-line code pastes. Ea
    - When every variant in the group has `received=true`, the group completes. The highest-scoring variant becomes the winner (`group.winner_index`). A production scan is built from the winner and enqueued; `overrides` from the per-level config are applied at this point.
    - If the next level is configured, `Exploration::initiateNextLevel` (`Exploration.cpp:504`) is called with the winner's deconvolved result to start the next-level group (e.g., MS2-winner → MS3 exploration).
 
-3. **State machine.** Data lives in `Exploration::active_groups_` (an `unordered_map<int, ExplorationGroup>` keyed by group ID) and `variant_tracking_map_` (tracking ID → `{group_id, variant_index}`) for constant-time result routing. `FLASHIda` also carries an atomic `exploration_active_` flag used by scan-cycle gating. Group lifetime: created in `initiate`, entries added on every variant; marked complete in `feedResult` once all variants received; cleaned up after the winner's production scan (and any next-level initiation) has been enqueued.
+3. **State machine.** Data lives in `Exploration::active_groups_` (an `unordered_map<int, ExplorationGroup>` keyed by group ID) and `variant_tracking_map_` (tracking ID → `{group_id, variant_index}`) for constant-time result routing. `FLASHIda` also maintains an atomic `exploration_active_` flag (updated on every `processScan` boundary with `exploration_.activeGroupCount() > 0`) intended for lock-free read by scan-cycle gating; as of today the flag is written but never loaded — a future gating hook, not a currently exercised one. Group lifetime: created in `initiate`, entries added on every variant; marked complete in `feedResult` once all variants received; cleaned up after the winner's production scan (and any next-level initiation) has been enqueued.
 
-4. **Per-level config surface.** Exploration is driven by fields on `MSLevelConfig` (`Config.h:100` — `exploration` field itself plus neighbors): `ExplorationMetric exploration` (`Config.h:59`: `None` / `MassCount` / `RemainingPrecursor` / `FragmentCount`), `ce_min` / `ce_max` / `ce_step`, `rt_min` / `rt_max` / `rt_step`, `activations` (list of activation types to sweep), `overrides` (map applied to the winner's production scan), `exploration_tolerance_ppm` (separate from the base tolerance used for non-exploration deconvolution). `Config::hasExploration(msn_level)` (`Config.cpp:494`) returns true whenever `levels_[msn_level].exploration != ExplorationMetric::None`. For the JSON-to-struct wiring, see `../config-flow/`.
+4. **Per-level config surface.** Exploration is driven by fields on `MSLevelConfig` (`Config.h:100` — `exploration` field itself plus neighbors): `ExplorationMetric exploration` (`Config.h:59`: `None` / `MassCount` / `RemainingPrecursor` / `FragmentCount`), `ce_min` / `ce_max` / `ce_step`, `rt_min` / `rt_max` / `rt_step`, `activations` (list of activation types to sweep), `overrides` (map applied to the **variant base config** at `initiate` time, and also acts as a gate: a separate post-winner production scan is emitted only when `overrides` is non-empty), `exploration_tolerance_ppm` (separate from the base tolerance used for non-exploration deconvolution). `Config::hasExploration(msn_level)` (`Config.cpp:495`) returns true whenever `levels_[msn_level].exploration != ExplorationMetric::None`. For the JSON-to-struct wiring, see `../config-flow/`.
 
 5. **Entry points.** The two call sites that reach exploration:
    - `FLASHIda.cpp:753` → `FLASHIda.cpp:760` — when `hasExploration(2)` is true, each selected precursor flows into `Exploration::initiate(2, ...)` instead of the direct `queue_.buildMS2` path. See `ms2-exploration.md`.
    - `FLASHIda.cpp:927` — when MS2 exploration is off but MS3 is configured, the non-exploration MS2 result path calls `Exploration::initiateNextLevel(2, ...)` directly. See `ms3-exploration.md`.
    The exploration-winner path — `feedResult` → `initiateNextLevel` — is internal to `Exploration.cpp` and fires automatically when a group completes and the next level is configured.
 
-6. **Validation.** `Config::validate()` (`Config.cpp:422`) enforces cross-cutting rules that single-field defaults cannot: (a) IDScore-based selection and exploration are mutually exclusive on the same level — they are alternative optimization strategies; (b) exploration levels must have exactly one scan config entry (`level(n).scans.size() == 1`); (c) activation sweep ranges must be consistent with the metric (e.g., `RemainingPrecursor` requires a baseline). Violations throw `std::invalid_argument`, surfacing on stderr before C# sees the `CreateFLASHIda` null return.
+6. **Validation.** `Config::validate()` (`Config.cpp:422`) enforces cross-cutting rules that single-field defaults cannot: (a) **IDScore vs. exploration** — global `targeting_.use_idscore` and any-level `exploration_enabled_` are mutually exclusive (IDScore decides HCD analytically; exploration decides it empirically); (b) **Conditional MS2** — if `targeting_.conditional_ms2_enabled` is set, `tagging_follow_up_scan.activation` must be configured; (c) **Exactly one scan config per exploration level** — `exploration != None` requires `cfg.scans.size() == 1`; (d) **`FragmentCount` needs a protein sequence** — any level with `ExplorationMetric::FragmentCount` requires a non-empty `targeting_.protein_sequence`; (e) **Selection at MSn ≥ 2 needs a protein sequence** — same reason (fragment matching is the default scoring); (f) **Per-activation sweep ranges** — for each configured activation, HCD/CID/EThcD require `ce_min < ce_max`, ETD/EThcD require `rt_min < rt_max`. Violations throw `std::invalid_argument`, surfacing on stderr before C# sees the `CreateFLASHIda` null return.
 
 7. **Gotchas.**
    - **Command load multiplication.** Each selected target produces N variants. At `max_targets=10`, `ce_step=5`, range 20–40, that's 10 × 5 = 50 MS2 commands per MS1 cycle.
@@ -405,7 +405,7 @@ Body sections (≤100 lines total):
 
 4. **Winner selection.** `feedResult` iterates the group's variants; the one with the highest `score` wins. `group.winner_index` is recorded, the group is marked complete, and the production scan is built from the winner's result. Baseline variants are excluded from winner ranking. Ties are broken by `variant_index` ascending (lowest CE at the front, since the sweep is CE-inner by default).
 
-5. **`overrides` application.** `MSLevelConfig::overrides` is a key-value map applied to the winner's production `ScanCommand` before it is enqueued (e.g., `{"collision_energy": "35"}` to clamp the production CE). Overrides apply only to the winner, not to exploration variants. Useful to decouple the "which CE wins" decision from the "what CE actually runs" decision — a variant sweep at 20–40 eV may always collapse production to a fixed 35 eV regardless of the winner.
+5. **`overrides` application.** `MSLevelConfig::overrides` is a key-value map that `Exploration::initiate` applies to the variant sweep's **base config** via `base_config.applyOverrides(cfg.overrides)` (`Exploration.cpp:127`) — so every variant inherits the overrides, not just a winner. The map *also* gates whether a separate post-winner production scan is emitted at all: the branch at `Exploration.cpp:460` (`if (!level_config.overrides.empty())`) builds a fresh production `ScanCommand` from `level_config.scans[0]` with the winner's CE/RT/activation copied onto it; otherwise no post-winner production scan is enqueued. Net effect: overrides shape every variant, and their presence doubles as a flag to request an additional explicit production scan on top of the winner's variant scan.
 
 6. **Gotchas.**
    - **Score sentinel `-1.0`.** Un-received variants carry `-1.0`; do not treat this as a legitimate low score. Winner selection only runs after `group.complete`, so this matters only for mid-lifecycle inspection.
