@@ -19,14 +19,21 @@ FlashIDA's `FLASHIdaWrapper.cs` calls into `OpenMS.dll` via P/Invoke. The bridge
 
 ## Build Commands
 
+**Build in CI, not locally.** Local builds are reserved for rare manual verification.
+
+- **Push to the OpenMS submodule** → CI builds `OpenMS.dll` and uploads it as an artifact that FlashIDA consumes.
+- **Push to the parent repo** → CI builds the FlashIDA solution and runs the C# / C++ test suites.
+
+Build sparsely throughout a session. At a minimum, push and let CI build once at the **end** of a run so the work lands in a verified state.
+
 ### FlashIDA (C# / .NET 4.8, Windows only)
 ```
 msbuild FlashIDA/src/Flash/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU"
 ```
-Requires Thermo iAPI DLLs in `FlashIDA/dependencies/` (proprietary, not in repo) and OpenMS DLLs in `FlashIDA/dll/`.
+Requires Thermo iAPI DLLs in `FlashIDA/dependencies/` (proprietary, not in repo) and OpenMS DLLs in `FlashIDA/dll/`. Prefer pulling built DLLs from the OpenMS CI artifact rather than rebuilding locally.
 
 ### OpenMS (C++20 / CMake)
-**Do NOT build unless explicitly asked** — extremely resource-intensive.
+**Do NOT build unless explicitly asked** — extremely resource-intensive and supplied by CI.
 ```bash
 cmake -DCMAKE_PREFIX_PATH=<vcpkg-installed-path> <source-dir>
 cmake --build <build-dir> --config Release
