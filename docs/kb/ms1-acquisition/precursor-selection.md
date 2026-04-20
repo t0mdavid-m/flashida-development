@@ -11,7 +11,7 @@ code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:572   # SNR filter
 see_also:
   - targeting-modes.md
-  - exploration.md
+  - ../exploration/ms2-exploration.md
 ---
 
 # MS1 Precursor Selection

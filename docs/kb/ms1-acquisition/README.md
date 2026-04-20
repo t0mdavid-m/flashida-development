@@ -25,10 +25,11 @@ no longer exist.
   and scores precursors from deconvolved peaks.
 - `targeting-modes.md` — the four `TargetingConfig::mode` values and how each
   constrains which precursors are eligible.
-- `exploration.md` — CE-sweep variants and the metric used to pick the
-  exploration winner after multiple injections.
 - `faims-cycling.md` — per-MS1 FAIMS CV cycling state machine and how child
   MS2 scans inherit the CV value.
+
+Exploration (MS2 and MS3) now has its own packet — see
+`../exploration/README.md`.
 
 ## Entry Points
 
@@ -39,4 +40,5 @@ no longer exist.
 
 ## Related Packets
 
-None yet; see [index](../index.md).
+- [`../exploration/`](../exploration/README.md) — MS2 and MS3 exploration: variants, scoring, winner selection. Selection and targeting here are upstream of MS2 exploration.
+- [`../config-flow/`](../config-flow/README.md) — how `method.json` becomes the `Config` structs that this packet's code reads.

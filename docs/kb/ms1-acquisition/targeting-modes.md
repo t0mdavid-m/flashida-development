@@ -12,7 +12,7 @@ code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:277  # priority tie-break
 see_also:
   - precursor-selection.md
-  - exploration.md
+  - ../exploration/ms2-exploration.md
 ---
 
 # Targeting Modes
