@@ -69,7 +69,7 @@ The packet documents **contracts and data structures**, not the orchestration lo
 **Sections:**
 
 1. **`ScanCommand` struct.** One-sentence purpose ("one blittable, 2048-byte record describing a single scan"). Field *groups*:
-   - **Identity** — `scan_id` (int32 counter, encoded 3-char in `scan_description`), `msn_level`, `scan_description` (carries tracking-id + suffix), `parent_scan_id[4]` (MS2→MS3 lineage, 3 chars + null).
+   - **Identity** — `scan_id` (int32 counter, encoded 3-char in `scan_description` for MS2/MS3/follow-ups; zero for `makeMS1`/`makeAGC`), `msn_level`, `scan_description` (carries the encoded tracking ID and a human-readable annotation — exact format per helper, see Tracking IDs section), `parent_scan_id[4]` (3 chars + null; empty for MS1; carries MS1 ID on MS2, MS2 ID on MS3; `buildFollowUp` inherits unchanged).
    - **Instrument** — `analyzer[32]`, `first_mass` / `last_mass`, `orbitrap_resolution`, `agc_target`, `max_it`, `microscans`, `rf_lens`, `source_cid` / `source_cid_scaling`, `scan_rate[32]`, `data_type[32]`.
    - **Isolation** — `IsolationStage stages[10]` (each 80B: 5 doubles + 2 int32 + char[32]), `num_stages`.
    - **Precursor scoring** (diagnostic — populated by `buildMS2`, not written to instrument) — `qscore`, `mono_mass`, `charge_cos`/`charge_snr`/`iso_cos`/`snr`, `charge_score`, `ppm_error`, `precursor_intensity`, `peakgroup_intensity`.
@@ -79,13 +79,13 @@ The packet documents **contracts and data structures**, not the orchestration lo
 
 2. **`ScanCommandQueue` — state.** Four priority queues (0=highest, 3=lowest); `pending_scan_map_` keyed by tracking_id for in-flight tracking (scans that were dequeued but not yet completed on the instrument); `tracking_id_counter_` monotonic int; all access guarded by `queue_mutex_`.
 
-3. **Build helpers** — one paragraph per:
-   - `makeMS1()` / `makeAGC()` (const, no lock — read only immutable config).
+3. **Build helpers** — one paragraph per (five total):
+   - `makeMS1()` / `makeAGC()` (const, no lock — read only immutable config). Neither assigns a tracking ID (`scan_id` stays 0); `scan_description` is the literal `"S"` / `"A"`.
    - `buildMS2(PeakGroup, charge, ScanConfig, priority=2, parent_scan_id=0)` — populates precursor-scoring fields from the `PeakGroup`, builds a single isolation stage from the selected precursor m/z.
    - `buildMS3(ms2_ctx, ScanConfig, frag_mz, frag_charge, iso_width, ion_type='\0', frag_index=0, priority=1)` — two-stage isolation inherited from the MS2 context plus the fragment stage.
-   - `buildFollowUp(ctx, ScanConfig, suffix, priority=0)` — clones a prior scan with a fresh tracking ID and a `scan_description` suffix.
+   - `buildFollowUp(ctx, ScanConfig, suffix, priority=0)` — clones a prior scan with a fresh tracking ID and a suffix letter embedded after the encoded ID.
 
-4. **Tracking IDs.** The monotonic int counter is encoded base-94 into 3 printable ASCII chars (`tracking_alphabet_` at `ScanCommandQueue.cpp:48`, verified 94 chars `!`–`~`). The encoded ID is written into `scan_description` as `{encoded}{suffix}`, where suffix is `'A'` (AGC), `'S'` (survey / cycle-time MS1), or empty (normal). `parent_scan_id[4]` carries the parent's 3-char ID + null for MS2→MS3 lineage. Thread-safe via `queue_mutex_`. Forward-pointer: `isExplorationVariant(tracking_id)` in the exploration packet depends on this suffix convention.
+4. **Tracking IDs.** The monotonic int counter is encoded base-94 into 3 printable ASCII chars (`tracking_alphabet_` at `ScanCommandQueue.cpp:48`, verified 94 chars `!`–`~`). The `scan_description` format is per-helper: `makeMS1` writes literal `"S"` and `makeAGC` writes literal `"A"` (neither assigns a tracking ID — `scan_id` stays 0); `buildMS2` writes `{encoded}R{mass_kDa}@{charge}`; `buildMS3` writes the same with an optional `{ion_type}{frag_index}` suffix when a specific fragment is targeted; `buildFollowUp` writes `{encoded}{suffix}{mass_kDa}@{charge}` (the only helper embedding a suffix letter after the encoded ID). `parent_scan_id[4]` carries the parent scan's 3-char ID + null — empty for MS1, MS1's ID on MS2, MS2's ID on MS3; `buildFollowUp` inherits unchanged. Thread-safe via `queue_mutex_`.
 
 5. **Queue API.** `push` / `dequeue` (priority-ordered) / `registerPending` / `resolvePending` / `peekPending`. One line each.
 
