@@ -10,6 +10,7 @@ see_also:
   - ../exploration/README.md
   - ../config-flow/README.md
   - ../acquisition-loop/README.md
+  - ../fragment-analysis/README.md
 ---
 
 ## Overview
