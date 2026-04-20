@@ -32,7 +32,7 @@ see_also:
 
 Field groups:
 
-- **Identity** — `scan_id` (int32 monotonic counter), `msn_level` (1/2/3), `scan_description[256]` (carries the encoded tracking ID + suffix), `parent_scan_id[4]` (3 chars + null; MS2→MS3 lineage; empty for MS1/MS2).
+- **Identity** — `scan_id` (int32 monotonic counter), `msn_level` (1/2/3), `scan_description[256]` (carries the encoded tracking ID + human-readable annotation), `parent_scan_id[4]` (3 chars + null; holds the parent's encoded ID — empty for MS1, carries MS1 ID on MS2, MS2 ID on MS3).
 - **Instrument parameters** — `analyzer[32]`, `first_mass` / `last_mass`, `orbitrap_resolution`, `agc_target`, `max_it`, `microscans`, `rf_lens`, `source_cid` / `source_cid_scaling`, `scan_rate[32]`, `data_type[32]`.
 - **Isolation** — `stages[10]` (`IsolationStage` — `:48`, each 80B: 5 doubles `precursor_mz` / `isolation_width` / `collision_energy` / `reaction_time` / `reagent_max_it`, 2 int32 `reagent_agc_target` / `charge_state`, `activation_type[32]`), `num_stages` (count of valid entries).
 - **Precursor scoring (diagnostic only)** — `qscore`, `mono_mass`, `charge_cos`, `charge_snr`, `iso_cos`, `snr`, `charge_score`, `ppm_error`, `precursor_intensity`, `peakgroup_intensity`. Populated by `buildMS2` from the source `PeakGroup`. These ride along for TSV logging and diagnostics; they are *not* mapped to any instrument parameter (see [csharp-consumer.md](csharp-consumer.md)).
@@ -50,23 +50,27 @@ Field groups:
 
 ## Build helpers
 
-All four helpers return a fully-populated `ScanCommand`; the caller chooses whether to `push()` or treat it as a bypass.
+All five helpers return a fully-populated `ScanCommand`; the caller chooses whether to `push()` or treat it as a bypass.
 
-- `makeMS1()` (`ScanCommandQueue.h:81`) — const, no lock. Produces the survey MS1 command from the method config.
-- `makeAGC()` (`:84`) — const, no lock. Produces an AGC calibration scan; `is_agc == 1`, tracking-id suffix `'A'`.
+- `makeMS1()` (`ScanCommandQueue.h:81`) — const, no lock. Produces the survey MS1 command from the method config. Does not assign a tracking ID (`scan_id` stays 0); `scan_description` is the literal `"S"`.
+- `makeAGC()` (`:84`) — const, no lock. Produces an AGC calibration scan; `is_agc == 1`. Does not assign a tracking ID; `scan_description` is the literal `"A"`.
 - `buildMS2(const PeakGroup& pg, int charge, const ScanConfig& scan_config, int priority = 2, int parent_scan_id = 0)` (`:73`) — populates precursor-scoring fields from `pg` accessors (`getQscore`, `getMonoMass`, …); builds a single `IsolationStage` from the selected precursor m/z.
 - `buildMS3(const ScanCommand& ms2_ctx, const ScanConfig& ms3_config, double frag_mz, int frag_charge, double iso_width, char ion_type = '\0', int frag_index = 0, int priority = 1)` (`:76`) — two-stage isolation: inherits the MS1 precursor stage from `ms2_ctx`, appends the MS3 fragment stage. `parent_scan_id` is copied from `ms2_ctx.scan_id` encoded into 3 chars.
 - `buildFollowUp(const ScanCommand& ctx, const ScanConfig& follow_up_config, char suffix, int priority = 0)` (`:88`) — clones `ctx` with a fresh tracking ID and a `scan_description` suffix character.
 
 ## Tracking IDs — base-94 into `scan_description`
 
-The monotonic `tracking_id_counter_` int is encoded into **3 printable ASCII characters** using a 94-character alphabet (`!` through `~`, i.e. `0x21`-`0x7E`; definition at `ScanCommandQueue.cpp:48`; encode at `:60`). The encoded ID is written into `scan_description` as `{encoded}{suffix}`:
+The monotonic `tracking_id_counter_` int is encoded into **3 printable ASCII characters** using a 94-character alphabet (`!` through `~`, i.e. `0x21`-`0x7E`; definition at `ScanCommandQueue.cpp:48`; encode at `:60`). The `scan_description` format depends on which helper built the command:
 
-- suffix `'A'` — AGC calibration scan
-- suffix `'S'` — survey / cycle-time-forced MS1
-- no suffix — normal precursor-driven scan
+- `makeMS1()` writes the literal `"S"` (no encoded ID — survey scans don't carry a tracking ID; `scan_id` stays at 0).
+- `makeAGC()` writes the literal `"A"` (no encoded ID — same reason).
+- `buildMS2` writes `{encoded}R{mass_kDa:.1f}@{charge}` (e.g. `"abcR12.3@8"`).
+- `buildMS3` writes `{encoded}R{frag_mass_kDa:.1f}@{frag_charge}`, optionally followed by `{ion_type}{frag_index}` when a specific fragment is targeted (e.g. `"xyzR1.2@3b7"`).
+- `buildFollowUp` writes `{encoded}{suffix}{mass_kDa:.1f}@{charge}` — the only helper that embeds a single-letter suffix after the encoded ID.
 
-`parent_scan_id[4]` carries the parent MS2's 3-char encoded ID plus a null terminator; it is empty for MS1 and MS2. The exploration packet's `isExplorationVariant(tracking_id)` check (see `../exploration/`) relies on this suffix convention.
+The literal format lives in `ScanCommandQueue.cpp:239/329/363`.
+
+`parent_scan_id[4]` carries the parent scan's 3-char encoded ID plus a null terminator: empty for MS1, the parent MS1's ID on MS2, and the parent MS2's ID on MS3. `buildFollowUp` inherits `parent_scan_id` unchanged from its source command.
 
 ID allocation is thread-safe: `nextTrackingId()` (`ScanCommandQueue.h:122`, impl `:93`) locks `queue_mutex_`; the private `nextTrackingIdInt_()` (`:174`, impl `:83`) is called from within already-locked build paths.
 
