@@ -9,6 +9,7 @@ subsystem guide — read the packet README first, drill down as needed.
   targeting modes, FAIMS cycling.
 - [Config flow](config-flow/README.md) — method.json → C# → C++ bridge → engine config.
 - [Exploration](exploration/README.md) — MS2 and MS3 exploration: variants, scoring, winner selection.
+- [Scan pipeline](scan-pipeline/README.md) — ScanCommand struct, queue, 5 bridge exports, C# consumer.
 
 ## Conventions
 
