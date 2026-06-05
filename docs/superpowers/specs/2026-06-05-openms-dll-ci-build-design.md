@@ -67,7 +67,7 @@ cpp-unit-tests (ubuntu-latest)   build-openms-dll (windows-2022)   ← NEW, runs
                                    • artifact: openms-fresh-dll
                                           │
                                           ▼  needs: build-openms-dll
-                                   windows-tests (windows-latest)   ← MODIFIED
+                                   windows-tests (windows-2022)   ← MODIFIED
                                      • download openms-fresh-dll
                                      • overwrite FlashIDA/dll/*  (before msbuild)
                                      • existing suite, unchanged
@@ -127,6 +127,12 @@ is already green on `august_pre`; it costs the extra TOPP-tool build time.
 ### Job 2 — `windows-tests` (modified)
 
 - Add `needs: build-openms-dll` to the job.
+- **Pin the runner to `windows-2022`** (was `windows-latest`) to match the build host, so
+  the freshly built `OpenMS.dll`'s MSVC/OpenMP (`vcomp140`) runtime deps are guaranteed
+  present on the test host. (Review-driven hardening; the build job and test host now share
+  one toolchain image.)
+- The build job checks out with `submodules: true` (**not** `recursive`) so OpenMS's nested
+  `contrib` submodule stays empty and the prebuilt contrib tarball extracts into a clean dir.
 - New step after `actions/checkout`, **before** `Setup MSBuild` / `msbuild`:
   1. `actions/download-artifact@v4` with `name: openms-fresh-dll` into a temp dir.
   2. `Copy-Item -Force` the four DLLs over `FlashIDA/dll/{OpenMS.dll, OpenSwathAlgo.dll,
@@ -155,7 +161,8 @@ intended drift signal.
 | **Cold ccache** on first run per branch ≈ full Release `libOpenMS` compile (tens of minutes), on every push's critical path since blocking. | `restore-keys` fallback chain (branch → any) seeds the cache from prior runs; warm runs are much faster. Target-narrowing to `--target OpenMS` avoids building TOPP tools. |
 | **Qt version mismatch** — fresh `OpenMS.dll` links Qt 6.8.3. | Ship the 6.8.3 `Qt6Core.dll`/`Qt6Network.dll` from the artifact; committed Qt6 DLLs are unused in CI. |
 | **zlib compatibility** — fresh DLL vs committed `zlib.dll`. | Same contrib provenance as before; first green run confirms load. If it ever mismatches, add `zlib.dll` to the artifact from contrib. |
-| **Toolchain drift** — `windows-latest` may roll past 2022. | Pin `build-openms-dll` to `windows-2022` (matches Qt `msvc2022` + committed-DLL provenance). `windows-tests` stays `windows-latest` — managed C# loading a native DLL only needs the VC++ redist already present on the runner. |
+| **Toolchain drift** — the fresh `OpenMS.dll` imports `vcomp140`/MSVC runtime; a future `windows-latest` image could lack the matching redist. | Pin **both** `build-openms-dll` and `windows-tests` to `windows-2022` (matches Qt `msvc2022` + committed-DLL provenance), so build and test share one toolchain image. |
+| **Recursive contrib overlay** — `submodules: recursive` would clone OpenMS's `contrib` *source* under the prebuilt tarball and can break `find_package`. | Build job uses `submodules: true` (OpenMS source only, nested submodules left empty); the contrib tarball extracts into a clean `OpenMS/contrib`. |
 | **Flaky `OpenMS/contrib` download.** | Contrib is cached (`Windows-contrib3`); download only runs on cache miss. |
 
 ## Acceptance criteria
