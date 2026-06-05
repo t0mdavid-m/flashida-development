@@ -2,7 +2,7 @@ name: flashida-ci
 
 on:
   push:
-    branches: [main, develop, flashida-v9-migration, 'phase-*']
+    branches: [main, develop, flashida-v9-migration, 'phase-*', 'august_pre']
   pull_request:
     branches: [main, develop, flashida-v9-migration]
 
