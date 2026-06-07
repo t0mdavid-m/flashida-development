@@ -31,15 +31,10 @@ bounds) and `trigger_ids_` (monotonically increasing acquisition IDs for exclusi
 
 ## Ranking Basis
 
-The sort applied to `deconvolvedMS1()` before the selection loop is determined by four branches
-inside `filterPeakGroupsUsingMassExclusion_` (`:246`). All four operate on the full candidate
+The sort applied to `deconvolvedMS1()` before the selection loop is determined by branches
+inside `filterPeakGroupsUsingMassExclusion_` (`:246`). They operate on the full candidate
 list before any per-candidate filtering runs, so only sort order — not candidate presence — is
 affected here.
-
-- **`use_idscore=true`** — calls `sortByIDScoreRepresentative()` or `sortByIDScoreAllCharges()`.
-  When `hcd_energy < 0` the best HCD is chosen per peak group; when `hcd_energy >= 0` scores are
-  evaluated at that fixed energy. WHY: IDScore integrates fragment-match evidence from prior
-  acquisitions; ranking by it promotes previously-identified masses.
 
 - **Default (QScore, per-charge)** — `sortByQscore()` (`:272`). The representative charge's
   QScore drives order. This is the most common production path.
@@ -119,12 +114,10 @@ filters.
   group's representative charge when `consider_all_charges=true` or when a TSV target specifies
   an explicit charge that overrides the engine's choice (`:488`).
 
-- **`trigger_hcds_`** — Per-selection HCD collision energy. Set to `config_.targeting().hcd_energy`
-  by default; overridden by IDScore branches that pick the energy that maximizes the score
-  (`:406`, `:412`). The MS2 command builder reads this to set the fragmentation energy
-  consistently with the branch intent.
+- **`trigger_hcds_`** — Per-selection HCD collision energy. Set to `config_.targeting().hcd_energy`.
+  The MS2 command builder reads this to set the fragmentation energy.
 
-- **`trigger_scores_`** — The QScore or IDScore value that secured this slot. Used for logging,
+- **`trigger_scores_`** — The QScore value that secured this slot. Used for logging,
   downstream tqscore accumulation, and exclusion list management via `removeFromExclusionList`.
 
 ## Gotchas

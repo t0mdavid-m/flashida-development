@@ -131,9 +131,8 @@ ms3.<key> is no longer supported...` on stderr before the C# `InvalidOperationEx
 ## Stage 9 — Validation
 
 `validate()` is called at the end of `Config::Config` (`Config.cpp:418`; definition at `:422`). It enforces
-constraints that cannot be expressed as individual defaults: IDScore and exploration
-cannot both be active (they are mutually exclusive strategies for HCD energy
-selection); conditional MS2 requires a `follow_up_scan` to be configured (see [`../fragment-analysis/tag-follow-up.md`](../fragment-analysis/tag-follow-up.md) for the downstream mode mechanics); and any
+constraints that cannot be expressed as individual defaults: conditional MS2 requires a
+`follow_up_scan` to be configured (see [`../fragment-analysis/tag-follow-up.md`](../fragment-analysis/tag-follow-up.md) for the downstream mode mechanics); and any
 MS level configured for exploration must have exactly one scan config entry. Any
 violation throws `std::invalid_argument` with a diagnostic message, surfacing on
 stderr before C# sees a null return.

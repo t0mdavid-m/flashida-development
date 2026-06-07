@@ -115,7 +115,6 @@ loop does not apply — mode 3 runs only the single `iteration = 1` pass.
 | `fasta_file` | FASTA database for tag-based target expansion. |
 
 > Related but distinct: the MS1-side tag-biased precursor selection controlled by the two keys above is different from the MS2-side tag confirmation + conditional follow-up scan, which is covered in [`../fragment-analysis/tag-follow-up.md`](../fragment-analysis/tag-follow-up.md).
-| `use_idscore` | Switches the ranking metric from QScore to IDScore. |
 | `consider_all_charges` | Ranks across all charge states rather than only the representative charge. |
 | `hcd_energy` | Fixed HCD energy for all targets; `-1` means auto-select per peak group. |
 

@@ -80,6 +80,4 @@ The exploration-winner path — `feedResult` detecting completion and internally
 
 - **Baseline adds to load.** The `RemainingPrecursor` metric prepends a CE=0 reference scan (invisible in `ce_min` / `ce_max` / `ce_step`), adding one variant per group beyond the CE-grid count.
 
-- **IDScore + exploration mutual exclusion.** Configuring both IDScore-based selection and exploration on the same level is rejected at `Config::validate()`. Pick one optimization strategy per level.
-
 - **Per-level tolerance.** `exploration_tolerance_ppm` can differ from the base deconvolution tolerance. Exploration variant deconvolutions use this field, not the base — useful when variants need looser matching than the primary MS2 pipeline.
