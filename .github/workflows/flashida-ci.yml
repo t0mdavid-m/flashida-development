@@ -165,38 +165,43 @@ jobs:
             MS3FragmentMatcher_test \
             MS3FragmentMatcher_identification_test
 
-      # --- Stage Qt runtime DLLs next to the test exes so they travel along ---
-      # OpenMS.dll + OpenSwathAlgo.dll are already in OpenMS/build/bin (built
-      # above). zlib.dll is NOT a runtime dep of these 13 tests.
-      - name: Stage Qt runtime DLLs into build/bin
+      # --- Stage ALL runtime DLLs next to the test exes ---
+      # Test exes live in OpenMS/build/src/tests/class_tests/bin/ (the OpenMS
+      # test RUNTIME_OUTPUT_DIRECTORY override: src/tests/class_tests/CMakeLists.txt:16
+      # + cmake/add_library_macros.cmake), NOT OpenMS/build/bin (library output).
+      # The build already copies OpenMS.dll + OpenSwathAlgo.dll into the test bin;
+      # add Qt6 (and re-copy the OpenMS pair as cheap insurance) so every runtime
+      # dep sits beside the exes. zlib.dll is NOT a dep of these 13 tests.
+      - name: Stage runtime DLLs next to the test exes
         shell: bash
         run: |
-          cp "$QT_ROOT_DIR/bin/Qt6Core.dll"    OpenMS/build/bin/
-          cp "$QT_ROOT_DIR/bin/Qt6Network.dll" OpenMS/build/bin/
-          ls -la OpenMS/build/bin/*.dll
+          TBIN=OpenMS/build/src/tests/class_tests/bin
+          ls -la "$TBIN"/*.exe          # guard: fail loudly if the exes aren't here
+          cp OpenMS/build/bin/OpenMS.dll        "$TBIN"/
+          cp OpenMS/build/bin/OpenSwathAlgo.dll "$TBIN"/
+          cp "$QT_ROOT_DIR/bin/Qt6Core.dll"     "$TBIN"/
+          cp "$QT_ROOT_DIR/bin/Qt6Network.dll"  "$TBIN"/
+          ls -la "$TBIN"/*.dll
 
-      # --- Assemble a LEAN cpp-test artifact (exes + DLLs + ctest metadata) ---
-      # Excludes the multi-GB .obj/.lib tree. Reconstructed so a download into
-      # OpenMS/build restores bin/*.exe and the CTestTestfile.cmake subtree at
-      # their original relative paths (ctest reads absolute exe paths from those,
-      # which resolve because github.workspace is identical across windows jobs).
-      - name: Assemble cpp-test-build payload
+      # --- Package the build tree for ctest (single tarball, no object files) ---
+      # Robust handoff: keeps every exe, DLL, CTestTestfile.cmake and
+      # DartConfiguration.tcl wherever CMake placed them; drops the multi-GB
+      # object/lib/pdb intermediates ctest never reads.
+      - name: Package cpp-test-build tarball
         shell: bash
         run: |
-          mkdir -p cpp-test-build/bin
-          cp OpenMS/build/bin/*.exe cpp-test-build/bin/
-          cp OpenMS/build/bin/*.dll cpp-test-build/bin/
-          ( cd OpenMS/build && \
-            find . -name CTestTestfile.cmake -exec cp --parents {} "$GITHUB_WORKSPACE/cpp-test-build/" \; )
-          cp OpenMS/build/DartConfiguration.tcl cpp-test-build/ 2>/dev/null || true
-          cp OpenMS/build/CMakeCache.txt        cpp-test-build/ 2>/dev/null || true
-          ls -R cpp-test-build | head -50
+          tar czf cpp-test-build.tgz -C OpenMS \
+            --exclude='*.obj' --exclude='*.o' --exclude='*.lib' --exclude='*.a' \
+            --exclude='*.pdb' --exclude='*.ilk' --exclude='*.exp' \
+            build
+          echo "test exes in tarball:"; tar tzf cpp-test-build.tgz \
+            | grep -E 'class_tests/bin/.*_test\.exe' | head
 
       - name: Upload cpp-test-build artifact
         uses: actions/upload-artifact@v4
         with:
           name: cpp-test-build
-          path: cpp-test-build/
+          path: cpp-test-build.tgz
 
   # ----------------------------------------------------------------
   # C# unit tests + regression + bridge verification — windows-2022.
@@ -442,7 +447,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: cpp-test-build
-          path: OpenMS/build
+          path: .
+
+      - name: Unpack build tree
+        shell: bash
+        run: |
+          tar xzf cpp-test-build.tgz -C OpenMS      # -> OpenMS/build/...
+          ls -la OpenMS/build/src/tests/class_tests/bin/*.exe
 
       - name: Run FLASH C++ unit tests
         env:
