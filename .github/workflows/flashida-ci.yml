@@ -170,8 +170,9 @@ jobs:
       # test RUNTIME_OUTPUT_DIRECTORY override: src/tests/class_tests/CMakeLists.txt:16
       # + cmake/add_library_macros.cmake), NOT OpenMS/build/bin (library output).
       # The build already copies OpenMS.dll + OpenSwathAlgo.dll into the test bin;
-      # add Qt6 (and re-copy the OpenMS pair as cheap insurance) so every runtime
-      # dep sits beside the exes. zlib.dll is NOT a dep of these 13 tests.
+      # add Qt6 + zlib (and re-copy the OpenMS pair as cheap insurance) so every
+      # runtime dep sits beside the exes. zlib.dll is OpenMS.dll's own load-time
+      # dep (the proven 5-DLL set that windows-tests ships from FlashIDA/dll/).
       - name: Stage runtime DLLs next to the test exes
         shell: bash
         run: |
@@ -181,6 +182,7 @@ jobs:
           cp OpenMS/build/bin/OpenSwathAlgo.dll "$TBIN"/
           cp "$QT_ROOT_DIR/bin/Qt6Core.dll"     "$TBIN"/
           cp "$QT_ROOT_DIR/bin/Qt6Network.dll"  "$TBIN"/
+          cp FlashIDA/dll/zlib.dll              "$TBIN"/   # OpenMS.dll load-time dep
           ls -la "$TBIN"/*.dll
 
       # --- Package the build tree for ctest (single tarball, no object files) ---
