@@ -163,7 +163,9 @@ jobs:
             FragmentAnalysis_test \
             FragmentAnalysis_toProForma_test \
             MS3FragmentMatcher_test \
-            MS3FragmentMatcher_identification_test
+            MS3FragmentMatcher_identification_test \
+            FLASHIda_ChargeBasedExclusion_test \
+            ScanConfig_applyOverrides_test
 
       # --- Stage ALL runtime DLLs next to the test exes ---
       # Test exes live in OpenMS/build/src/tests/class_tests/bin/ (the OpenMS
@@ -278,6 +280,11 @@ jobs:
           Copy-Item FlashIDA\dependencies\*.dll FlashIDA\bin\ -Force
 
       # --- Unit tests (NUnit) ---
+      # The --where filter below excludes CT35/CT36 (P4_AL_CT35/CT36 MS3 Mode1/Mode2
+      # MS2-return pipeline): real, golden-backed tests whose MS3 emission is data-dependent
+      # and whose committed goldens proved flaky across OpenMS engine bumps. Excluded pending
+      # re-stabilization (fresh MS3 golden recapture) — see
+      # docs/superpowers/plans/2026-06-11-test-falsepass-mitigation.md. TODO: re-enable.
       - name: Run NUnit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
@@ -325,15 +332,17 @@ jobs:
         shell: powershell
         run: |
           $jsonDir = "FlashIDA\test-output\json"
-          if (Test-Path "$jsonDir\config_default.json") {
-              Write-Host "config_default.json captured"
-          } else {
-              Write-Host "WARNING: config_default.json not captured"
+          $missing = @()
+          foreach ($f in 'config_default.json','config_full.json') {
+              if (Test-Path "$jsonDir\$f") {
+                  Write-Host "$f captured"
+              } else {
+                  $missing += $f
+              }
           }
-          if (Test-Path "$jsonDir\config_full.json") {
-              Write-Host "config_full.json captured"
-          } else {
-              Write-Host "WARNING: config_full.json not captured"
+          if ($missing.Count -gt 0) {
+              Write-Host "ERROR: JSON golden(s) not captured: $($missing -join ', ')"
+              exit 1
           }
 
       - name: Upload JSON golden capture
@@ -373,7 +382,11 @@ jobs:
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
         run: |
-          powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output 2>&1 | Tee-Object -FilePath FlashIDA\test-output\regression-stdout.txt
+          powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output *>&1 | Tee-Object -FilePath FlashIDA\test-output\regression-stdout.txt
+          # Re-assert the child exit code explicitly (Tee-Object is a cmdlet and leaves
+          # $LASTEXITCODE = the child powershell's code); don't rely on the GHA epilogue,
+          # which a future trailing native command could silently reset.
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload regression output
         if: always()
@@ -387,19 +400,29 @@ jobs:
         if: always()
         shell: powershell
         run: |
+          $ErrorActionPreference = 'Stop'
+          # Fail closed: a missing result file means the NUnit step never produced results,
+          # which is a failure of this gate, not a reason to skip.
           if (-not (Test-Path TestResults.xml)) {
-              Write-Host "TestResults.xml not found, skipping bridge verification."
-              exit 0
+              Write-Host "ERROR: TestResults.xml not found - NUnit run did not produce results; cannot verify bridge smoke tests."
+              exit 1
           }
           [xml]$results = Get-Content TestResults.xml
           $tier2Tests = $results.SelectNodes("//test-case[contains(@classname,'BridgeSmokeTests')]")
-          $failed = $tier2Tests | Where-Object { $_.result -eq 'Failed' }
-          if ($failed.Count -gt 0) {
-              Write-Host "Bridge smoke tests failed:"
-              $failed | ForEach-Object { Write-Host "  $($_.name): $($_.result)" }
+          # Require that the bridge smoke tests actually ran (an empty match set = renamed
+          # class / filtered category / aborted suite), and treat ANY non-Passed outcome
+          # (Failed/Error/Inconclusive/Skipped) as a failure - not only 'Failed'.
+          if ($tier2Tests.Count -lt 1) {
+              Write-Host "ERROR: zero BridgeSmokeTests cases found in results - tests did not run."
               exit 1
           }
-          Write-Host "Bridge smoke tests passed."
+          $bad = $tier2Tests | Where-Object { $_.result -ne 'Passed' }
+          if ($bad.Count -gt 0) {
+              Write-Host "Bridge smoke tests not all passed:"
+              $bad | ForEach-Object { Write-Host "  $($_.name): $($_.result)" }
+              exit 1
+          }
+          Write-Host "Bridge smoke tests passed ($($tier2Tests.Count) cases)."
 
       # --- Regression: verify [TRACK-CREATE] entries in stdout ---
       # Phase 4+: ProcessScan now emits TRACK-CREATE for every MS2 command generated.
@@ -409,15 +432,15 @@ jobs:
         shell: powershell
         run: |
           $regressionLog = "FlashIDA\test-output\regression-stdout.txt"
-          if (Test-Path $regressionLog) {
-              $trackLines = Select-String -Path $regressionLog -Pattern "\[TRACK-CREATE\]"
-              Write-Host "Found $($trackLines.Count) [TRACK-CREATE] entries in regression output."
-              if ($trackLines.Count -eq 0) {
-                  Write-Host "FAIL: zero [TRACK-CREATE] entries - unified bridge should produce tracking entries."
-                  exit 1
-              }
-          } else {
-              Write-Host "Regression stdout log not found, skipping TRACK verification."
+          if (-not (Test-Path $regressionLog)) {
+              Write-Host "FAIL: regression stdout log not found ($regressionLog) - regression step did not run or produced no output; cannot verify [TRACK-CREATE]."
+              exit 1
+          }
+          $trackLines = Select-String -Path $regressionLog -Pattern "\[TRACK-CREATE\]"
+          Write-Host "Found $($trackLines.Count) [TRACK-CREATE] entries in regression output."
+          if ($trackLines.Count -eq 0) {
+              Write-Host "FAIL: zero [TRACK-CREATE] entries - unified bridge should produce tracking entries."
+              exit 1
           }
 
       # --- Stress tests (Phase 3: activated) ---
@@ -460,4 +483,4 @@ jobs:
       - name: Run FLASH C++ unit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
-        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis" --output-on-failure
+        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeBasedExclusion|ScanConfig_applyOverrides" --output-on-failure
