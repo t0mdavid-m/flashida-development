@@ -484,15 +484,3 @@ jobs:
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
         run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeBasedExclusion|ScanConfig_applyOverrides" --output-on-failure
-
-      # TEMP diagnostic (round-2): dump the join_integrity TSVs the Logging test now retains,
-      # so we can compare the commands-TSV tracking_id column against the results-TSV
-      # child_ids column offline. Remove this step (and the test-side scaffolding) next cycle.
-      - name: (diagnostic) dump join_integrity TSVs
-        if: always()
-        shell: bash
-        run: |
-          echo "=== join_commands_diag.tsv (tracking_id = column 1) ==="
-          sed -n '1,200p' FlashIDA/join_commands_diag.tsv || echo "missing"
-          echo "=== join_results_diag.tsv (child_ids column) ==="
-          sed -n '1,200p' FlashIDA/join_results_diag.tsv || echo "missing"
