@@ -159,6 +159,7 @@ jobs:
             FLASHIda_exploration_test \
             FLASHIda_LegacyConfig_test \
             FLASHIda_Logging_test \
+            FLASHIda_LoggingFields_test \
             ScanCommandQueue_Concurrent_test \
             FragmentAnalysis_test \
             FragmentAnalysis_toProForma_test \
@@ -376,6 +377,18 @@ jobs:
           path: FlashIDA/bin/continuity-output/
           if-no-files-found: ignore
 
+      # --- Log golden capture (FLASHIdaLogGolden_test) ---
+      # The per-case <file>.normalized files ARE the golden content; on a fresh run the golden
+      # tests fail "golden missing" — download this artifact and commit the normalized outputs to
+      # FlashIDA/test-data/golden/logs/<case>/<file>.golden.tsv (or re-run with LOG_GOLDEN_CAPTURE=1).
+      - name: Upload log golden capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-golden-capture
+          path: FlashIDA/bin/log-golden-output/
+          if-no-files-found: ignore
+
       # --- Regression tests ---
       - name: Run regression tests
         shell: powershell
@@ -483,4 +496,4 @@ jobs:
       - name: Run FLASH C++ unit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
-        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeBasedExclusion|ScanConfig_applyOverrides" --output-on-failure
+        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_LoggingFields|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeBasedExclusion|ScanConfig_applyOverrides" --output-on-failure
