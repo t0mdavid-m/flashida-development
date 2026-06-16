@@ -70,6 +70,16 @@ consecutive idle ticks prove production has ceased.
 6. **Engine-side MS1 gate (production code).** `processScan` rejects an MS1 whose id was never emitted, symmetric
    with the MS2/MS3 `resolvePending` gate. Pinned by `processScan_ms1_gate_rejects_unrequested_id`.
 
+## C++ convenience: `single_group_only` mode (no C# twin)
+
+`runInterleaved` takes an optional `single_group_only` flag (default `false`, which keeps the contract above
+byte-identical). When `true`, once the **first** fed MS1 forms a group (`processScan` returns > 0), further MS1
+surveys become idle ticks — so only that one group's MS2 variants + MS3 are driven. It records two extra
+`AcqResult` fields: `first_group_commands` (the forming MS1's `processScan` return) and `ms2_feed_returns` (sum of
+MS2-feed returns). `driveOneExplorationGroup` is a thin wrapper over this mode. This is a C++-side test
+convenience only — it does **not** change the cross-language contract and has no `PushScanAndDrainFull` twin (the
+C# golden suite always drives the full cycle).
+
 ## Ion-decode parity (drift guard)
 
 The trailing-ion parser exists twice and **must stay byte-for-byte equivalent**:
