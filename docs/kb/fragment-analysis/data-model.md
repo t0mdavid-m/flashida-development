@@ -1,12 +1,14 @@
 ---
 title: Fragment Analysis — Data Model
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h, OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h
-last_verified: 2026-04-20
+last_verified: 2026-06-16
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:60   # PTMSite
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:69   # ProteoformMatch
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:79   # FragmentMatch (nested)
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:97   # toProForma
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:110  # toProForma + windowSnr (I2)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:126                          # identification.tsv header (25 cols, I2)
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Exploration.h:97         # MS2Context window-SNR fields (I2)
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:38  # TheoreticalMass
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:47  # MatchDetail
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:58  # ProteoformContext
@@ -80,6 +82,16 @@ Static helper at `FragmentAnalysis.h:97` (defined at `FragmentAnalysis.cpp:1316`
 - **Ambiguous** PTM (`start != end`): `PEP(TKI)[+79.9663]DE`
 
 Mass shifts are rendered with their sign. Multiple PTMs render independently at their respective positions.
+
+## Logging: identification.tsv & scan_results.tsv reporting (I1–I3)
+
+The engine writes four log streams in `FLASHIda.cpp` (`writeIdentificationRow_` / `writeScanResultRow_`). Three reporting fixes affect what they carry — all log-stream-only; no type below crosses the C++/C# ABI.
+
+- **MS3 proteoform sub-range** (`identification.tsv` `start_pos`/`end_pos`). For an MS3 row the precursor is a *fragment* of the parent proteoform, so these now report that fragment's sub-range, not the parent's full range. `MS3FragmentMatcher::calibrateAndScore` stores the sub-range into the result's `region_start`/`region_end` (0-based, exclusive end; it converts its internally-computed 1-based `prot_start/prot_end` — `MS3FragmentMatcher.cpp` ~:513), and the writer sources MS3 positions from `match` (`FLASHIda.cpp` ~:504) whenever populated (`>= 0`). The sub-range length equals the precursor fragment ion index.
+
+- **`identification.tsv` isolation-window columns** — 6 new, appended after `ms3_fragment_masses` (19→25): `ms2_isolation_width`, `ms2_window_snr`, `ms2_charge_intensity`, and the MS3 trio. Width = `IsolationStage.isolation_width` (commanded, margin-inclusive; MS3 floored at 2.0 Da). charge_intensity = `precursor_intensity` / `precursor_intensity_s1` (= `PeakGroup::getChargeIntensity`). **`window_snr` is a NEW metric**: `signal / (noise + ε)` over the ACTUAL commanded window, where signal = the selected charge's intensity and noise = the remaining in-window intensity (co-isolation) summed on the SOURCE spectrum (MS1 for the MS2 window, MS2 `DeconvolvedSpectrum::getOriginalSpectrum()` for the MS3 window). Computed by `FragmentAnalysis::windowSnr` and carried — **without any `ScanCommand` ABI change** — via `ScanCommandQueue::setWindowSnr`/`windowSnr` (a `scan_id → double` side-map filled at command-build time) into the in-memory `Exploration::MS2Context` fields.
+
+- **`scan_results.tsv` `tag_count` and `proteoform_sequence`.** `tag_count` now logs the identification tagger's real count (`ProteoformMatch.tag_count`) when a proteoform matched — not the FASTA-DB-gated `tags_count` (which is 0 without a tag-targeting DB). `proteoform_sequence` is rendered through `toProForma` (PTMs displayed), matching `identification.tsv` for the same scan.
 
 ## MS3-local types
 
