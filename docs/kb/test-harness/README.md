@@ -15,8 +15,17 @@ is exactly **one** drive, implemented as faithful mirrors in two languages:
 
 - **C#:** `ContinuityTestHarness.PushScanAndDrainFull` — used by the golden suite and (via `PushMs1`) the
   behavioral `ContinuityTests`.
-- **C++:** `runInterleaved` in `FLASHIda_TestHelpers.h` — the canonical driver; `runFullAcquisition` and
-  `runFullCycle` are thin wrappers over it.
+- **C++:** `runInterleaved` in `FLASHIda_TestHelpers.h` — the canonical driver; `runFullAcquisition`,
+  `runFullCycle`, `driveOneExplorationGroup`, and `bootstrapExplorationGroup` (non-draining group former) are
+  thin wrappers/conveniences over it. C++-side-only knobs on `runInterleaved` (no C# twin): `single_group_only`
+  and `rt_offset` (shifts each fed MS1 survey rt — used by ChargeBasedExclusion's two-pass exclusion).
+  `ms2AcquisitionRows(AcqResult)` projects MS2 commands to `(charge, mz, isolation_width)` rows.
+
+**Shared-fixtures consolidation (2026-06-17).** `ScanData`, `loadTsvScans`, `TSVFile`, `ExplResult`,
+`AcquisitionRow`, and all drivers live ONCE in `FLASHIda_TestHelpers.h`. Every acquisition-driving C++ test now
+`#include`s it — `FLASHIda_ProcessScan_test`, `FLASHIda_exploration_test`, and `FLASHIda_ChargeBasedExclusion_test`
+no longer carry their own anon-namespace copies or inlined `runInterleaved` "twins" (the twins drifted — e.g. the
+ProcessScan twin lacked the F7 `faims_cv` echo). Do NOT reintroduce a per-TU drive loop; drive through the header.
 
 If you change one implementation, change the other in lockstep and re-run the ion-decode parity test. The
 `.claude/hooks/driver-sync-reminder.sh` hook reminds you when you edit either driver or ion decoder.
@@ -82,6 +91,15 @@ surveys become idle ticks — so only that one group's MS2 variants + MS3 are dr
 MS2-feed returns). `driveOneExplorationGroup` is a thin wrapper over this mode. This is a C++-side test
 convenience only — it does **not** change the cross-language contract and has no `PushScanAndDrainFull` twin (the
 C# golden suite always drives the full cycle).
+
+## C++ convenience: `AcqResult.all_cmds` cross-level order (no C# twin)
+
+`AcqResult` also carries `all_cmds` — **every** dequeued command (workload **and** idle AGC/MS1 ticks) recorded
+in **raw dequeue order**, before the per-level `ms1_cmds`/`ms2_cmds`/`ms3_cmds` bucketing. The per-level buckets
+lose cross-level interleave; `all_cmds` lets a caller assert it — e.g. that a prio-0 CV-transition MS1 is drained
+**before** the prio-2 MS2s (`FLASHIdaFAIMS_test::cv_transition_ms1_before_ms2s`), or that no cycle-time MS1
+precedes the first exploration MS2 variant (`FLASHIda_exploration_test::cycle_time_suppression_during_exploration`).
+Additive and C++-only: the drain contract above is unchanged and there is no `PushScanAndDrainFull` twin.
 
 ## Ion-decode parity (drift guard)
 
