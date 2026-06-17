@@ -1,5 +1,5 @@
 ---
-last_verified: 2026-06-16
+last_verified: 2026-06-17
 code_anchors:
   - FlashIDA/src/Flash.Tests/Mocks/ContinuityTestHarness.cs   # C# PushScanAndDrainFull (canonical driver)
   - OpenMS/src/tests/class_tests/openms/source/FLASHIda_TestHelpers.h   # C++ runInterleaved (canonical driver)
@@ -44,7 +44,10 @@ Loop, once per iteration:
    `is_agc` **OR** empty `scan_description` **OR** (`msn_level <= 1 && ms1_fed >= nMs1)` (an MS1 re-survey after
    all `nMs1` scans have been fed). Idle → `++idle`; a workload command → `idle = 0`.
 3. **Dispatch the workload by level**, always echoing `cmd.scan_description` verbatim onto the fed scan:
-   - **MS1** (`<= 1`): feed `ms1_scans[ms1_fed++]`.
+   - **MS1** (`<= 1`): feed `ms1_scans[ms1_fed++]`, also echoing `cmd.faims_cv` (C++ passes it as the
+     `processScan` `faims_cv` argument; C# `PushScanAndDrainFull` sets the re-fed scan's `"FAIMS CV"` trailer,
+     which `UnifiedScanProcessor.ProcessMS` reads back into the same argument). Without this the re-fed MS1
+     carried CV 0 and FAIMS cycling never observed the commanded CV.
    - **MS2** (`== 2`): feed the MS2 spectrum.
    - **MS3** (`>= 3`): decode the trailing ion (`decodeTrailingIonKey` / `DecodeIonFromScanDescription`); look it
      up in the manifest and feed it, or **skip** if absent (never fabricate). *Legacy C++ plausibility only:*
