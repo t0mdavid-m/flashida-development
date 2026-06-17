@@ -97,9 +97,16 @@ C# golden suite always drives the full cycle).
 `AcqResult` also carries `all_cmds` — **every** dequeued command (workload **and** idle AGC/MS1 ticks) recorded
 in **raw dequeue order**, before the per-level `ms1_cmds`/`ms2_cmds`/`ms3_cmds` bucketing. The per-level buckets
 lose cross-level interleave; `all_cmds` lets a caller assert it — e.g. that a prio-0 CV-transition MS1 is drained
-**before** the prio-2 MS2s (`FLASHIdaFAIMS_test::cv_transition_ms1_before_ms2s`), or that no cycle-time MS1
-precedes the first exploration MS2 variant (`FLASHIda_exploration_test::cycle_time_suppression_during_exploration`).
-Additive and C++-only: the drain contract above is unchanged and there is no `PushScanAndDrainFull` twin.
+**before** the prio-2 MS2s (`FLASHIdaFAIMS_test::cv_transition_ms1_before_ms2s`).
+
+`AcqResult` also carries `all_active` — a `std::vector<char>` **parallel to `all_cmds`** (`|all_active| == |all_cmds|`)
+holding the engine's `exploration_active_` flag captured **at each command's dequeue**, via the read-only getter
+`FLASHIda::explorationActive()` (`exploration_active_.load(acquire)` — the exact atomic the cycle-time gate reads).
+This lets a caller scope an assertion to exactly the **exploration-active window** — e.g. cycle-time MS1 injection
+is suppressed only while a group is active (`FLASHIda_exploration_test::cycle_time_suppression_during_exploration`);
+a cycle-time MS1 dequeued while `all_active` is false (before/between groups) is correct and excluded.
+Both `all_cmds` and `all_active` are additive and C++-only: the drain contract above is unchanged and there is no
+`PushScanAndDrainFull` twin.
 
 ## Ion-decode parity (drift guard)
 
