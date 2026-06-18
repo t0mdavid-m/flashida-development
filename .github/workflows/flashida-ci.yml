@@ -391,6 +391,7 @@ jobs:
 
       # --- Regression tests ---
       - name: Run regression tests
+        id: regression
         shell: powershell
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
@@ -441,7 +442,11 @@ jobs:
       # Phase 4+: ProcessScan now emits TRACK-CREATE for every MS2 command generated.
       # Both old bridge (shadow validation) and unified bridge paths produce entries.
       - name: Verify TRACK-CREATE entries in regression output
-        if: always()
+        # Run only when the regression step actually executed (success). If regression was skipped because an
+        # upstream step (e.g. NUnit) failed, regression-stdout.txt is never written; skip this verify rather than
+        # false-fail on the missing file. When regression DID run, the body below stays fail-closed (missing file
+        # or zero [TRACK-CREATE] entries => exit 1).
+        if: always() && steps.regression.outcome == 'success'
         shell: powershell
         run: |
           $regressionLog = "FlashIDA\test-output\regression-stdout.txt"
