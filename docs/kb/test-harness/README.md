@@ -100,8 +100,9 @@ lose cross-level interleave; `all_cmds` lets a caller assert it — e.g. that a 
 **before** the prio-2 MS2s (`FLASHIdaFAIMS_test::cv_transition_ms1_before_ms2s`).
 
 `AcqResult` also carries `all_active` — a `std::vector<char>` **parallel to `all_cmds`** (`|all_active| == |all_cmds|`)
-holding the engine's `exploration_active_` flag captured **at each command's dequeue**, via the read-only getter
-`FLASHIda::explorationActive()` (`exploration_active_.load(acquire)` — the exact atomic the cycle-time gate reads).
+holding the engine's `exploration_active_` flag captured **at each command's dequeue**, via the read-only test
+accessor `FLASHIdaTestAccess::explorationActive(*ida)` (in `FLASHIda_TestAccess.h`; reads
+`exploration_active_.load(acquire)` — the exact atomic the cycle-time gate reads).
 This lets a caller scope an assertion to exactly the **exploration-active window** — e.g. cycle-time MS1 injection
 is suppressed only while a group is active (`FLASHIda_exploration_test::cycle_time_suppression_during_exploration`);
 a cycle-time MS1 dequeued while `all_active` is false (before/between groups) is correct and excluded.
