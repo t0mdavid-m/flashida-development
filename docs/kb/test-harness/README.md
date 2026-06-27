@@ -1,10 +1,10 @@
 ---
-last_verified: 2026-06-17
+last_verified: 2026-06-27
 code_anchors:
   - FlashIDA/src/Flash.Tests/Mocks/ContinuityTestHarness.cs   # C# PushScanAndDrainFull (canonical driver)
   - OpenMS/src/tests/class_tests/openms/source/FLASHIda_TestHelpers.h   # C++ runInterleaved (canonical driver)
   - OpenMS/src/tests/class_tests/openms/source/FLASHIda_TestHelpers.h:224   # decodeTrailingIonKey (C++ ion decoder)
-  - FlashIDA/src/Flash.Tests/FLASHIdaLogGolden_test.cs:118   # DecodeIonFromScanDescription (C# ion decoder)
+  - FlashIDA/src/Flash.Tests/FLASHIdaLogGolden_test.cs:133   # DecodeIonFromScanDescription (C# ion decoder)
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp   # getNextScanCommand (pacing) + processScan MS1 gate
 ---
 
@@ -57,7 +57,15 @@ Loop, once per iteration:
      `processScan` `faims_cv` argument; C# `PushScanAndDrainFull` sets the re-fed scan's `"FAIMS CV"` trailer,
      which `UnifiedScanProcessor.ProcessMS` reads back into the same argument). Without this the re-fed MS1
      carried CV 0 and FAIMS cycling never observed the commanded CV.
-   - **MS2** (`== 2`): feed the MS2 spectrum.
+   - **MS2** (`== 2`): feed the MS2 spectrum. *Optional CE-keyed selection (opt-in, both languages):* when an
+     `ms2_ce_map` (C++ `std::map<int, ScanData>`) / `ms2CeMap` (C# `Dictionary<int,string>`) is supplied, the
+     fed spectrum is selected by the command's stage-0 collision energy (`round(cmd.stages[0].collision_energy)`)
+     so each CE variant of an MS2-exploration sweep gets its own energy-resolved fixture — exercising
+     per-fragment best-MS2 (and hence per-fragment MS3 stage-0 CE) selection. **NO FALLBACK:** an unmapped CE
+     hard-fails (throws) on both sides. Default (no map) feeds the single MS2 spectrum for every MS2 command
+     (contract above unchanged). Used by the C# `Golden_Exploration_MS3_CytC` golden mode; the C++ mirror is
+     present for drift-guard parity but currently unexercised (the C++ exploration test uses
+     `driveOneExplorationGroup` + the single fixture + range checks).
    - **MS3** (`>= 3`): decode the trailing ion (`decodeTrailingIonKey` / `DecodeIonFromScanDescription`); look it
      up in the manifest and feed it, or **skip** if absent (never fabricate). *Legacy C++ plausibility only:*
      when no manifest is supplied, the MS2 spectrum is fed back as the MS3 scan — this shortcut is **not** part
