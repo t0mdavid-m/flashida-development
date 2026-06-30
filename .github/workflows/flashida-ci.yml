@@ -167,7 +167,8 @@ jobs:
             MS3FragmentMatcher_identification_test \
             FLASHIda_ChargeBasedExclusion_test \
             ScanConfig_applyOverrides_test \
-            ProteoformTracker_CEOptimization_test
+            ProteoformTracker_CEOptimization_test \
+            ProteoformTracker_Trajectory_test
 
       # --- Stage ALL runtime DLLs next to the test exes ---
       # Test exes live in OpenMS/build/src/tests/class_tests/bin/ (the OpenMS
@@ -502,4 +503,4 @@ jobs:
       - name: Run FLASH C++ unit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
-        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_LoggingFields|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeBasedExclusion|ScanConfig_applyOverrides|ProteoformTracker_CEOptimization" --output-on-failure
+        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_LoggingFields|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeBasedExclusion|ScanConfig_applyOverrides|ProteoformTracker_CEOptimization|ProteoformTracker_Trajectory" --output-on-failure
