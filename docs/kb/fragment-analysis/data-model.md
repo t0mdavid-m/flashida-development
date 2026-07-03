@@ -1,7 +1,7 @@
 ---
 title: Fragment Analysis — Data Model
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h, OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h
-last_verified: 2026-06-16
+last_verified: 2026-07-03
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:60   # PTMSite
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:69   # ProteoformMatch
@@ -50,10 +50,15 @@ Nested struct declared at `FragmentAnalysis.h:79`. One entry per matched fragmen
 |---|---|---|---|---|
 | `ion_type` | `std::string` | ✓ | ✓ | MS2: `a`/`b`/`y`/etc. (per fragmentation method). MS3-local: adds `yb`/`ya` for N-terminal subsequence precursors. |
 | `ion_index` | `int` | ✓ | ✓ | 1-based. MS2: proteoform-space. MS3: subsequence-space. |
-| `observed_mass` | `double` | ✓ | ✓ | Deconvolved observed mass; calibrated for MS3 (pass-2). |
+| `observed_mass` | `double` | ✓ | ✓ | **Measured** — deconvolved observed mass in the fragment's own scan frame; calibrated for MS3 (pass-2). MS3 = subsequence frame. |
 | `equiv_type` | `std::string` | — | ✓ | MS3 only: full-protein equivalent ion type (`b` or `y`). |
 | `equiv_index` | `int` | — | ✓ | MS3 only: full-protein equivalent ion index. |
-| `adjusted_mass` | `double` | — | ✓ | MS3 only: offset-adjusted to full-protein frame. |
+| `adjusted_mass` | `double` | — | ✓ | **Adjusted** — measured re-expressed in the full-protein (MS2) frame **with mods**: `observed + offset + ambiguous_included` (`MS3FragmentMatcher.cpp` calibrateAndScore). Re-adding `ambiguous_included` is the bare-backbone fix — without it a still-ambiguous mod is stripped, ~526 Da low for cytC. Trivial b→b frame ⇒ `adjusted == observed`. |
+| `theoretical_mass` | `double` | — | ✓ | **Theoretical** — mass the proteoform predicts for the equivalent ion (mod-inclusive) = `offset + md.theoretical_mass + ambiguous_included`. |
+| `diff_da` | `double` | — | ✓ | Residual `adjusted − theoretical` (Da) = the subsequence-frame match error. |
+| `diff_ppm` | `double` | — | ✓ | Residual in ppm = `diff_da / theoretical_mass * 1e6` (0 when `theoretical_mass == 0`). |
+
+The three masses (measured / adjusted / theoretical) + residual are the fragment-representation contract — see the **Fragment masses** term in the repo-root `CONTEXT.md`. They surface per-fragment in `identification.tsv` (MS3 rows: `ms3_fragment_masses`=measured, `ms2_fragment_masses`=adjusted, new `theoretical_masses`/`diff_da`/`diff_ppm`) and, aligned, in the pooled log (`combined_ms2_frame_masses`=adjusted + `combined_measured`/`combined_theoretical`/`combined_diff_da`/`combined_diff_ppm`, theoretical against the localized proteoform).
 
 See `README.md` for the full MS2 and MS3-local ion-type domains.
 
@@ -105,6 +110,7 @@ Declared at `MS3FragmentMatcher.h:38`. One theoretical fragment mass entry used 
 | `position` | `int` | 1-based fragment index from the relevant terminus |
 | `ion_type` | `std::string` | `a`, `b`, `y`, `yb`, `ya` |
 | `includes_ptm` | `bool` | For ambiguous PTMs: `true` = this theoretical includes the PTM shift; `false` = no shift. Dual theoreticals generated per ambiguous site. |
+| `ambiguous_included` | `double` | Sum of ambiguous PTM mass folded into this ion's `mass`: with-variant = fully-covered + partial; without-variant / no-overlap = fully-covered only. Copied onto `MatchDetail` and re-added to the equiv-frame offset so `FragmentMatch.adjusted_mass`/`theoretical_mass` retain the mods (the bare-backbone fix). |
 
 ### `MS3FragmentMatcher::MatchDetail`
 
@@ -115,6 +121,7 @@ Declared at `MS3FragmentMatcher.h:47`. Detail of a single observed-to-theoretica
 | `observed_mass` | `double` | Deconvolved observed mass |
 | `theoretical_mass` | `double` | Matched theoretical mass |
 | `ppm_error` | `double` | Signed ppm error: `(obs - theo) / theo * 1e6` |
+| `ambiguous_included` | `double` | Ambiguous PTM mass folded into the matched theoretical (copied from `TheoreticalMass`); consumed in `calibrateAndScore` to build the mod-inclusive `adjusted_mass`/`theoretical_mass`. |
 | `position` | `int` | 1-based fragment index from the relevant terminus |
 | `ion_type` | `std::string` | As above |
 | `includes_ptm` | `bool` | Whether the matched theoretical included an ambiguous PTM |

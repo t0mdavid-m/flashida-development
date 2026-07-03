@@ -1,7 +1,7 @@
 ---
 title: MS3 Fragment Matching
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.cpp, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp
-last_verified: 2026-04-20
+last_verified: 2026-07-03
 code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:400          # calibrateAndScore call in feedResult
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:115   # calibrateAndScore declaration
@@ -71,7 +71,10 @@ The `includes_ptm` bool on `TheoreticalMass` and the matched `MatchDetail` recor
 Fragment indices produced internally are **subsequence-local** (1-based from the relevant terminus of the precursor subsequence). For reporting, they are mapped back to full-protein coordinates:
 
 - `FragmentMatch::ion_type` / `ion_index` — subsequence-local.
-- `FragmentMatch::equiv_type` / `equiv_index` / `adjusted_mass` — full-protein equivalent.
+- `FragmentMatch::equiv_type` / `equiv_index` — full-protein equivalent ion.
+- `FragmentMatch::observed_mass` — **measured** (subsequence frame); `adjusted_mass` — **adjusted** to the full-protein (MS2) frame **with modifications**; `theoretical_mass` + `diff_da` / `diff_ppm` — the proteoform's **theoretical** prediction and the residual. See the **Fragment masses** term in the repo-root `CONTEXT.md`.
+
+The mod-inclusive `adjusted_mass` = `observed + (theo_equiv − ms3_theoretical) + ambiguous_included`. Crucially `theo_equiv` (from `computeProteinPrefixMasses`) drops still-**ambiguous** mods (`if (start_position != end_position) continue;`), so `ambiguous_included` — the ambiguous mass the matched theoretical folded in — must be re-added; otherwise `adjusted_mass` = bare backbone (the mod stripped, ~526 Da low for cytC). A trivial b→b frame therefore gives `adjusted == observed`.
 
 The PTM-site rebasing logic lives in `MS3FragmentMatcher::rebasePTMSites` at `MS3FragmentMatcher.cpp:287`. The mapping for ion positions (subsequence → full-protein) is applied during match result population.
 
