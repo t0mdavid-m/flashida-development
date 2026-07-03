@@ -54,11 +54,11 @@ Nested struct declared at `FragmentAnalysis.h:79`. One entry per matched fragmen
 | `equiv_type` | `std::string` | — | ✓ | MS3 only: full-protein equivalent ion type (`b` or `y`). |
 | `equiv_index` | `int` | — | ✓ | MS3 only: full-protein equivalent ion index. |
 | `adjusted_mass` | `double` | — | ✓ | **Adjusted** — measured re-expressed in the full-protein (MS2) frame **with mods**: `observed + offset + ambiguous_included` (`MS3FragmentMatcher.cpp` calibrateAndScore). Re-adding `ambiguous_included` is the bare-backbone fix — without it a still-ambiguous mod is stripped, ~526 Da low for cytC. Trivial b→b frame ⇒ `adjusted == observed`. |
-| `theoretical_mass` | `double` | — | ✓ | **Theoretical** — mass the proteoform predicts for the equivalent ion (mod-inclusive) = `offset + md.theoretical_mass + ambiguous_included`. |
-| `diff_da` | `double` | — | ✓ | Residual `adjusted − theoretical` (Da) = the subsequence-frame match error. |
-| `diff_ppm` | `double` | — | ✓ | Residual in ppm = `diff_da / theoretical_mass * 1e6` (0 when `theoretical_mass == 0`). |
+| `theoretical_mass` | `double` | ✓ | ✓ | **Theoretical** — mass the proteoform predicts for the ion. MS2: the matcher's PTM-adjusted `best_theo` (`FragmentAnalysis.cpp:716`). MS3: mod-inclusive equivalent-ion theoretical = `offset + md.theoretical_mass + ambiguous_included`. Populated for **both** levels. |
+| `diff_da` | `double` | ✓ | ✓ | Residual (Da). MS2: `observed − theoretical`. MS3: `adjusted − theoretical`. |
+| `diff_ppm` | `double` | ✓ | ✓ | Residual in ppm = `diff_da / theoretical_mass * 1e6` (0 when `theoretical_mass == 0`). |
 
-The three masses (measured / adjusted / theoretical) + residual are the fragment-representation contract — see the **Fragment masses** term in the repo-root `CONTEXT.md`. They surface per-fragment in `identification.tsv` (MS3 rows: `ms3_fragment_masses`=measured, `ms2_fragment_masses`=adjusted, new `theoretical_masses`/`diff_da`/`diff_ppm`) and, aligned, in the pooled log (`combined_ms2_frame_masses`=adjusted + `combined_measured`/`combined_theoretical`/`combined_diff_da`/`combined_diff_ppm`, theoretical against the localized proteoform).
+The three masses (measured / adjusted / theoretical) + residual are the fragment-representation contract — see the **Fragment masses** term in the repo-root `CONTEXT.md`. They surface per-fragment in `identification.tsv` (MS3 rows: `ms3_fragment_masses`=measured, `ms2_fragment_masses`=adjusted; `theoretical_masses`/`diff_da`/`diff_ppm` populated on **both** MS2 and MS3 rows) and, aligned, in the pooled log's grouped table (`combined_ms2_frame_masses`=adjusted, `combined_ms2_fragment_ions`=ion labels, `combined_measured`/`combined_theoretical`/`combined_diff_da`/`combined_diff_ppm`).
 
 See `README.md` for the full MS2 and MS3-local ion-type domains.
 

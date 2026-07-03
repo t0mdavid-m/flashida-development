@@ -149,12 +149,12 @@ Proteoform tracker's evolving per-Precursor model. One row is re-emitted each ti
 a Precursor's model updates (a *trajectory*), so sequence coverage visibly climbs
 over the run. Columns mirror the per-scan `identification` log but at per-Precursor
 granularity: ProForma sequence, FLASHExtender score, % coverage, localized vs.
-ambiguous modifications, contributing scan ids, and — **always** — the combined
-per-fragment mass table: aligned lists of **measured**, **adjusted**
-(`combined_ms2_frame_masses`), **theoretical** (against the localized proteoform),
-and the residual in **Da and ppm** (see *Fragment masses (measured / adjusted /
-theoretical)*). Emitted by the tracker, not the per-scan `processScan` path — it is
-the engine's first cross-scan log.
+ambiguous modifications, contributing scan ids, and — **always** — the grouped
+combined per-fragment mass table: aligned lists of **adjusted**
+(`combined_ms2_frame_masses`), the **ion label** (`combined_ms2_fragment_ions`,
+e.g. `b22;y13`), **measured**, **theoretical**, and the residual in **Da and ppm**
+(see *Fragment masses (measured / adjusted / theoretical)*). Emitted by the tracker,
+not the per-scan `processScan` path — it is the engine's first cross-scan log.
 _Avoid_: `identification.tsv` (the per-scan, per-identification leaf it sits
 beneath); treating it as a per-scan log or giving it an enable flag (paths are the
 idiom).
@@ -173,16 +173,17 @@ fragment-representation contract.
   value the model pools and the `combined_ms2_frame_masses` list reports
   (`FragmentMatch.adjusted_mass` via `equiv_type`/`equiv_index`;
   `identification.tsv` `ms2_fragment_masses`).
-- **Theoretical** — the mass the **proteoform predicts** for that equivalent ion:
-  backbone + the modifications covered by the ion, at the current localization.
-  Per-scan in `identification.tsv` (that scan's proteoform); against the pooled
-  **localized** proteoform in the Pooled identification log — so the pooled
-  theoretical *tightens as modifications localize* while the measured/adjusted
-  evidence stays fixed (`MappedFragment.theoretical_mass`).
-- **Residual** — `adjusted − theoretical`, reported in **Da and ppm** (equals the
-  MS3 subsequence-frame match error, `measured − ms3_theoretical`). Contract:
-  `|residual| ≤ tolerance` — the measured evidence, re-framed, must agree with the
-  proteoform prediction.
+- **Theoretical** — the mass the **proteoform predicts** for the fragment ion,
+  computed for **both** levels (not just MS3): for an **MS2** fragment it is the
+  matcher's PTM-adjusted theoretical (`best_theo`, `FragmentAnalysis.cpp`); for an
+  **MS3** fragment it is the mod-inclusive equivalent-ion theoretical
+  (`calibrateAndScore`). Carried per-scan onto `FragmentObservation.theoretical_mass`
+  / `FragmentMatch.theoretical_mass`, so `combined_theoretical` and the
+  identification `theoretical_masses` are real for MS2 fragments too (not `0`).
+- **Residual** — `adjusted − theoretical`, reported in **Da and ppm** (for MS2,
+  `observed − theoretical`; for MS3, the subsequence-frame match error
+  `measured − ms3_theoretical`). Contract: `|residual| ≤ tolerance` — the measured
+  evidence, re-framed, must agree with the proteoform prediction.
 
 _Avoid_: reporting the raw sub-sequence-frame mass as the adjusted (MS2-frame)
 mass; **stripping modifications from `adjusted`** (the bare-backbone defect —
