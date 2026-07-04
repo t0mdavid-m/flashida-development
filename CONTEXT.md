@@ -204,9 +204,20 @@ paired `MS2Context` (`ctx`) supplies only the **acquisition context** — MS1/MS
 precursor identity + isolation — never the identified proteoform.
 _Avoid_: logging the **parent** proteoform on an MS3 identification row (the old
 `use_ctx_proteoform` special-case — inconsistent with the fragment `start_pos`/`end_pos`);
-pasting fragment-frame `ptm_sites` onto the parent sequence. NOTE `scan_results.tsv` is
-the *acquisition-result* log, so its MS3 `proteoform_sequence` is the **parent** (what the
-MS3 is characterizing) — it legitimately differs from the identification row's fragment.
+pasting fragment-frame `ptm_sites` onto the parent sequence. NOTE the three logs split by
+granularity: **`scan_results.tsv`** (the *acquisition-result* log, written for **every** scan)
+renders the MS3 `proteoform_sequence` as the **clipped b/y fragment** — the same fragment frame
+identification uses, via `MS3FragmentMatcher::fragmentProForma` (extractSubsequence + rebasePTMSites +
+toProForma) built from the acquisition context, so it is present even when identification is
+deferred/failed (the parent stays recoverable via `matched_protein` + `parent_tracking_id`);
+**`identification.tsv`** is the per-scan identification leaf (the annotated b/y ion, emitted only when
+the scan matched fragments) and additionally carries `ms3_fragment_coverage` = distinct backbone bonds
+covered / (L−1); **`pooled_identification.tsv`** is the per-Precursor narrowed trajectory.
+NOTE an MS3 identification row's ambiguous modification is **clip-only (wide)** — the
+per-scan leaf carries only *that scan's* evidence; cross-scan **narrowing** of an ambiguous
+range is the *Pooled identification log*'s job (`ProteoformTracker::narrowModifications_`),
+so the same Precursor's pooled row legitimately reads a **narrower** range. Both are correct
+at their own granularity; do **not** feed the pooled narrowed range back into the per-scan leaf.
 
 **Characterization**:
 The feature umbrella and the method.json config section (`characterization`) for the

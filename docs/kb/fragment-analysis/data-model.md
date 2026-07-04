@@ -39,6 +39,7 @@ Declared at `FragmentAnalysis.h:69`. Unified result of any fragment-matching ope
 | `fragments` | `std::vector<FragmentMatch>` | ✓ | ✓ | Per-fragment match details |
 | `ppm_offset` | `double` | — | ✓ | Median PPM error from MS3 calibration pass |
 | `correction_factor` | `double` | — | ✓ | `1 / (1 + ppm_offset * 1e-6)`; applied in tight pass |
+| `ms3_fragment_coverage` | `float` | — | ✓ | Distinct backbone bonds covered / (L−1) over the matched MS3 sub-fragments (`calibrateAndScore`); `-1` = non-MS3/none. Logged as `identification.tsv` `ms3_fragment_coverage`. |
 
 Default values for MS3-only fields: `ppm_offset = 0.0`, `correction_factor = 1.0`. MS2 paths leave them at these defaults — do not use them as signal for MS2 results.
 
@@ -96,7 +97,9 @@ The engine writes four log streams in `FLASHIda.cpp` (`writeIdentificationRow_` 
 
 - **`identification.tsv` isolation-window columns** — 6 new, appended after `ms3_fragment_masses` (19→25): `ms2_isolation_width`, `ms2_window_snr`, `ms2_charge_intensity`, and the MS3 trio. Width = `IsolationStage.isolation_width` (commanded, margin-inclusive; MS3 floored at 2.0 Da). charge_intensity = `precursor_intensity` / `precursor_intensity_s1` (= `PeakGroup::getChargeIntensity`). **`window_snr` is a NEW metric**: `signal / (noise + ε)` over the ACTUAL commanded window, where signal = the selected charge's intensity and noise = the remaining in-window intensity (co-isolation) summed on the SOURCE spectrum (MS1 for the MS2 window, MS2 `DeconvolvedSpectrum::getOriginalSpectrum()` for the MS3 window). Computed by `FragmentAnalysis::windowSnr` and carried **on the command itself** via the `ScanCommand.window_snr` field (8 bytes carved from `reserved_`, total still 2048; mirrored in C# `FLASHIdaWrapper.cs` + both `ScanCommandLayout` tests, default `-1.0` = not computed). It is stamped at command-build time (inside `Exploration::initiate` for variants; in the MS1 branch for regular MS2) and read back off the command into the in-memory `Exploration::MS2Context` fields. (The former `ScanCommandQueue` `scan_id → double` side-map was removed.)
 
-- **`scan_results.tsv` `tag_count` and `proteoform_sequence`.** `tag_count` now logs the identification tagger's real count (`ProteoformMatch.tag_count`) when a proteoform matched — not the FASTA-DB-gated `tags_count` (which is 0 without a tag-targeting DB). `proteoform_sequence` is rendered through `toProForma` (PTMs displayed), matching `identification.tsv` for the same scan.
+- **`scan_results.tsv` `tag_count` and `proteoform_sequence`.** `tag_count` now logs the identification tagger's real count (`ProteoformMatch.tag_count`) when a proteoform matched — not the FASTA-DB-gated `tags_count` (which is 0 without a tag-targeting DB). For an **MS3** scan `proteoform_sequence` is the **clipped b/y fragment** — rendered from the acquisition context via `MS3FragmentMatcher::fragmentProForma` (extractSubsequence + rebasePTMSites + `toProForma`), so it is present for **every** scan even when identification is deferred/failed, and it uses the same fragment frame as `identification.tsv` (parent recoverable via `matched_protein` + `parent_tracking_id`). MS2 rows render the matched proteoform through `toProForma`.
+
+- **`identification.tsv` `ms3_fragment_coverage`** — appended LAST (29→30 columns). On MS3 rows = distinct backbone bonds covered / (L−1) over the matched sub-fragments (prefix sub-ion index `p` → bond `p`; suffix → bond `L−p`), clamped `[0,1]`; `-1` on MS2. Computed in `calibrateAndScore`.
 
 ## MS3-local types
 

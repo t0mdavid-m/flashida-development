@@ -78,6 +78,13 @@ The mod-inclusive `adjusted_mass` = `observed + (theo_equiv − ms3_theoretical)
 
 The PTM-site rebasing logic lives in `MS3FragmentMatcher::rebasePTMSites` at `MS3FragmentMatcher.cpp:287`. The mapping for ion positions (subsequence → full-protein) is applied during match result population.
 
+## Log surfaces: scan_results fragment proteoform + identification coverage
+
+Two logged surfaces read the MS3 fragment identity:
+
+- **`scan_results.tsv` `proteoform_sequence`** (written every scan) = the **clipped b/y fragment**, rendered by `MS3FragmentMatcher::fragmentProForma(protein, ctx, ion_type, ion_index)` = `extractSubsequence` + `rebasePTMSites` + `FragmentAnalysis::toProForma` (the same fragment frame identification uses). It is built from the acquisition context alone — no matched spectrum required — so it is present even when identification is deferred/failed; it returns `""` when the context is unpopulated (`ion_type=='\0' | index==0`). The parent stays recoverable via `matched_protein` + `parent_tracking_id`. (This replaced an earlier parent render.)
+- **`identification.tsv` `ms3_fragment_coverage`** (matched MS3 rows; `-1` on MS2) = the fraction of the fragment's `(L−1)` backbone bonds covered by **distinct** matched MS3 sub-fragments, `L` = fragment length (`== fragment_ion_index`). Bond mapping: a prefix sub-ion (`a`/`b`/`c`) of subseq-index `p` cleaves bond `p`; a suffix sub-ion (`y`/`x`/`z`, incl. `yb`/`ya`) of index `p` cleaves bond `L−p`. Computed in `calibrateAndScore`, stored on `ProteoformMatch::ms3_fragment_coverage`, clamped `[0,1]`.
+
 ## Gotchas
 
 - **Cross-direction ion types only apply to N-terminal-subsequence precursors.** A C-terminal-subsequence MS3 never sees `yb`/`ya` matches; only `a`/`b`/`y`. Do not add `yb`/`ya` to `getMS3IonTypes`'s C-terminal case without understanding what a "y of a y" would mean physically.
@@ -89,3 +96,5 @@ The PTM-site rebasing logic lives in `MS3FragmentMatcher::rebasePTMSites` at `MS
 - **`detailed_results` is populated only for `FragmentCount` metric.** If the MS3 metric is anything else, `identification_result` on each variant stays at default — no fragment-level identification data is available post-scoring.
 
 - **`ProteoformContext` lifetime bound to the group.** The context lives on `ExplorationGroup` (see `../exploration/ms3-exploration.md`). If you hold a reference to `ptm_sites` after the group is cleaned up, you are dereferencing freed memory. Snapshot what you need.
+
+- **y-ion (C-terminal) MS3 precursors are code-supported but data-untested end-to-end.** The engine emits y-ion MS3 commands correctly (the `ms3_cytc` `scan_commands` golden carries `y40`/`y56`/`y71`), the decoder's y-branch is parity-tested, and the fragment sub-sequence path (`extractSubsequence` suffix branch + `fragmentProForma`) is unit-tested (`MS3FragmentMatcher_test`, cytC y40/y56/y71). But no acquisition has captured a cytC y-ion MS3 **peak** spectrum, so end-to-end y consumption (matched sub-fragments → `ms3_fragment_coverage`) is unvalidated. Close it with a real C-terminal-isolating cytC MS3 acquisition — not a fabricated fixture.
