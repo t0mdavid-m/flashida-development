@@ -192,6 +192,22 @@ mass; **stripping modifications from `adjusted`** (the bare-backbone defect —
 modified ladder); conflating the per-scan theoretical (that scan's wider
 proteoform) with the pooled theoretical (the refined, localized one).
 
+**Identification row (`identification.tsv`) — the identified species**:
+An identification row describes the species the scan **identified** — its
+`proteoform`/`start_pos`/`end_pos`/`fragments` all come from the per-scan match
+(`FragmentAnalysis::ProteoformMatch`). For an **MS2** scan that species is the MS2
+proteoform. For an **MS3** scan it is the **fragment** the MS3 precursor covers: the
+sub-sequence over `[start_pos, end_pos)` + its mods (parent mods clipped/rebased into
+the fragment; `MS3FragmentMatcher::calibrateAndScore` fills `proteoform_sequence`/`ptm_sites`).
+Invariant: an MS3 row's `proteoform` bare-residue count == `end_pos − start_pos`. The
+paired `MS2Context` (`ctx`) supplies only the **acquisition context** — MS1/MS2/MS3
+precursor identity + isolation — never the identified proteoform.
+_Avoid_: logging the **parent** proteoform on an MS3 identification row (the old
+`use_ctx_proteoform` special-case — inconsistent with the fragment `start_pos`/`end_pos`);
+pasting fragment-frame `ptm_sites` onto the parent sequence. NOTE `scan_results.tsv` is
+the *acquisition-result* log, so its MS3 `proteoform_sequence` is the **parent** (what the
+MS3 is characterizing) — it legitimately differs from the identification row's fragment.
+
 **Characterization**:
 The feature umbrella and the method.json config section (`characterization`) for the
 per-Precursor proteoform model: its `objective` (`ambiguity | coverage`) and the

@@ -33,9 +33,9 @@ Declared at `FragmentAnalysis.h:69`. Unified result of any fragment-matching ope
 | `total_match_count` | `int` | ✓ | ✓ | Total fragments matched (uncapped). Used as `FragmentCount` score in exploration. |
 | `region_start` | `int` | ✓ | ✓ | 0-based proteoform start in protein sequence; `-1` = full sequence |
 | `region_end` | `int` | ✓ | ✓ | 0-based exclusive proteoform end; `-1` = full sequence |
-| `ptm_sites` | `std::vector<PTMSite>` | ✓ | ✓ | PTM sites from FLASHExtender (localized or ambiguous) |
-| `matched_protein` | `std::string` | ✓ | ✓ | Protein file / DB name (set to `fasta_file` when match count > 0) |
-| `proteoform_sequence` | `std::string` | ✓ | ✓ | Matched protein sequence slice |
+| `ptm_sites` | `std::vector<PTMSite>` | ✓ | ✓ | MS2: FLASHExtender PTM sites (parent-frame, 1-based). MS3: the parent mods **clipped/rebased into the fragment** (`calibrateAndScore` writes `rebased_ptms`). |
+| `matched_protein` | `std::string` | ✓ | — | Protein file / DB name (MS2 only; `calibrateAndScore` leaves it empty on MS3). |
+| `proteoform_sequence` | `std::string` | ✓ | ✓ | MS2: the matched protein slice. MS3: the **fragment sub-sequence** the MS3 precursor covers (`calibrateAndScore` writes `subseq`) — so `match` is the identified species for both levels. `score` stays −1 on MS3 (ProteoformTracker winner-select skips MS3 via `score<0`). |
 | `fragments` | `std::vector<FragmentMatch>` | ✓ | ✓ | Per-fragment match details |
 | `ppm_offset` | `double` | — | ✓ | Median PPM error from MS3 calibration pass |
 | `correction_factor` | `double` | — | ✓ | `1 / (1 + ppm_offset * 1e-6)`; applied in tight pass |
