@@ -213,11 +213,15 @@ deferred/failed (the parent stays recoverable via `matched_protein` + `parent_tr
 **`identification.tsv`** is the per-scan identification leaf (the annotated b/y ion, emitted only when
 the scan matched fragments) and additionally carries `ms3_fragment_coverage` = distinct backbone bonds
 covered / (L−1); **`pooled_identification.tsv`** is the per-Precursor narrowed trajectory.
-NOTE an MS3 identification row's ambiguous modification is **clip-only (wide)** — the
-per-scan leaf carries only *that scan's* evidence; cross-scan **narrowing** of an ambiguous
-range is the *Pooled identification log*'s job (`ProteoformTracker::narrowModifications_`),
-so the same Precursor's pooled row legitimately reads a **narrower** range. Both are correct
-at their own granularity; do **not** feed the pooled narrowed range back into the per-scan leaf.
+NOTE the three logs form a **narrowing gradient** on an MS3 ambiguous modification:
+`scan_results` renders it **wide** (the inherited parent MS2 clip); `identification` renders it
+narrowed by **only that scan's own matched sub-fragments** (`FragmentAnalysis::narrowFragmentPTMSites`,
+mirroring the MS3 pass of `ProteoformTracker::narrowModifications_`, applied to a local copy in
+`IdaLogger::writeIdentificationRow`); `pooled` renders the **cross-scan cumulative** narrowing
+(`ProteoformTracker::narrowModifications_`). All three are correct at their own granularity — a
+per-scan leaf legitimately stays wider than pooled when *that scan* adds no bracketing evidence. Do
+**not** feed the **pooled** (cross-scan) narrowed range back into the per-scan leaf; the leaf uses
+per-scan evidence only.
 
 **Characterization**:
 The feature umbrella and the method.json config section (`characterization`) for the

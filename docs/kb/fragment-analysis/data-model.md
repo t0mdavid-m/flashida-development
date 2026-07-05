@@ -101,6 +101,8 @@ The engine writes four log streams in `FLASHIda.cpp` (`writeIdentificationRow_` 
 
 - **`identification.tsv` `ms3_fragment_coverage`** — appended LAST (29→30 columns). On MS3 rows = distinct backbone bonds covered / (L−1) over the matched sub-fragments (prefix sub-ion index `p` → bond `p`; suffix → bond `L−p`), clamped `[0,1]`; `-1` on MS2. Computed in `calibrateAndScore`.
 
+- **`identification.tsv` `proteoform` — MS3 mods are per-scan NARROWED.** An MS3 identification row renders the same clipped b/y fragment as `scan_results`, but its ambiguous PTM ranges are tightened by **only that scan's own matched sub-fragments** — distinct from the wide `scan_results` render and from the pooled cumulative trajectory. `IdaLogger::writeIdentificationRow` narrows a **local copy** of `match.ptm_sites` via `FragmentAnalysis::narrowFragmentPTMSites(match.ptm_sites, match.proteoform_sequence.size(), match.fragments)` (gated `ms_level==3`), which mirrors the MS3 pass of `ProteoformTracker::narrowModifications_` in the subsequence frame. One writer site covers all three MS3 id-row sinks (`R` + `E`-primary + `E`-winner). Pooled (seeded from the MS2 winner, `ProteoformTracker.cpp:251`) and `scan_results` (parent-context render) are untouched. **Three-log gradient:** `scan_results` wide → `identification` this-scan-narrow → `pooled` cumulative-narrow.
+
 ## MS3-local types
 
 ### `MS3FragmentMatcher::TheoreticalMass`
