@@ -204,24 +204,29 @@ paired `MS2Context` (`ctx`) supplies only the **acquisition context** — MS1/MS
 precursor identity + isolation — never the identified proteoform.
 _Avoid_: logging the **parent** proteoform on an MS3 identification row (the old
 `use_ctx_proteoform` special-case — inconsistent with the fragment `start_pos`/`end_pos`);
-pasting fragment-frame `ptm_sites` onto the parent sequence. NOTE the three logs split by
-granularity: **`scan_results.tsv`** (the *acquisition-result* log, written for **every** scan)
-renders the MS3 `proteoform_sequence` as the **clipped b/y fragment** — the same fragment frame
-identification uses, via `MS3FragmentMatcher::fragmentProForma` (extractSubsequence + rebasePTMSites +
-toProForma) built from the acquisition context, so it is present even when identification is
-deferred/failed (the parent stays recoverable via `matched_protein` + `parent_tracking_id`);
-**`identification.tsv`** is the per-scan identification leaf (the annotated b/y ion, emitted only when
-the scan matched fragments) and additionally carries `ms3_fragment_coverage` = distinct backbone bonds
-covered / (L−1); **`pooled_identification.tsv`** is the per-Precursor narrowed trajectory.
-NOTE the three logs form a **narrowing gradient** on an MS3 ambiguous modification:
-`scan_results` renders it **wide** (the inherited parent MS2 clip); `identification` renders it
-narrowed by **only that scan's own matched sub-fragments** (`FragmentAnalysis::narrowFragmentPTMSites`,
-mirroring the MS3 pass of `ProteoformTracker::narrowModifications_`, applied to a local copy in
-`IdaLogger::writeIdentificationRow`); `pooled` renders the **cross-scan cumulative** narrowing
-(`ProteoformTracker::narrowModifications_`). All three are correct at their own granularity — a
-per-scan leaf legitimately stays wider than pooled when *that scan* adds no bracketing evidence. Do
-**not** feed the **pooled** (cross-scan) narrowed range back into the per-scan leaf; the leaf uses
-per-scan evidence only.
+pasting fragment-frame `ptm_sites` onto the parent sequence. NOTE the **four logs** split by role
+(after the scan_results slim-down):
+- **`scan_commands.tsv`** (per fired command) carries the MS3 target's **wide clipped b/y fragment**
+  proteoform in the `ms3_proteoform` column — rendered at command-build time by
+  `MS3FragmentMatcher::fragmentProForma` (stashed in `ScanCommandQueue`'s `ms3_cmd_proteoform_` side-map,
+  drained by `takeMS3Proteoform`), so it is present for **every** MS3 command (regular + exploration),
+  even ones that never return. `""` on MS1/MS2/AGC rows.
+- **`scan_results.tsv`** (per scan) is now a **pure acquisition-event** log — timing, deconv masses,
+  parent lineage, exploration sweep bookkeeping. It carries **no identification payload** (the former
+  `tag_count`/`matched_protein`/`proteoform_sequence`/`tic_coverage`/`fragment_count` columns were removed).
+- **`identification.tsv`** (per matched scan) is the identification leaf: the annotated b/y ion, its
+  `ms3_fragment_coverage` (distinct backbone bonds / (L−1)), and `tic_coverage` (moved here from
+  scan_results). Its MS3 `proteoform` mods are **narrowed by that scan's own evidence**.
+- **`pooled_identification.tsv`** is the per-Precursor **cross-scan cumulative** narrowed trajectory.
+
+The **narrowing gradient** on an MS3 ambiguous modification: `scan_commands` renders it **wide** (the
+clipped parent MS2 range); `identification` renders it narrowed by **only that scan's own matched
+sub-fragments** (`FragmentAnalysis::narrowFragmentPTMSites`, mirroring the MS3 pass of
+`ProteoformTracker::narrowModifications_`, applied to a local copy in `IdaLogger::writeIdentificationRow`);
+`pooled` renders the cumulative narrowing. All three are correct at their own granularity — a per-scan
+leaf legitimately stays wider than pooled when *that scan* adds no bracketing evidence. Do **not** feed
+the **pooled** (cross-scan) narrowed range back into the per-scan leaf; the leaf uses per-scan evidence
+only.
 
 **Characterization**:
 The feature umbrella and the method.json config section (`characterization`) for the

@@ -78,24 +78,24 @@ The mod-inclusive `adjusted_mass` = `observed + (theo_equiv − ms3_theoretical)
 
 The PTM-site rebasing logic lives in `MS3FragmentMatcher::rebasePTMSites` at `MS3FragmentMatcher.cpp:287`. The mapping for ion positions (subsequence → full-protein) is applied during match result population.
 
-## Log surfaces: scan_results fragment proteoform + identification coverage
+## Log surfaces: scan_commands fragment proteoform + identification coverage
 
-Two logged surfaces read the MS3 fragment identity:
+The MS3 fragment identity surfaces across the logs (after the scan_results slim-down, `scan_results` carries **no** proteoform — it is a pure acquisition-event log):
 
-- **`scan_results.tsv` `proteoform_sequence`** (written every scan) = the **clipped b/y fragment**, rendered by `MS3FragmentMatcher::fragmentProForma(protein, ctx, ion_type, ion_index)` = `extractSubsequence` + `rebasePTMSites` + `FragmentAnalysis::toProForma` (the same fragment frame identification uses). It is built from the acquisition context alone — no matched spectrum required — so it is present even when identification is deferred/failed; it returns `""` when the context is unpopulated (`ion_type=='\0' | index==0`). The parent stays recoverable via `matched_protein` + `parent_tracking_id`. (This replaced an earlier parent render.)
+- **`scan_commands.tsv` `ms3_proteoform`** (per MS3 command; `""` on MS1/MS2/AGC) = the **wide clipped b/y fragment** of the target being fired, rendered by `MS3FragmentMatcher::fragmentProForma(protein, ctx, ion_type, ion_index)` = `extractSubsequence` + `rebasePTMSites` + `FragmentAnalysis::toProForma`. Computed at command-BUILD time (in the 3 `Exploration.cpp` `buildMS3` call sites, which hold the `ProteoformContext`), stashed in `ScanCommandQueue::ms3_cmd_proteoform_` (`scan_id → string`), drained by `takeMS3Proteoform` in `FLASHIda::getNextScanCommand`. So it is present for **every** MS3 command (regular + exploration variants), even ones that never return; `""` when the context is unpopulated. ABI-safe (rides the log row, not the 2048-byte `ScanCommand` struct).
 - **`identification.tsv` `ms3_fragment_coverage`** (matched MS3 rows; `-1` on MS2) = the fraction of the fragment's `(L−1)` backbone bonds covered by **distinct** matched MS3 sub-fragments, `L` = fragment length (`== fragment_ion_index`). Bond mapping: a prefix sub-ion (`a`/`b`/`c`) of subseq-index `p` cleaves bond `p`; a suffix sub-ion (`y`/`x`/`z`, incl. `yb`/`ya`) of index `p` cleaves bond `L−p`. Computed in `calibrateAndScore`, stored on `ProteoformMatch::ms3_fragment_coverage`, clamped `[0,1]`.
-- **`identification.tsv` `proteoform`** (matched MS3 rows) = the clipped b/y fragment, but its ambiguous PTM ranges are **narrowed by only that scan's own matched sub-fragments** — distinct from the wide `scan_results` render. `IdaLogger::writeIdentificationRow` narrows a **local copy** of `match.ptm_sites` via `FragmentAnalysis::narrowFragmentPTMSites(match.ptm_sites, match.proteoform_sequence.size(), match.fragments)` before `toProForma`, gated on `ms_level==3`. That one site covers all three MS3 identification-row sinks (regular `R` + exploration `E`-primary + `E`-winner-batch). Because it narrows a copy in the writer, and pooled seeds its ranges from the MS2 winner (`ProteoformTracker.cpp:251`, never from an MS3 match) while `scan_results` renders from the parent context, **pooled and scan_results are untouched**.
+- **`identification.tsv` `proteoform`** (matched MS3 rows) = the clipped b/y fragment, but its ambiguous PTM ranges are **narrowed by only that scan's own matched sub-fragments** — distinct from the wide `scan_commands.ms3_proteoform` render. `IdaLogger::writeIdentificationRow` narrows a **local copy** of `match.ptm_sites` via `FragmentAnalysis::narrowFragmentPTMSites(match.ptm_sites, match.proteoform_sequence.size(), match.fragments)` before `toProForma`, gated on `ms_level==3`. That one site covers all three MS3 identification-row sinks (regular `R` + exploration `E`-primary + `E`-winner-batch). Because it narrows a copy in the writer, and pooled seeds its ranges from the MS2 winner (`ProteoformTracker.cpp:251`, never from an MS3 match) while `scan_commands` renders the wide fragment, **pooled and scan_commands are untouched**.
 
 ### `narrowFragmentPTMSites` — per-scan MS3 narrowing
 
 `FragmentAnalysis::narrowFragmentPTMSites` is a pure function (subsequence frame): for each wide site `[s,e]` (1-based) and each matched sub-fragment that **brackets** it (backbone cleavage strictly inside), tighten the constrained boundary from the fragment's `includes_ptm` verdict. Prefix (`a`/`b`/`c`) covers `[1,k]`; suffix (`y`/`x`/`z`, incl. composite `yb`/`ya`) covers `[L−k+1, L]` (`k` = `ion_index`, subseq space). Prefix/suffix is decided by the **first char only** (`== isPrefixIonType`), so `yb`/`ya` classify as suffix — never by substring. Inward-only; single-scan `includes_ptm` verdicts are self-consistent so there is no intensity conflict resolution. It deliberately **mirrors `ProteoformTracker::narrowModifications_` Pass B** (the MS3 localization pass), scoped to one scan — it is **not** the cumulative pooled pass.
 
-**Three-log narrowing gradient** on an MS3 ambiguous mod (e.g. cytC heme, MS2 says residues 15–26):
+**Narrowing gradient** on an MS3 ambiguous mod (e.g. cytC heme, MS2 says residues 15–26):
 
 | log | render | source |
 |-----|--------|--------|
-| `scan_results.tsv` | **wide** `(CAQCHTVEKGGK)[+615]` (15–26) | `fragmentProForma(ctx)` (parent MS2 clip) |
-| `identification.tsv` | **this-scan** `(CAQCHTVE)[+615]` (15–22) | `narrowFragmentPTMSites` (own `b22` evidence) |
+| `scan_commands.tsv` `ms3_proteoform` | **wide** `(CAQCHTVEKGGK)[+615]` (15–26) | `fragmentProForma(ctx)` at build time (parent MS2 clip) |
+| `identification.tsv` `proteoform` | **this-scan** `(CAQCHTVE)[+615]` (15–22) | `narrowFragmentPTMSites` (own `b22` evidence) |
 | `pooled_identification.tsv` | **cumulative** (15–22) | `ProteoformTracker::narrowModifications_` |
 
 A per-scan leaf legitimately stays wider than pooled when *that scan* contributes no bracketing fragment for the mod.
