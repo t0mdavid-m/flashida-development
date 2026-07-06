@@ -54,9 +54,17 @@ The engine component — owned by the FLASHIda instance, whole-run lifetime — 
 holds one Proteoform model per Precursor and acts as the **dispatch authority**
 for downstream scans: every new MS3 scan and every follow-up MS2 scan is
 dispatched *via* the tracker. Exploration and other paths consult it rather than
-building those commands directly.
-_Avoid_: Exploration (sweeps MS2/MS3 fragmentation parameters for one target;
-does not pool across scans), PrecursorSelection (MS1 → MS2 ranking).
+building those commands directly. It is also the **identification authority**: it
+runs the fragment matching (`FragmentAnalysis` / `MS3FragmentMatcher`) and owns the
+resulting `ProteoformMatch` — fragment ions, fragment-ion count, coverage, and the
+per-variant + calibrated variant matches. Other code that needs an
+identification-derived quantity **consults the tracker** rather than invoking a
+matcher itself.
+_Avoid_: Exploration (sweeps MS2/MS3 fragmentation parameters for one target; does
+not pool across scans) — note Exploration keeps the **scoring** role (the metric
+math + winner selection in `computeExplorationScore_`) and consults the tracker for
+identification inputs; the tracker does **not** compute the exploration metric
+score. PrecursorSelection (MS1 → MS2 ranking).
 
 **Identification score**:
 The scalar used to pick the single best proteoform across a Precursor's MS2
@@ -133,6 +141,19 @@ pre-scans find the collision energy that leaves the target remaining-precursor
 ratio. Pre-scans feed winner selection; the Follow-up MSn is then acquired at the
 chosen parameters.
 _Avoid_: confusing a pre-scan with the production scan it informs.
+
+**Baseline variant**:
+A special CE-0 / RT-0 pre-scan prepended (index 0) to an exploration group. It
+measures the *un-fragmented* reference (for RemainingPrecursor, the intact-precursor
+intensity the CE variants are ratioed against) and is **skipped in winner
+selection** (`is_baseline`). As of `august_pre` a baseline is prepended to **every**
+exploration metric, not only RemainingPrecursor (Phase-2 decision 2026-07-06) — so
+every exploration group now fires one extra pre-scan and emits one extra variant row.
+It is **excluded from the ProteoformTracker feed** (an `is_baseline` guard), so a
+CE-0 baseline never contributes to the pooled proteoform model.
+_Avoid_: treating the baseline as a scorable variant (it never wins); assuming it
+exists only for RemainingPrecursor (that was the pre-`august_pre` behavior); letting
+it feed the pooled model.
 
 **Follow-up MSn**:
 The production MSn scan emitted at the parameters chosen by a parameter-optimizing
