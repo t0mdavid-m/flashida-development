@@ -44,7 +44,12 @@ The pooled, evolving best-known identification of a single Precursor: the winnin
 proteoform (sequence + region bounds + PTM sites) chosen across all MS2 parameter
 sets, with each mapped fragment annotated by the MS2 parameters that produced its
 highest-intensity observation. One per Precursor, held by the Proteoform tracker
-for the whole run. Distinct from the per-scan `ProteoformMatch`, which is
+for the whole run. The winner scan's own FLASHTnT fragments are trusted verbatim;
+**non-winner MS2 scans contribute only by re-matching their raw deconvolved masses
+against the winner ladder** (never their own hypothesis), so every pooled fragment is
+winner-consistent and the reported ProForma regenerates its own fragment masses
+(ADR-0006). MS3 is likewise scored against the *live* winner, not the triggering scan.
+Distinct from the per-scan `ProteoformMatch`, which is
 transient and recomputed every MS2.
 _Avoid_: ProteoformMatch (single-scan, no pooling), MS2Context (per-MS3 cache of
 one MS2's bounds + PTMs), "identification" (per-scan in current code).
@@ -97,6 +102,10 @@ have been assigned, annotated with prefix/suffix coverage and â€” per MS level â
 highest-intensity Fragment observation. MS2 and MS3 sightings share one table via
 the proteoform frame (MS3 ions fold in through their full-protein equivalent
 indices). The best *MS2* observation supplies the parameters for an MS3 dispatch.
+A non-winner MS2 mass becomes a mapped fragment only if it matches the winner ladder
+(base, or base+shift for a bracketed ambiguous mod); off-ladder masses and
+base-and-base+shift double-matches are dropped, and a mass within tolerance of two
+distinct winner ions goes to the closest by ppm (ADR-0006).
 _Avoid_: FragmentMatch (single-scan, transient, carries no intensity or
 provenance), peak (pre-deconvolution).
 
@@ -105,7 +114,9 @@ A modification of known mass whose location is known only to a residue *range*
 [start, end], narrowed toward a single residue by bracketing fragments that match
 with vs. without the shift at the given tolerance. Carries bidirectional intensity
 support (one value per boundary) so conflicting evidence resolves to the
-higher-intensity mass. start == end means localized.
+higher-intensity mass. start == end means localized. **MS2 evidence is authoritative;
+MS3 only refines *within* the MS2-narrowed range** (tighten-only, never reversing an
+MS2-set boundary).
 _Avoid_: PTMSite (a single-scan snapshot from FLASHExtender with no cross-scan
 narrowing); treating it as a per-residue probability list (it is a contiguous
 range, not a candidate set).
