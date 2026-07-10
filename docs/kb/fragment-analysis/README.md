@@ -57,6 +57,7 @@ The cross-direction ion types (`yb`, `ya`) are MS3-only and only appear for N-te
    - [tag-follow-up.md](tag-follow-up.md) — Mode 1.
    - [ms2-matching.md](ms2-matching.md) — Mode 2.
    - [ms3-matching.md](ms3-matching.md) — Mode 3.
+3. [pooled-vs-nonpooled-log-semantics.md](pooled-vs-nonpooled-log-semantics.md) — how `identification.tsv` (per-event) and `pooled_identification.tsv` (cumulative winner-anchored) relate; the by-design seams (n_fragments vs array length, raw vs frame masses, coverage/nominal-mass definitions, `flash_extender_score`).
 
 ## Out of Scope
 
