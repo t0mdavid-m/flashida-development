@@ -194,13 +194,19 @@ idiom).
 **Fragment masses (measured / adjusted / theoretical)**:
 Every mapped fragment carries three distinct masses; keeping them separate is the
 fragment-representation contract.
-- **Measured** — the raw deconvolved monoisotopic mass of the fragment as seen in
+- **Measured** — the deconvolved monoisotopic mass of the fragment as seen in
   its *own* scan. An MS2 fragment is already a protein-frame b/y ion; an MS3
-  sub-fragment is in its precursor-**subsequence** frame (`identification.tsv`
-  `ms3_fragment_masses`; the model's `FragmentObservation.measured_mass`).
+  sub-fragment is in its precursor-**subsequence** frame (and is the
+  calibration-corrected mass — `md.observed_mass` after the two-pass ppm
+  correction, not literally raw) (`identification.tsv` `ms3_fragment_masses`;
+  the model's `FragmentObservation.measured_mass`).
 - **Adjusted** — the measured mass re-expressed in the full-protein (MS2)
-  coordinate frame **with the fragment's real modifications retained**:
-  `observed + (theo_equiv − ms3_theoretical) + ambiguous_included`. For a *trivial*
+  coordinate frame **with the fragment's real modifications retained**, via a
+  **ppm-honest** (multiplicative) projection: scale the mod-inclusive equivalent
+  theoretical by the sub-fragment's measured fractional error —
+  `theoretical_equiv × (observed / ms3_theoretical)`, *not* the Da-additive
+  `observed + (theo_equiv − ms3_theoretical) + ambiguous_included` (that asserted
+  the un-measured complement was error-free and deflated the ppm). For a *trivial*
   frame (a b sub-fragment of a b precursor) `adjusted == measured`. This is the
   value the model pools and the `combined_ms2_frame_masses` list reports
   (`FragmentMatch.adjusted_mass` via `equiv_type`/`equiv_index`;
@@ -212,13 +218,20 @@ fragment-representation contract.
   (`calibrateAndScore`). Carried per-scan onto `FragmentObservation.theoretical_mass`
   / `FragmentMatch.theoretical_mass`, so `combined_theoretical` and the
   identification `theoretical_masses` are real for MS2 fragments too (not `0`).
-- **Residual** — `adjusted − theoretical`, reported in **Da and ppm** (for MS2,
-  `observed − theoretical`; for MS3, the subsequence-frame match error
-  `measured − ms3_theoretical`). Contract: `|residual| ≤ tolerance` — the measured
-  evidence, re-framed, must agree with the proteoform prediction.
+- **Residual** — `adjusted − theoretical`, reported in **Da and ppm**. For MS2 it
+  is `observed − theoretical`. For MS3, because the projection is multiplicative,
+  the **ppm** residual equals the subsequence-frame measured ppm exactly
+  (`(observed − ms3_theoretical) / ms3_theoretical`, == the matcher's own per-ion
+  error), and the **Da** residual is the equivalent-frame *projected* Da
+  (`theoretical × (ratio − 1)`, larger than the raw sub-frame Da). Contract:
+  `|ppm residual| ≤ tolerance` — the measured evidence, re-framed, must agree with
+  the proteoform prediction.
 
 _Avoid_: reporting the raw sub-sequence-frame mass as the adjusted (MS2-frame)
-mass; **stripping modifications from `adjusted`** (the bare-backbone defect —
+mass; **carrying the sub-frame Da error into the MS2 frame as an additive offset**
+(the ppm-deflation defect — `adjusted = observed + Da_offset` reports the small
+sub-frame Da error over the large equivalent mass, flattering the match; project
+multiplicatively instead); **stripping modifications from `adjusted`** (the bare-backbone defect —
 `computeProteinPrefixMasses` dropped still-ambiguous mods from `theo_equiv`, making
 `adjusted = observed − ambiguous_mods`, ~526 Da low for cytC, so it matched no
 modified ladder); conflating the per-scan theoretical (that scan's wider

@@ -45,6 +45,19 @@ was matched against the *triggering* scan's `ProteoformContext`, not the winner.
   over the render-wide base (what `scan_commands` advertises, via the shared
   `MS3FragmentMatcher::fragmentProFormaSites`) — so it can be **wider than pooled** yet is always **⊆
   `scan_commands`** by construction.
+- **The MS3→MS2 frame projection is ppm-based, not Dalton-additive.** When a matched MS3 sub-fragment is
+  projected onto its equivalent full-protein ion (`calibrateAndScore`), the equivalent-frame observed mass is
+  the equivalent theoretical **scaled** by the sub-fragment's measured fractional error
+  (`adjusted_mass = theoretical · observed_sub / theoretical_sub`), **not** the sub-fragment mass plus a
+  constant Da offset. The additive form asserted the un-measured complement residues were error-free and
+  reported `diff_ppm = (small sub-frame Da error) / (large equivalent mass)`, which **deflated** the residual
+  and flattered every MS3 match. The multiplicative form makes the un-measured complement inherit the
+  fragment's fractional error, so the reported **`diff_ppm` equals the sub-frame measured ppm exactly** for
+  every frame map — the equivalent theoretical (hence `offset` and the covered-ambiguous PTM mass) cancels in
+  the ppm — and matches `matchSpectrum`'s own per-ion residual. The direction is conservative (it
+  *un-deflates* — residuals look worse, never better). The reported `diff_da` becomes the equiv-frame
+  *projected* Da (`theoretical · (ratio − 1)`), internally consistent with the equiv-frame `theoretical`
+  column; the raw sub-frame mass is still carried untouched in the `measured` / `ms3_fragment_masses` column.
 - **Narrowing is unchanged; MS2 stays authoritative.** Merged fragments land as `best_ms2` and flow
   into the existing `narrowModifications_` Pass A (per-mod base-vs-shift). MS3 remains Pass B —
   subordinate, tighten-only, never reversing an MS2-set boundary — and MS3-only fragments are never
@@ -58,6 +71,9 @@ was matched against the *triggering* scan's `ProteoformContext`, not the winner.
 multi-MS2 exploration modes and every MS3-bearing mode change (values, not columns), and the MS3
 context swap also moves the per-scan `identification.tsv` MS3 rows and the `scan_commands`
 `ms3_proteoform` cell. In CE-sweep exploration modes the augment can alter which MS3 targets fire
-(real acquisition), because `planNextScans` selects from the winner-consistent fragment pool. Goldens
-are recaptured only after a manual golden-diff review and explicit sign-off. FLASHDeconv / FLASHTnT /
-FLASHExtender remain untouchable.
+(real acquisition), because `planNextScans` selects from the winner-consistent fragment pool. The
+ppm-based frame projection moves the MS3-frame `combined_ms2_frame_masses` / `diff_da` / `diff_ppm`
+values (equivalently the per-scan `identification.tsv` MS3-frame mass + diffs and the pooled `combined_*`
+diffs) on every MS3-bearing mode — values only, no columns; the `theoretical` and raw `measured` columns
+are unchanged. Goldens are recaptured only after a manual golden-diff review and explicit sign-off.
+FLASHDeconv / FLASHTnT / FLASHExtender remain untouchable.
