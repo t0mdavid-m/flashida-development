@@ -31,12 +31,20 @@ was matched against the *triggering* scan's `ProteoformContext`, not the winner.
     highest-intensity observation across scans (drives MS3 stage-0 params);
   - a bracketing mass within tolerance of **both** base and base+shift → **dropped** (too ambiguous);
   - within tolerance of **≥2 distinct** winner ions → **closest-ppm** wins.
-- **MS3 scores against the LIVE winner.** A new `ProteoformTracker::buildWinnerProteoformContext(pid)`
-  renders the current (narrowed-so-far) winner model — region + **all** modifications, localized *and*
-  ambiguous — as the `ProteoformContext`. It replaces the triggering-scan context at **both** MS3
-  build sites (production return and exploration variants), discharging the standing
-  `@Claude … move into ProteoformTracker` TODOs. Empty context when there is no finalized winner ⇒
-  MS3 matches nothing.
+- **MS3 SCORING is winner-anchored; MS3 RENDER stays the triggering scan.** A new
+  `ProteoformTracker::buildWinnerProteoformContext(pid)` renders the live winner model (region + **all**
+  modifications) as the `ProteoformContext` used to **score** the returning MS3 (`FLASHIda.cpp`) and the
+  completed exploration variants (`Exploration.cpp`). The build-time `scan_commands.ms3_proteoform`
+  **render** — and the cached `MS2Context` — stay the **triggering scan's `frag_result`**: at MS3
+  command-build time the winner is not yet finalized, so rendering against it produces an empty/collapsed
+  fragment (that was a regression). A single batch, ppm-aligned `calibrateAndScore` is the one match
+  feeding both logs.
+- **Two ProForma from that one batch match.** `pooled_identification.tsv` = the cumulative
+  winner-anchored narrowing, folded on **every** full MS3. `identification.tsv` = the individual MS3 ions
+  with a **fresh per-scan** ambiguity — each mod's range recomputed from **only that scan's** matched ions
+  over the render-wide base (what `scan_commands` advertises, via the shared
+  `MS3FragmentMatcher::fragmentProFormaSites`) — so it can be **wider than pooled** yet is always **⊆
+  `scan_commands`** by construction.
 - **Narrowing is unchanged; MS2 stays authoritative.** Merged fragments land as `best_ms2` and flow
   into the existing `narrowModifications_` Pass A (per-mod base-vs-shift). MS3 remains Pass B —
   subordinate, tighten-only, never reversing an MS2-set boundary — and MS3-only fragments are never

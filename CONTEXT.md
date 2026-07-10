@@ -252,13 +252,15 @@ pasting fragment-frame `ptm_sites` onto the parent sequence. NOTE the **four log
 - **`pooled_identification.tsv`** is the per-Precursor **cross-scan cumulative** narrowed trajectory.
 
 The **narrowing gradient** on an MS3 ambiguous modification: `scan_commands` renders it **wide** (the
-clipped parent MS2 range); `identification` renders it narrowed by **only that scan's own matched
-sub-fragments** (`FragmentAnalysis::narrowFragmentPTMSites`, mirroring the MS3 pass of
-`ProteoformTracker::narrowModifications_`, applied to a local copy in `IdaLogger::writeIdentificationRow`);
-`pooled` renders the cumulative narrowing. All three are correct at their own granularity — a per-scan
-leaf legitimately stays wider than pooled when *that scan* adds no bracketing evidence. Do **not** feed
-the **pooled** (cross-scan) narrowed range back into the per-scan leaf; the leaf uses per-scan evidence
-only.
+clipped triggering-scan MS2 range); `identification` renders a **fresh per-scan** ambiguity — it narrows
+the **same wide fragment base `scan_commands` renders** (the triggering-scan render context, via the
+shared `MS3FragmentMatcher::fragmentProFormaSites`) by **only that scan's own matched sub-fragments**
+(`FragmentAnalysis::narrowFragmentPTMSites`, inward-only, in `IdaLogger::writeIdentificationRow`), **not**
+the pooled-narrowed winner; `pooled` renders the cumulative narrowing folded on every full MS3. All three
+are correct at their own granularity — the per-scan leaf can be **wider than pooled** (a scan that adds no
+bracketing evidence) yet is always **⊆ `scan_commands`** by construction (identical wide base +
+inward-only narrowing). Do **not** feed the **pooled** (cross-scan) narrowed range back into the per-scan
+leaf; the leaf uses per-scan evidence only.
 
 **Characterization**:
 The feature umbrella and the method.json config section (`characterization`) for the
