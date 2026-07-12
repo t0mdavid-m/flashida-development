@@ -1,9 +1,10 @@
 ---
 title: Pooled vs non-pooled identification log semantics
-last_verified: 2026-07-10
+last_verified: 2026-07-12
 code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.cpp
 ---
 
 # Pooled vs non-pooled identification log semantics
@@ -65,6 +66,23 @@ definitional. This packet documents those seams (owner-reviewed 2026-07-10).
   (more evidence → tighter), not a discrepancy. The pooled proteoform equals a single
   contributor's per-event string only at `update_index=1`; later updates are a
   winner-backbone consensus with a jointly-narrowed localization.
+
+- **[L] MS3 leaf mod-localization = per-scan equiv-frame gap-partition.**
+  `identification.tsv`'s MS3 `proteoform` localizes each ambiguous mod over **that scan's own
+  EQUIVALENT (full-protein) ions** — `FragmentAnalysis::narrowFragmentPTMSites` reads
+  `fm.equiv_type`/`fm.equiv_index` + the flip/mod-aware verdict shared with pooled Pass B
+  (`is_complement_flip`; `nterm_loss` keeps an N-terminal net-loss composite on residue 1),
+  **not** the raw sub-frame ion (`fm.ion_type`/`fm.ion_index`). It seeds **wide over `[1,L]`**
+  and tightens inward, so the leaf reflects exactly what that scan resolves — it may be
+  **wider than pooled** and **may exceed the `scan_commands` a-priori base** (there is **no**
+  leaf-⊆-`scan_commands` guarantee; the `wide_sites` base is a classification reference, not
+  an output clamp). Two adjacent mods that **no fragment separates** (their brackets overlap —
+  a shared gap) **merge** into one **summed** shift over the union (e.g.
+  `−89.0302 + 615.2498 = +526.2196`) — the leaf reports what the ion physically sees. The
+  pooled path (`narrowModifications_`, cumulative **one-directional** narrowing) is a
+  **separate** code path and stays **byte-identical**; this is a leaf-only refinement. (It
+  replaced a raw-sub-frame narrower whose complement-flipped suffix ion `yb69` — equivalent to
+  prefix `b1 = 42.01 = M−89` — was misread as a suffix and pushed the −89 off residue 1.)
 
 ## `flash_extender_score` (identification.tsv)
 

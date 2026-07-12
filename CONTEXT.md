@@ -265,15 +265,18 @@ pasting fragment-frame `ptm_sites` onto the parent sequence. NOTE the **four log
 - **`pooled_identification.tsv`** is the per-Precursor **cross-scan cumulative** narrowed trajectory.
 
 The **narrowing gradient** on an MS3 ambiguous modification: `scan_commands` renders it **wide** (the
-clipped triggering-scan MS2 range); `identification` renders a **fresh per-scan** ambiguity — it narrows
-the **same wide fragment base `scan_commands` renders** (the triggering-scan render context, via the
-shared `MS3FragmentMatcher::fragmentProFormaSites`) by **only that scan's own matched sub-fragments**
-(`FragmentAnalysis::narrowFragmentPTMSites`, inward-only, in `IdaLogger::writeIdentificationRow`), **not**
-the pooled-narrowed winner; `pooled` renders the cumulative narrowing folded on every full MS3. All three
-are correct at their own granularity — the per-scan leaf can be **wider than pooled** (a scan that adds no
-bracketing evidence) yet is always **⊆ `scan_commands`** by construction (identical wide base +
-inward-only narrowing). Do **not** feed the **pooled** (cross-scan) narrowed range back into the per-scan
-leaf; the leaf uses per-scan evidence only.
+clipped triggering-scan MS2 range, built pre-acquisition — it cannot know the MS3 ions yet);
+`identification` renders a **fresh per-scan** ambiguity — `FragmentAnalysis::narrowFragmentPTMSites` (in
+`IdaLogger::writeIdentificationRow`) brackets each mod over **that scan's own EQUIVALENT (full-protein) ions**
+(`fm.equiv_type`/`fm.equiv_index` + the flip/mod-aware verdict shared with pooled Pass B, **not** the raw
+sub-frame ion), seeded **wide over the fragment region `[1,L]`** and tightened inward, then **merges** any
+mods that scan cannot separate into one **summed** shift over their union (a gap-partition: overlapping
+brackets == a shared gap == co-observed); `pooled` renders the cumulative **one-directional** narrowing folded
+on every full MS3. All three are correct at their own granularity — the per-scan leaf reflects **exactly what
+that scan's ions resolve**, so it can be **wider OR narrower than pooled** and **may exceed the `scan_commands`
+a-priori base** (there is **no** leaf-⊆-`scan_commands` guarantee; the `wide_sites` base is a classification
+reference, not an output clamp). Do **not** feed the **pooled** (cross-scan) narrowed range back into the
+per-scan leaf; the leaf uses per-scan evidence only.
 
 **Characterization**:
 The feature umbrella and the method.json config section (`characterization`) for the
