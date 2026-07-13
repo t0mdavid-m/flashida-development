@@ -49,18 +49,20 @@ caused that drift. The POCO *property* names stay stable (`Config.Faims.CVValues
 
 ## Schema Drift Guard
 
-Because a single schema is now wired on two sides (C# loader/emitter and C++ parser), a
-permanent guard prevents the two sides from silently diverging again:
+Because a single snake_case schema is wired on two sides (C# loader/emitter and C++ parser),
+a permanent guard prevents them from silently diverging again. Keys are case-sensitive and
+unknown keys are hard-rejected on both sides. See ADR-0007.
 
-- `FlashIDA/test-data/config_schema_reference.json` — a maximal bridge config where every
-  key holds a unique sentinel value (single source of truth for both tests below).
-- `ConfigSchemaParityTests` (C# / NUnit) — asserts `ToCppJson(Load(reference))` emits
-  exactly the reference key-set and that every sentinel survives the round-trip.
-- `ConfigSchemaParity_test` (C++ / ctest) — asserts `Config` parses every reference key to
-  its sentinel, so C++ reads every key C# emits.
+- `FlashIDA/test-data/config_schema_reference.json` — the complete bridge config, **generated**
+  by `MethodParameters.GenerateReferenceConfigJson()` (never hand-edited; regenerate with
+  `REGEN_CONFIG_REFERENCE=1`).
+- `ConfigSchemaParityTests` (C# / NUnit) — `Reference_IsNeverStale` (committed == generated),
+  `Emit_And_Reload_PreserveEveryKey` (strict loader accepts it, `ToCppJson` re-emits every key),
+  `Reject_UnknownKey_Throws`.
+- `ConfigSchemaParity_test` (C++ / ctest) — `EveryKey_ParsesToOnDiskValue` (each parsed field ==
+  the on-disk value — a read-proof with no hard-coded sentinels), `UnknownKey_Throws`.
 - `.claude/hooks/config-schema-drift-reminder.sh` (PreToolUse) — fires when `Config.{cpp,h}`,
-  `MethodConfig.cs`, `MethodParameters.cs`, or `MethodConfigSerializer.cs` is edited,
-  reminding you to keep the reference fixture and both parity tests in lockstep.
+  `MethodConfig.cs`, `MethodParameters.cs`, or `MethodConfigSerializer.cs` is edited.
 
 ## Related Packets
 

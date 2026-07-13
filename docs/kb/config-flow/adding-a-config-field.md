@@ -14,7 +14,7 @@ code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:152   # TargetingConfig
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:45   # default_level_
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:84   # Config::Config parse
-  - FlashIDA/test-data/config_schema_reference.json   # drift-guard sentinel fixture
+  - FlashIDA/test-data/config_schema_reference.json   # generated drift-guard reference (never hand-edit)
 see_also:
   - config-flow.md
   - developer-attribute.md
@@ -27,10 +27,11 @@ see_also:
 There is now a single (bridge) schema (ADR-0006), but a field still lives on **two sides**:
 the C# side (the section POCO + its `[JsonKey]`, plus the matching property on the
 `JsonMethodConfig` emit proxy) and the C++ side (the config struct + the parser). The
-on-disk key is the **same** on both sides — no rename. Forget the C++ parser and the C#
-side still emits the key but the engine ignores it (defaults silently). Forget the C# emit
-proxy and the key never leaves `method.json`. Always touch both halves, then update the
-drift-guard fixture so parity tests keep the two sides honest.
+on-disk key is the **same** on both sides — no rename, snake_case, case-sensitive. Unknown
+keys are **hard-rejected** on both sides, so a key emitted by C# but missing from the C++
+allowlist makes the engine **throw** (not default silently); forget the C# emit proxy and the
+key never leaves `method.json`. Always touch both halves and both allowlists, then regenerate
+the drift-guard reference so parity tests keep the two sides honest.
 
 ---
 
@@ -56,17 +57,21 @@ Example: add `precursor_selection.new_knob: double = 0.5`.
 4. **C++ struct (`OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:152`).** Add
    `double new_knob = 0.5;` to `TargetingConfig`.
 
-5. **C++ parser (`OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:84`,
+5. **C++ parser + allowlist (`OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:84`,
    `Config::Config`).** In the `precursor_selection` parse block, add
-   `targeting_.new_knob = ps.value("new_knob", 0.5);` alongside the existing `ps.value(...)` calls.
+   `targeting_.new_knob = ps.value("new_knob", 0.5);`, **and** add `"new_knob"` to the
+   `rejectUnknownKeys(ps, {...}, "precursor_selection")` allowlist — otherwise C++ throws on the
+   key the C# side now emits.
 
 6. **Consumer.** Read via `config_.targeting().new_knob` at the call site. The config object is
    immutable after construction; no setter is needed.
 
-7. **Drift guard.** Add `new_knob` (with a unique sentinel value) to
-   `FlashIDA/test-data/config_schema_reference.json`, and add its per-field assertion to the
-   C++ `ConfigSchemaParity_test`. The C# `ConfigSchemaParityTests` emit-equality check picks
-   up the new key automatically; if you wired only one side, one of the parity tests fails.
+7. **Drift guard.** Set the field in `BuildFullReferenceConfig` (`MethodParameters.cs`) to a
+   representative value, then regenerate the committed reference by running the C# suite with
+   `REGEN_CONFIG_REFERENCE=1` (`Reference_IsNeverStale` writes the file). The C++
+   `EveryKey_ParsesToOnDiskValue` read-proof compares against the on-disk value automatically;
+   optionally add an explicit assertion. If you wired only one side, a parity test — or the
+   hard-reject `UnknownKey_Throws` — fails.
 
 8. **Test-mode sanity.** Add the key to a `method.json` test fixture. Run:
    `Flash.exe input_file output_file method.json [ms2_spectrum_file]`
@@ -108,18 +113,18 @@ Use this when adding a new MS level (e.g., MS4) or a new field on the shared `MS
    field at its default value. Missed `default_level_` updates cause the field to default to
    zero-initialization rather than the intended default.
 
-4. **C++ parser (`OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:84`).** For a
-   new MS level, add an `ms_settings.ms4` parse block alongside the existing `ms1`, `ms2`,
-   `ms3` blocks. For a new field on an existing level, add `.value("new_field", default)`
-   within each level's parse block.
+4. **C++ parser + allowlist (`OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:84`).**
+   For a new MS level, add an `ms_settings.ms4` parse block alongside `ms1`/`ms2`/`ms3` and add
+   `"ms4"` to the `ms_settings` allowlist. For a new scan field, add `.value("new_field", default)`
+   within each level's parse block **and** add `"new_field"` to the shared `kScanKeys` allowlist.
 
 5. **Consumers.** Grep `config_.levels()` and `config_.level(` to enumerate every call site
    that iterates MS levels or indexes a specific level. Each site that needs to act on the new
    field (or the new level) must be extended.
 
-6. **Drift guard + test-mode sanity.** Add the new level/field sentinel to
-   `config_schema_reference.json` and its C++ parity assertion (as in Scenario 1, step 7),
-   then run the Flash test-mode CLI as in Scenario 1, step 8.
+6. **Drift guard + test-mode sanity.** Set the field in `BuildFullReferenceConfig` and regenerate
+   the reference (`REGEN_CONFIG_REFERENCE=1`, as in Scenario 1, step 7), then run the Flash
+   test-mode CLI as in Scenario 1, step 8.
 
 ---
 

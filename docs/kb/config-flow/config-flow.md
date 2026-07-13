@@ -73,12 +73,15 @@ walks every public instance property and reads the `[JsonKey]` to determine the 
 key name. Type coercion happens in `ConvertValue` (`MethodConfigSerializer.cs:176`),
 which handles primitives, `double[]` (from `ArrayList`), `List<string>`,
 `List<MS2Parameters>`, value-type structs (dispatched field-by-field through
-`PopulateStruct` at `MethodConfigSerializer.cs:315`), and nested config class objects via
-recursive `PopulateObject` calls. A handful of structural transforms live here because the
-schema is legacy-shaped: `target_mode` int is mapped to the `TargetingMode` string, the
-snake_case `ms_settings` keys are matched to PascalCase struct fields, and `scheduling` is
-read from its nested form. Unknown keys are silently ignored — the C# tree only sees what
-its properties declare.
+`PopulateStruct`), and nested config class objects via recursive `PopulateObject` calls.
+The `ms_settings` scan structs bind by an **explicit snake_case `[JsonKey]` on each struct
+field** (`FirstMass`→`first_mass`, `OrbitrapResolution`→`resolution`, …) — the old
+`NormalizeFieldName` heuristic and `resolution` alias are gone. A couple of structural
+transforms remain: `target_mode` int is mapped to the `TargetingMode` string, and
+`scheduling` is read from its nested form. **Unknown keys are hard-rejected**:
+`ValidateNoUnknownKeys` walks the raw JSON against the model before populating and throws,
+naming every dotted path with no schema home (the dynamic `exploration.overrides` map is the
+only exemption).
 
 ## Stage 4 — Re-Serialization for C++ (≈ identity)
 
@@ -165,18 +168,19 @@ behavior requires looking at state held by individual subsystems, not at config.
 ## Schema Drift Guard
 
 One schema wired on two sides (C# loader/emitter, C++ parser) can still lose a key on one
-side if a field is added to only one. A permanent, CI-gated guard makes that a test failure
-rather than a silent default:
+side if a field is added to only one. A permanent, CI-gated guard makes that a test failure:
 
-- `FlashIDA/test-data/config_schema_reference.json` — a maximal bridge config; every key a
-  unique sentinel value. Single source of truth for both tests.
-- `ConfigSchemaParityTests` (C# / NUnit) — `ToCppJson(Load(reference))` must emit exactly
-  the reference key-set (set-equality both directions, minus the allowlisted C#-only
-  `global.method_name/description`), and every sentinel must survive the round-trip.
-- `ConfigSchemaParity_test` (C++ / ctest) — per-field `TEST_EQUAL(cfg.<section>().<field>,
-  <sentinel>)` for every C++-owned field, proving C++ reads every reference key.
-- `.claude/hooks/config-schema-drift-reminder.sh` (PreToolUse) — reminds you to update the
-  reference fixture and both parity assertions when a schema file is edited.
+- `FlashIDA/test-data/config_schema_reference.json` — the complete bridge config, **generated**
+  by `MethodParameters.GenerateReferenceConfigJson()` (never hand-edited).
+- `ConfigSchemaParityTests` (C# / NUnit) — `Reference_IsNeverStale` asserts the committed file
+  equals the generator output (regenerate with `REGEN_CONFIG_REFERENCE=1`);
+  `Emit_And_Reload_PreserveEveryKey` proves the strict loader accepts it and `ToCppJson`
+  re-emits every key; `Reject_UnknownKey_Throws` proves the loader rejects unknown keys.
+- `ConfigSchemaParity_test` (C++ / ctest) — `EveryKey_ParsesToOnDiskValue` asserts each parsed
+  field equals the on-disk value (a read-proof with no hard-coded sentinels); `UnknownKey_Throws`
+  proves the C++ reader rejects unknown keys.
+- `.claude/hooks/config-schema-drift-reminder.sh` (PreToolUse) — reminds you to move both sides
+  and regenerate the reference when a schema file is edited.
 
 ## Gotchas
 

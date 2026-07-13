@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # PreToolUse hook (Edit|Write): when a file that defines or reads the unified FLASHIda config
-# schema is about to be modified, inject a reminder to keep the C# emitter, the C++ reader, and
-# the shared drift-guard reference fixture in lockstep. The single bridge schema is guarded by
-# ConfigSchemaParityTests (C#: ToCppJson key-set == reference fixture) and ConfigSchemaParity_test
-# (C++: every owned field == its sentinel). Adding/renaming/moving/removing a key on one side
-# without the others turns CI red.
+# schema is about to be modified, inject a reminder to keep the C# model/emitter and the C++ reader
+# in lockstep. The single snake_case bridge schema is guarded by: the self-generated reference
+# FlashIDA/test-data/config_schema_reference.json (Reference_IsNeverStale), the C# strict loader
+# (rejects unknown keys), and the C++ Config reader (rejects unknown keys + read-proof vs on-disk).
+# Adding/renaming/moving/removing a key on one side without the other turns CI red.
 #
 # Non-blocking: always exits 0; emits hookSpecificOutput.additionalContext only for schema paths.
 
@@ -15,7 +15,7 @@ path=$(printf '%s' "$input" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]
 case "$path" in
   *FLASHIda/Config.cpp|*FLASHIda/Config.h|*MethodConfig.cs|*MethodParameters.cs|*MethodConfigSerializer.cs)
     cat <<'EOF'
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"FLASHIda config-schema drift guard: this file defines or reads the ONE unified bridge config schema. If this edit ADDS, RENAMES, MOVES, or REMOVES a config key you MUST keep three things in lockstep: (1) the shared reference fixture FlashIDA/test-data/config_schema_reference.json — give any new key a UNIQUE sentinel value; (2) the C++ per-field assertion in ConfigSchemaParity_test.cpp (TEST_EQUAL the owned field against its sentinel); (3) ToCppJson emission in MethodParameters.cs (the C# ConfigSchemaParityTests emit-equality auto-fails if C# stops emitting a reference key). C# reads bridge keys, C++ reads bridge keys, one schema. If the key is intentionally C#-only (e.g. global.*), add it to the C# global allowlist, not the C++ side. Move all three or CI goes red."}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"FLASHIda config-schema drift guard: this file defines or reads the ONE unified snake_case bridge config schema. Keys are case-sensitive; unknown keys are HARD-REJECTED on both sides. If this edit ADDS/RENAMES/MOVES/REMOVES a config key you MUST: (1) update the C# model (MethodConfig.cs) + ToCppJson emission (MethodParameters.cs) + BuildFullReferenceConfig, and add the key to the C# strict-loader allowlist path it lives in; (2) update the C++ read in Config.cpp AND its rejectUnknownKeys allowlist for that object; (3) regenerate the committed reference by running the C# suite with REGEN_CONFIG_REFERENCE=1 (Reference_IsNeverStale then re-passes; the C++ EveryKey_ParsesToOnDiskValue read-proof + both UnknownKey_Throws tests cover it). A scan-config (ms_settings) key must be a [JsonKey] on the MS1/MS2/MS3Parameters struct field. Miss one side and CI goes red."}}
 EOF
     ;;
 esac
