@@ -9,15 +9,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This workspace is a parent repo with **two git submodules** — tightly coupled projects for real-time intelligent data acquisition in top-down proteomics:
 
 - **FlashIDA/** (submodule `t0mdavid-m/FlashIDA`) — C# / .NET Framework 4.8 application that controls acquisition on Thermo Scientific tribrid instruments. Has its own `FlashIDA/CLAUDE.md` with detailed architecture.
-- **OpenMS/** (submodule `t0mdavid-m/OpenMS`) — C++20 fork of OpenMS providing the FLASH deconvolution engine FlashIDA calls at runtime. No sub-project `CLAUDE.md` — its guidance lives in this file and in `docs/kb/`.
+- **OpenMS/** (submodule `t0mdavid-m/OpenMS`) — C++20 fork of OpenMS providing the FLASH deconvolution engine FlashIDA calls at runtime. Has its own `OpenMS/CLAUDE.md` scoped to the FLASH real-time engine.
 
 `.gitmodules` pins OpenMS's tracking branch to `FIdevelop`, but both submodules are currently checked out on **`august_pre`** (matching the parent). CI checks out with `submodules: recursive`. Because these are submodules, `git` from the parent root does **not** show their committed files (DLLs, sources) — run `git` from inside `FlashIDA/` or `OpenMS/` to inspect them.
 
 ## How the Projects Connect
 
-FlashIDA's `FLASHIdaWrapper.cs` P/Invokes `OpenMS.dll`. The C bridge is **exactly 5** `extern "C"` exports, defined in `OpenMS/src/openms/{include,source}/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.{h,cpp}` and consumed via `[DllImport("OpenMS.dll")]` in `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs`:
+FlashIDA's `FLASHIdaWrapper.cs` P/Invokes `OpenMS.dll`. The C bridge is **exactly 5** `extern "C"` exports, declared in `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h` and defined in `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp` (note the OpenMS layout: headers live under `include/OpenMS/…`, sources under `source/…` with **no** `OpenMS/` segment), and consumed via `[DllImport("OpenMS.dll")]` in `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs`:
 
-`CreateFLASHIda` · `DisposeFLASHIda` · `ProcessScan` (enqueue a spectrum) · `GetNextScanCommand` (drain the next instrument command by priority; returns `1` if one was filled, `0` if the queue is empty) · `GetNextTrackingId`. There are **no** separate MS2/MS3/exclusion-list exports — everything flows through `ProcessScan` (enqueue) + `GetNextScanCommand` (drain).
+`CreateFLASHIda` · `DisposeFLASHIda` · `ProcessScan` (enqueue a spectrum) · `GetNextScanCommand` (drain the next instrument command by priority) · `GetNextTrackingId`. There are **no** separate MS2/MS3/exclusion-list exports — everything flows through `ProcessScan` (enqueue) + `GetNextScanCommand` (drain).
+
+> **`GetNextScanCommand` never returns 0 for an empty queue.** Every path in `FLASHIda::getNextScanCommand` returns `1` (`FLASHIda.cpp:617-739`): when all four priority queues drain, Step 5 *fabricates* an idle AGC command, pushes a fresh priority-3 survey MS1, and still returns 1 — by design, so the instrument is never left idle. `0` reaches the caller only from the bridge's null-argument guard (`FLASHIdaBridgeFunctions.cpp:73-80`) or the C# `catch`. **Consequence: `while (GetNextScanCommand(…) == 1)` never terminates.** Every sanctioned drain loop carries its own bound — break on `cmd.IsAgc == 1`, or cap iterations. This is the single most common way to hang a test. Pinned by `BridgePhase3Tests` ("never returns 0").
 
 **The load-bearing ABI contract is the `ScanCommand` struct: exactly 2048 bytes, embedding `IsolationStage stages[10]` at 80 bytes each.** C++ defines it in `.../TOPDOWN/FLASHIda/ScanCommand.h` (guarded by `static_assert(sizeof(ScanCommand)==2048)`); C# mirrors it at the top of `FLASHIdaWrapper.cs` (`[StructLayout(Sequential, Pack=8, CharSet=Ansi)]` with a trailing `Reserved` byte block). **When adding a bridge field, carve bytes from `Reserved` — never change the 2048-byte total — and update both sides in lockstep.** Drift is caught by `ScanCommandLayout_test` (C++) and `ScanCommandLayoutTests` (C#), both run in CI.
 
@@ -33,46 +35,98 @@ msbuild       FlashIDA/src/Flash.sln /p:Configuration=Debug /p:Platform="Any CPU
 Solution is at `FlashIDA/src/Flash.sln`. Projects: `Flash` → `Flash.exe`, `Flash.Tests` → `Flash.Tests.dll`; both output to `FlashIDA/bin/`. `PlatformTarget` is x64 despite the `Any CPU` switch.
 
 DLL dependencies:
-- **OpenMS runtime DLLs** are committed in the FlashIDA submodule at `FlashIDA/dll/` (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`, `zlib.dll`) and copied to `bin/` by MSBuild (`CopyToOutputDirectory`). There is **no** OpenMS-artifact download step — CI does not hand off a freshly built `OpenMS.dll`; to update it, rebuild OpenMS and commit the DLL into `FlashIDA/dll/`.
+- **OpenMS runtime DLLs** are committed in the FlashIDA submodule at `FlashIDA/dll/` (`OpenMS.dll`, `OpenSwathAlgo.dll`, `Qt6Core.dll`, `Qt6Network.dll`, `zlib.dll`) and copied to `bin/` by MSBuild (`CopyToOutputDirectory`). To update them for local runs, rebuild OpenMS and commit the DLLs into `FlashIDA/dll/`.
+  **In CI the committed DLLs are overwritten before the C# build**: the `build` job uploads a freshly compiled `OpenMS.dll`/`OpenSwathAlgo.dll`/`Qt6*.dll` as artifact `openms-fresh-dll`, and `windows-tests` copies them over `FlashIDA/dll/` (only `zlib.dll` stays committed). That is deliberate bridge/ABI drift detection — the C# suite always runs against the OpenMS submodule SHA, not the committed binary. It also means **every CI run links a different `OpenMS.dll`**, so floating-point score columns jitter run-to-run; golden comparison is tolerance-based for floats and exact for ints/strings/structure.
 - **Thermo iAPI DLLs** are proprietary and **not** committed: `FlashIDA/dependencies/` holds only XML doc stubs plus `thermo-dlls.zip.enc` (openssl AES-256). CI decrypts it with secret `THERMO_DLL_PASSPHRASE` and copies the DLLs into `bin/`. Local builds need the real DLLs placed in `dependencies/` (see `FlashIDA/Installation.md`).
 
 ### OpenMS (C++20 / CMake) — **Do NOT build unless explicitly asked** (resource-intensive; CI handles it)
-Matches CI (Debug, Ninja, no GUI/pyOpenMS, system apt deps — **not** vcpkg). CI compiles ~13 named FLASH test binaries, not the whole library:
+CI builds on **`windows-2022`** (all three jobs do) with the MSVC toolchain via a Visual Studio shell, `choco install ninja cmake ccache 7zip eigen`, `install-qt-action` (Qt 6.8.3), and a **prebuilt contrib tarball** downloaded from the `OpenMS/contrib` releases (`submodules: true`, *not* recursive, so OpenMS's nested `contrib` stays empty for the tarball to extract into) — **not** apt and **not** vcpkg. The pipeline is one `build` job (compiles OpenMS once + packages the build tree as artifact `cpp-test-build`) feeding two parallel test jobs: `windows-tests` (C# / NUnit / regression) ∥ `cpp-tests` (ctest).
+
+The build is **Release** (not Debug), Ninja, no GUI/pyOpenMS, static Boost, and after `--target OpenMS` it compiles **22 named FLASH test binaries**, not the whole library:
 ```bash
-cmake -S OpenMS -B OpenMS/build -DCMAKE_BUILD_TYPE=Debug -DWITH_GUI=OFF -DPYOPENMS=OFF -G Ninja
-cmake --build OpenMS/build --target FLASHIdaFAIMS_test ScanCommandLayout_test FragmentAnalysis_test  # etc.
+cmake -S OpenMS -B OpenMS/build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DWITH_GUI=OFF -DPYOPENMS=OFF -DBOOST_USE_STATIC=ON \
+  -DOPENMS_CONTRIB_LIBS=<repo>/OpenMS/contrib -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR" \
+  -DEigen3_DIR=C:/ProgramData/chocolatey/lib/eigen/share/cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+cmake --build OpenMS/build --target OpenMS
+cmake --build OpenMS/build --target FLASHIdaFAIMS_test ScanCommandLayout_test FragmentAnalysis_test  # …22 total
 ```
+Two consequences of Release: `OPENMS_PRECONDITION` and debug asserts are **compiled out** (accepted tradeoff — it matches the production toolchain), and test exes land in `OpenMS/build/src/tests/class_tests/bin/` (the class-test `RUNTIME_OUTPUT_DIRECTORY` override), **not** `OpenMS/build/bin/` (library output). Running one on Windows needs the 5-DLL set staged beside it, including `zlib.dll` — `OpenMS.dll`'s own load-time dep; without it you get `0xc0000135 STATUS_DLL_NOT_FOUND`. Do **not** pass `ENABLE_CLASS_TESTING=OFF`.
 
 ## Testing
 
-Set `OPENMS_DATA_PATH=<repo>/OpenMS/share/OpenMS` for the NUnit, regression, and ctest runs.
+Set `OPENMS_DATA_PATH=<repo>/OpenMS/share/OpenMS` for the ctest run. **It is ignored by every C# process**: `FLASHIdaWrapper`'s static constructor unconditionally overwrites it with `<assembly dir>/share/OpenMS` (`FLASHIdaWrapper.cs:135-139`), which MSBuild populates from FlashIDA's *own* committed `FlashIDA/share/OpenMS` tree — a pruned copy (148 files) that has drifted from `OpenMS/share/OpenMS` (254 files). So NUnit and regression runs read `FlashIDA/bin/share/OpenMS` no matter what you export. Only tests that P/Invoke `OpenMS.dll` without touching `FLASHIdaWrapper` (`BridgeSmokeTests`, `BridgePhase3Tests`) never trigger that initializer.
 
 ### FlashIDA (C# NUnit — tests in `FlashIDA/src/Flash.Tests/`)
 Console runner is restored via NuGet (`NUnit.ConsoleRunner 3.16.3`).
 ```
-# all tests (CI additionally excludes two flaky MS3 continuity tests via --where)
+# all tests (CI additionally excludes CT35/CT36 via --where; see below)
 FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll
 # a single test
 ... nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --where "test=='Flash.Tests.BridgeSmokeTests.<Method>'"
 ```
+CI runs with `--agents=1 --timeout=300000` and excludes exactly two tests — `ContinuityTests.P4_AL_CT35_MS3Mode1_MS2ReturnPipeline` and `…CT36_MS3Mode2_MS2ReturnPipeline` — real golden-backed tests whose MS3 emission is data-dependent and flapped across engine bumps. They are excluded pending recapture, not deleted.
+
 Other CI-driven suites:
-- **Offline / test-mode deconvolution** — `Flash.exe <input_spectrum> <output.tsv> <method.json> [ms2_spectrum]` (positional, exact order; runs `FLASHIdaWrapper.Main`). The `-t/--test` CLI flag routes into the same path.
-- **Regression + golden** — `powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output [-captureMode]`. Iterates ~15 mode configs and diffs TSV output against `FlashIDA/test-data/golden/*.tsv` via `python FlashIDA/test-scripts/compare_golden.py` (`-captureMode` regenerates goldens; needs Python on PATH).
+- **Offline / test-mode deconvolution** — `Flash.exe <input_spectrum> <output.tsv> <method.json> [ms2_spectrum]`, positional and in exactly that order. **There are no CLI flags.** `Flash.csproj:38` pins `<StartupObject>Flash.IDA.FLASHIdaWrapper</StartupObject>`, so the assembly's entry point *is* `FLASHIdaWrapper.Main`; `Flash.Flash.Main` — which owns the Mono.Options set (`-t/--test`, `-m`, `-o`, …) **and the entire Thermo instrument path** — is compiled but never invoked in this build. Passing `-t` makes it `args[0]`, i.e. the input filename, and the run dies with `Cannot open input file: -t`. Git history shows the StartupObject was originally `Flash.Flash`, so this is a flipped-for-offline-testing build state, not a doc typo — restoring instrument acquisition means flipping it back.
+- **Regression + golden** — `powershell FlashIDA\test-scripts\regression-runner.ps1 -FlashExe FlashIDA\bin\Flash.exe -TestDataDir FlashIDA\test-data -OutputDir FlashIDA\test-output [-captureMode]`. Iterates 14 mode cases and diffs TSV output against `FlashIDA/test-data/golden/*.tsv` via `python FlashIDA/test-scripts/compare_golden.py` (`-captureMode` regenerates goldens; needs Python on PATH).
+
+### Goldens — three separate sets, recapture each on its own path
+A behaviour change usually moves more than one set. Know which you touched:
+
+| Set | Location | How to recapture |
+|---|---|---|
+| Log goldens (largest surface) | `FlashIDA/test-data/golden/logs/<mode>/<stream>.golden.tsv` — 16 modes × 5 streams | Re-run `FLASHIdaLogGolden_test` with env `LOG_GOLDEN_CAPTURE=1`, or promote CI artifact `log-golden-capture` (`<mode>/<stream>.normalized` is byte-identical to a local capture) |
+| Regression TSVs | `FlashIDA/test-data/golden/phase4_*.tsv`, `baseline_*.tsv` | `regression-runner.ps1 -captureMode` |
+| Continuity JSONs | `FlashIDA/test-data/golden/continuity_*.json` | continuity-golden capture; CI artifact `continuity-golden-capture` |
+
+The 5 log streams per mode are `ida.log`, `scan_commands.tsv`, `scan_results.tsv`, `identification.tsv`, `pooled_identification.tsv` — each has a distinct role (command detail / pure event / per-ID + coverage / cumulative). Golden comparison matches columns **by header name**, so reordering log columns needs no recapture; adding, removing, or changing a value does.
 
 ### OpenMS (C++ ctest) — active FLASH targets are in `OpenMS/src/tests/class_tests/openms/executables.cmake`
 ```bash
 # the FLASH suite as CI runs it (no -E; the -R alternation lists every target that runs)
-ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeBasedExclusion|ScanConfig_applyOverrides" --output-on-failure
+ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|ConfigSchemaParity|FLASHIda_LoggingFields|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeBasedExclusion|ScanConfig_applyOverrides|ProteoformTracker_CEOptimization|ProteoformTracker_Trajectory|ProteoformTracker_Localization|ProteoformTracker_WinnerContext|ProteoformTracker_NonWinnerRematch" --output-on-failure
 # a single test
 ctest --test-dir OpenMS/build -R FLASHIdaFAIMS --output-on-failure
 ```
-**A C++ test runs in CI only if it is added in BOTH places**: the build `--target` list in `.github/workflows/flashida-ci.yml` AND the `ctest -R` alternation. Registering it in `executables.cmake` alone is *not* enough — it will compile but never execute (or not even build). `ctest -R FLASH` alone is **insufficient** — it misses `FragmentAnalysis_*`, `ScanCommandLayout_test`, `ScanCommandQueue_Concurrent_test`, `MS3FragmentMatcher_*`, `ScanConfig_applyOverrides_test`, and `DeconvolvedSpectrum_OptimizationMetadata_test` (names that don't start with `FLASH`). The previously-documented `-E "FLASHIda_ProcessScan|FLASHIda_exploration|FLASHIda_Logging"` exclusion no longer exists — those three run.
+**A C++ test runs in CI only if it is added in BOTH places**: the build `--target` list in `.github/workflows/flashida-ci.yml` AND the `ctest -R` alternation *in the same file*. Registering it in `executables.cmake` alone is *not* enough — it will compile but never execute (or not even build). `ctest -R FLASH` alone is **insufficient**: it misses `FragmentAnalysis_*`, `ScanCommandLayout_test`, `ScanCommandQueue_Concurrent_test`, `MS3FragmentMatcher_*`, `ScanConfig_applyOverrides_test`, `ConfigSchemaParity_test`, `ProteoformTracker_*` (5), and `DeconvolvedSpectrum_OptimizationMetadata_test` — every name that doesn't start with `FLASH`. There is no `-E` exclusion; the `-R` alternation is the whole active set.
+
+C++ tests read fixtures from `../../FlashIDA/test-data` relative to `OpenMS/build`, so the FlashIDA submodule must be checked out to run them.
 
 ## Key Development Concerns
 
 - **Cross-project bridge changes** — keep the 5 exports and the 2048-byte `ScanCommand` struct in sync across `FLASHIdaBridgeFunctions.{h,cpp}` and `FLASHIdaWrapper.cs` (see *How the Projects Connect*), and run the layout tests on both sides.
-- **FLASH code location** — `OpenMS/src/openms/{include,source}/OpenMS/ANALYSIS/TOPDOWN/`. `FLASHIda.cpp` (real-time IDA driver; its `processScan` runs deconvolution + precursor selection) and `FLASHIdaBridgeFunctions.cpp` sit directly under `TOPDOWN/`; most runtime helpers (`Config`, `Exploration`, `FAIMS`, `FragmentAnalysis`, `MS3FragmentMatcher`, `PrecursorSelection`, `Quantification`, `ScanCommand`, `ScanCommandQueue`) live in the nested `TOPDOWN/FLASHIda/` subdirectory.
+- **FLASH code location** — headers under `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/`, sources under `OpenMS/src/openms/source/ANALYSIS/TOPDOWN/` (the `source` tree has **no** `OpenMS/` segment — `source/OpenMS/…` does not exist). `FLASHIda.cpp` (real-time IDA driver; its `processScan` runs deconvolution + precursor selection) and `FLASHIdaBridgeFunctions.cpp` sit directly under `TOPDOWN/`; the 13 runtime helpers live in the nested `TOPDOWN/FLASHIda/` subdirectory: `Config`, `Deconvolution`, `Exploration`, `FAIMS`, `FragmentAnalysis`, `IdaLogger`, `MS3FragmentMatcher`, `Ms2Params`, `PrecursorSelection`, `ProteoformTracker`, `Quantification`, `ScanCommand`, `ScanCommandQueue`. See `OpenMS/CLAUDE.md` for what each owns.
 - **Scan processing is unified** — `UnifiedScanProcessor` is the *sole* production `IScanProcessor` (single `void ProcessMS(IMsScan)`); all MS levels route through `FLASHIdaWrapper.ProcessScan` → C++ `processScan`, and commands are drained separately via `GetNextScanCommand` in `Flash.cs`. (`ScanScheduler.cs`, `FAIMSScanProcessor.cs`, `IDAScanProcessor.cs`, and `QuantScanProcessor.cs` do **not** exist.)
-- **Method configuration is JSON** — `FlashIDA/src/Flash/etc/method.json` (**not** XML). Top-level sections map to `[JsonKey]` classes in `MethodConfig.cs` (`global`, `deconvolution`, `precursor_selection`, `tagging`, `quantification`, `faims`, `ms_settings`, `scheduling`, `selection_strategy`, `ms3`, `files`, `runtime`), plus a synthetic `developer` section into which `[Developer]`-marked fields are routed. Loading is reflection-driven (`MethodConfigSerializer.cs`); FlashIDA then re-serializes to a *different* C++-facing schema via `MethodParameters.ToCppJson()` before crossing the bridge. See `docs/kb/config-flow/`.
-- **Acquisition modes** — `precursor_selection.targeting_mode`: `none` (standard DDA), `inclusion`, `exclusion`, `deep` (mapped to ints 0–3 for C++). Orthogonal, config-flag-driven feature modes (all through the unified pipeline, not separate processors): MS2 sequence tagging, conditional MS2, isobaric quantification, targeted MS3 characterization. See `docs/kb/`.
+- **Method configuration is JSON** — `FlashIDA/src/Flash/etc/method.json` (**not** XML). Top-level sections map to `[JsonKey]` classes in `MethodConfig.cs`: `global`, `deconvolution`, `precursor_selection`, `flashtnt`, `tagging`, `quantification`, `faims`, `ms_settings`, `scheduling`, `characterization`, `files`, `selection_strategy`, `runtime`, plus a synthetic `developer` section into which `[Developer]`-marked fields are routed. Loading is reflection-driven (`MethodConfigSerializer.cs`); FlashIDA then re-serializes to a *different* C++-facing schema via `MethodParameters.ToCppJson()` before crossing the bridge. See `docs/kb/config-flow/`.
+  - `ms1`/`ms2`/`ms3` are **not** top-level. They appear twice, nested and meaning different things: under `ms_settings` they are *instrument scan parameters* (analyzer, resolution, AGC, activation; `ms2`/`ms3` are **lists**), and under `selection_strategy` they are *per-level selection policy* (`selection`, `max_targets`, `min_charge`, plus a nested `exploration` block with the CE/RT sweep). `cycle_time` and `scan_timeout` nest under `scheduling`.
+  - **The schema is strict on both sides**: unknown keys are hard-rejected by `MethodConfigSerializer.cs` (C#) *and* `Config.cpp` (C++), and `ms_settings` field names are snake_case only. A typo'd key fails loudly rather than being silently ignored. `FlashIDA/test-data/config_schema_reference.json` is generated from the schema, so it can never go stale — regenerate rather than hand-edit.
+- **Acquisition modes** — `precursor_selection.target_mode` (note: `target_mode`, and it is an **int in the JSON**, not a string): `0`=none/standard DDA, `1`=inclusion, **`2`=deep/in-depth, `3`=exclusion**.
+  ⚠️ **2 and 3 are swapped in every doc comment in the tree** — `MethodConfig.cs:68`, `Config.h:155`, and a stray `// deep mode` at `PrecursorSelection.cpp:564` all claim 2=exclusion/3=deep. The *implementation* is the reverse: mode 2 loads `Mass` lines into `target_mass_rt_map_`, builds the tqscore product map, runs the extra `iteration == 0` pass, and logs `"in-depth mode"`; mode 3 loads `AllMass` lines into `exclusion_rt_masses_map_` and hard-skips matches (`if (to_exclude) continue;`), logging `"exclusion mode"` (`PrecursorSelection.cpp:136-141, 304-322, 387, 565-586`). Trust the code, not the comments.
+  Orthogonal, config-flag-driven feature modes (all through the unified pipeline, not separate processors): MS2 sequence tagging, conditional MS2, isobaric quantification, targeted MS3 characterization. See `docs/kb/`.
+- **What drives targeted MS3** — three knobs, easily conflated:
+  - `characterization.objective` (`ambiguity`, the default, = resolve PTM site ambiguity; `coverage` = extend sequence coverage) decides **which fragments become MS3 targets**. Parsed as `if (== "coverage") … else Ambiguity`, so a typo or `"Coverage"` silently means ambiguity — unknown *keys* are rejected, unknown *values* are not (`Config.cpp:241-245`).
+  - `selection_strategy.ms3.selection` is the **on/off gate and the matcher chooser**: `None` short-circuits so no MS3 is ever emitted, and otherwise it picks the MS2 matcher (`intensity`/`qscore`→`getTopFragmentMatches`, `terminal_fragments`→`getTerminalFragmentIons`, `ambiguity_resolution`→`getAmbiguityEnclosingIons`) whose result becomes the MS3 *render context*, not its targets.
+  - `ms_settings.ms3` supplies only the **scan parameters**, and its emptiness is the other half of the gate.
+  Budget and charge floor are read from **level 2**, not level 3: `config_.level(2).max_targets` and `selection_strategy.ms2.min_charge`. `selection_strategy.ms3.max_targets` / `.min_charge` are parsed but never read.
 - **Code style** — OpenMS uses clang-format (LLVM-based, 150 col, 2-space indent, Allman braces; `OpenMS/.clang-format`). FlashIDA follows standard C# conventions.
+
+## Docs Map
+
+- `docs/kb/` — the agent-facing knowledge base, imported above. Packet README first, then drill down. Entries carry `last_verified` + `code_anchors`; if the anchors don't resolve, the entry is stale — fix or remove it rather than relying on it.
+- `docs/adr/` — accepted architecture decisions (0001–0007): direct-infusion precursor scope, ProteoformTracker dispatch authority, two-stage MS3 parameter sourcing, characterization config reshape, MS3-target-is-a-containing-fragment, winner-anchored fragment pooling, strict config-schema rejection. Read the relevant ADR before re-litigating one of these.
+- `CONTEXT.md` — domain glossary for the proteoform-tracking model (Precursor, nominal mass, representative charge, the detect-once/exclude-immediately rule). Conceptual, not a code reference.
+### The three CLAUDE.md files are one doc set
+
+| File | Scope |
+|---|---|
+| `CLAUDE.md` (this file) | The workspace: submodule wiring, the bridge/ABI contract, CI, testing, goldens, config flow. Authoritative when it conflicts with a submodule file. |
+| `FlashIDA/CLAUDE.md` | C# side only — acquisition loop, component roles, P/Invoke wrapper, logging, test suite. |
+| `OpenMS/CLAUDE.md` | C++ FLASH real-time engine only — `processScan`, queue, selection, characterization, and the FLASHDeconv/FLASHTnT no-go boundary. |
+
+**Keep them in sync, and treat editing the submodule files as in-scope.** They live in
+separate git repos, so a doc fix there is a separate commit inside `FlashIDA/` or `OpenMS/`
+plus a gitlink bump in the parent — that friction is why they drift. When a change makes any
+of the three wrong, update all three in the same run; do not leave a known-stale claim
+standing on the grounds that it lives in a submodule. Each file should state facts that need
+multiple files to discover, and avoid restating what the other two own.

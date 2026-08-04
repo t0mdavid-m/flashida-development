@@ -287,3 +287,34 @@ config (mapping tolerance = `deconvolution.tol[]`; MS3 budget =
 `selection_strategy.ms2.max_targets`; best proteoform = highest FLASHExtender score).
 _Avoid_: the legacy `ms3.*` control keys (the C++ parser throws on them); a separate
 enable flag (engagement is implicit).
+
+## Language — instrument control
+
+A scan carries **two independent identity channels**. Conflating them is what produced the
+contact-closure startup defect, so the two are named separately and deliberately.
+
+**Instrument job number**:
+The integer FLASHIda stamps on an outbound custom scan as `RunningNumber`, which the
+instrument echoes back on the returning scan as `Trailer["Access ID"]`. It exists for the
+custom-control handshake and for human-readable log correlation. The C++ engine never reads
+it. `0` is reserved by the iAPI and must never be sent.
+_Avoid_: scan id, Access ID / RunningNumber as separate concepts (one value, two directional
+names); and never as a synonym for the tracking id.
+
+**Tracking id**:
+The engine-minted base-94 identifier occupying the first three characters of
+`Trailer["Scan Description"]`. It is the **sole** key `FLASHIda::processScan` decodes and
+looks up in `pending_scan_map_`; a scan whose tracking id the engine did not mint is
+rejected before deconvolution. Minted by `ScanCommandQueue::nextTrackingId`.
+_Avoid_: scan id, Access ID, instrument job number.
+
+**Handshake scan**:
+The single scan whose echoed **instrument job number** proves the instrument has entered
+custom control. Its spectrum is discarded — it is a control signal, not data.
+_Avoid_: magic scan (the historical name; it describes the constant, not the purpose).
+
+**Custom control mode**:
+The latched state in which FLASHIda drives acquisition. Latching requires the *echo* of the
+handshake scan, not merely having sent it: scans arriving before custom control engages
+belong to the instrument's own method and must be ignored.
+_Avoid_: connected (connection strictly precedes it); acquisition mode.
