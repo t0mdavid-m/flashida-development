@@ -318,3 +318,33 @@ The latched state in which FLASHIda drives acquisition. Latching requires the *e
 handshake scan, not merely having sent it: scans arriving before custom control engages
 belong to the instrument's own method and must be ignored.
 _Avoid_: connected (connection strictly precedes it); acquisition mode.
+
+## Language — scan configuration
+
+**Scan config**:
+One fully-specified set of instrument parameters for a scan (analyzer, resolution, AGC,
+injection time, mass range, activation and its parameters). It appears at five places in
+`method.json` — `ms_settings.ms1`, `ms_settings.ms2[]`, `ms_settings.ms3[]`,
+`tagging.follow_up_scan` and `quantification.follow_up_scan` — and means the same thing at
+every one of them: **the config fully determines the scan's instrument parameters**. A value
+left unset means "use the instrument method default", never "inherit from another scan".
+_Avoid_: treating any occurrence as a patch or delta on another scan.
+
+**Activation-coupled parameter**:
+A scan parameter that is meaningful only for particular activation types, and which must
+therefore travel with the activation whenever it is set: `collision_energy` for HCD / CID /
+EThcD, and `reaction_time` + `reagent_max_it` + `reagent_agc_target` for ETD / EThcD (the
+ion–ion reaction settings). Carrying one activation's coupled parameters onto a scan using a
+different activation is incoherent — e.g. an HCD scan has no reagent and nothing to react.
+_Avoid_: "ETD settings" (they also apply to EThcD); treating reaction time as a generic
+scan parameter.
+
+**Follow-up scan**:
+A second MS2 of a precursor already fragmented, dispatched from the regular-MS2 path to apply
+a *different* fragmentation regime — quantification (`'F'`, when the precursor is
+differentially abundant) or conditional MS2 (`'C'`, when sequence tags were found). It inherits
+the precursor's identity, targeting, scoring and FAIMS CV from the triggering MS2; everything
+about the instrument comes from its own scan config. Depth is exactly one — a follow-up cannot
+trigger another.
+_Avoid_: "second MS2" (exploration variants are also second MS2s but are not follow-ups);
+conflating the `'F'` and `'C'` kinds, which have different triggers but identical mechanics.
