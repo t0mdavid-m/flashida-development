@@ -57,10 +57,39 @@ reached C++ at all.
 
 ## Consequences
 
-Eight follow-up rows across four log goldens (`tag` and `quant`, `scan_commands` + `scan_results`)
-change in their reaction/reagent columns, plus `hcd_energy`, which `buildFollowUp` also inherited
-rather than taking from its own config (unlike `buildMS2`). No deconvolution, selection or scoring
-value moves.
+**Golden impact, as measured after the fact** (an independent two-arm diff review corrected the
+original estimate of "eight rows across four goldens"): **12 follow-up commands** move — 6
+`scan_type=conditional` in `tag`, 6 `scan_type=followup` in `quant`, rows 24/32/82/92/106/112 in
+both. That is **24 changed row-instances across 4 log goldens** (`scan_commands`: `hcd_energy`,
+`reaction_time`, `reagent_max_it`, `reagent_agc_target`; `scan_results`: `reaction_time`) plus
+**12 changed rows across 2 continuity goldens** (`continuity_{tag,quant}_ms2return.json`,
+`HcdEnergy` only — `ToJsonObject` omits `ReactionTime`). No deconvolution, selection, identification
+or pooling value moves; `identification.tsv` and `pooled_identification.tsv` are value-identical in
+all 16 modes, and there are zero row-count and zero column-set changes.
+
+**Two goldens are knowingly left in the pre-fix state.** `continuity_ms3_mode1_real.json` and
+`continuity_ms3_mode2_real.json` are written only by `ContinuityTests` CT35/CT36, which CI excluded,
+so they could not be regenerated and were invisible to the golden review. Both hold 10 rows of
+`ActivationType=HCD, CollisionEnergy=30, HcdEnergy=0` — exactly the incoherence this ADR removes —
+and every scoring field in them is `0`, i.e. they are degenerate independently of this decision
+(their sibling `continuity_ms3_mode3_real.json` carries real values). CT35/CT36 have been re-enabled
+so their diff can be analysed and a disposition agreed.
+
+**Not covered by any golden.** The log streams expose only 5 of the ~13 instrument parameters this
+ADR reasserts — there is no `analyzer`/`resolution`/`agc_target`/`max_it`/`microscans`/`first_mass`/
+`last_mass`/`data_type` column anywhere. Both fixtures' `follow_up_scan` shape keys are also
+byte-identical to their `ms_settings.ms2`, so those parameters would look unchanged even if the
+builder still inherited them. A green golden diff is therefore evidence about the four exposed
+columns, **not** proof that nothing else moved on the wire. Assurance for the scan-shape half needs
+an assertion on the built `ScanCommand`, or a fixture whose `follow_up_scan` shape deliberately
+differs from its `ms_settings.ms2`.
+
+**Same defect class, left standing elsewhere** (pre-existing, unchanged by this ADR, each owed an
+explicit decision): `exploration_etd` emits a 6th ETD variant at `reaction_time=0` — outside its
+configured sweep range `[3,11]` — while `reagent_max_it=200` / `reagent_agc_target=700000` stay
+armed; and 522 MS3 rows across `exploration_ms3` (258) and `exploration_ms3_followup` (264) carry a
+stage-0 `collision_energy` that disagrees with stage-0 `hcd_energy` (e.g. 40 vs 35). Both are
+synthesised at variant/command-build time, downstream of the config sites `validate()` inspects.
 
 The validate rule makes a bare `ETD` scan config with no `reaction_time` **unloadable**. No shipped
 or committed JSON config violates it; twelve inline scan configs in four C++ test files do, and are
