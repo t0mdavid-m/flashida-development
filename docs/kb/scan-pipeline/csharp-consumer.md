@@ -52,7 +52,9 @@ see [`../acquisition-loop/csharp-orchestration.md`](../acquisition-loop/csharp-o
 
 ## `ScanFactory.BuildFromCommand` — the field mapping
 
-`ScanFactory.BuildFromCommand(ScanCommand cmd) → IFusionCustomScan` at `ScanFactory.cs:153-263` is the second translation layer. It allocates a `ScanParameters`, copies relevant `ScanCommand` fields into its properties (conditionally, so zero/empty values use the method default), and terminates at `CreateFusionCustomScan(p, cmd.ScanId, delay: 0.0, IsAGC: (cmd.IsAgc != 0), AGCgroup: 1)` (`:262`).
+`ScanFactory.BuildFromCommand(ScanCommand cmd) → IFusionCustomScan` at `ScanFactory.cs:153-263` is the second translation layer. It allocates a `ScanParameters`, copies relevant `ScanCommand` fields into its properties, and terminates at `CreateFusionCustomScan(p, cmd.ScanId, delay: 0.0, IsAGC: (cmd.IsAgc != 0), AGCgroup: 1)` (`:262`). **Scalar** fields are copied conditionally, so a zero/empty value leaves the key absent and the instrument method default applies.
+
+**The per-stage arrays follow a different rule, and the distinction is load-bearing (ADR-0010).** Every array is `';'`-joined and **position is the only thing binding a value to a stage** — element `i` is stage `i`. So a stage must contribute an element to every array it appears in, or each later stage shifts one slot forward onto the wrong stage. *Structural* parameters (`precursor_mz`, `isolation_width`, `collision_energy`, `activation_type`, `charge_state`) are therefore always emitted once per stage; a command whose stage lacks isolation geometry is **refused** with an `InvalidOperationException` rather than zero-filled, because m/z 0 is malformed rather than "unused". *Optional*, activation-coupled parameters (`reaction_time`, `reagent_max_it`, `reagent_agc_target`) are zero-filled positionally — `0` being their documented "not used" sentinel — but their key is omitted entirely when no stage uses them, preserving the method default.
 
 The `ScanParameters` → Thermo custom-scan mapping elsewhere in `ScanFactory.cs` is reflection-driven (see the utility at `:130-145` that writes `ScanParameters` fields into a `scan.Values` dictionary). This is the *second* ABI contract — not a C++↔C# one, but a C#-internal name-match between `ScanCommand` property names and `ScanParameters` property names. A rename on either side fails silently.
 
@@ -67,14 +69,14 @@ The `ScanParameters` → Thermo custom-scan mapping elsewhere in `ScanFactory.cs
 | `AgcTarget` | `AGCTarget` | Set only if `> 0`. |
 | `MaxIt` | `MaxIT` | Set only if `> 0`. |
 | `MsnLevel` | `ScanType` | `"MSn"` if `> 1`, `"Full"` otherwise. No direct field copy — derived. |
-| `Stages[i].PrecursorMz` | `PrecursorMass[]` | Per-stage arrays; entries with `> 0` appended. Valid stages: `Stages[0..Min(NumStages, 10)-1]`. |
-| `Stages[i].IsolationWidth` | `IsolationWidth[]` | Append if `> 0`. |
-| `Stages[i].CollisionEnergy` | `CollisionEnergy[]` (rounded to `int`) | Append if `>= 0`. |
-| `Stages[i].ActivationType` | `ActivationType[]` | Append if non-empty. |
-| `Stages[i].ChargeState` | `ChargeStates[]` | Append if `> 0`; clamped to `Min(25)`. |
-| `Stages[i].ReactionTime` | `ReactionTime[]` | Append if `> 0`. |
-| `Stages[i].ReagentMaxIt` | `ReagentMaxIT[]` | Append if `> 0`. |
-| `Stages[i].ReagentAgcTarget` | `ReagentAGCTarget[]` | Append if `> 0`. |
+| `Stages[i].PrecursorMz` | `PrecursorMass[]` | **Structural** — always one element per stage. Valid stages: `Stages[0..Min(NumStages, 10)-1]`. |
+| `Stages[i].IsolationWidth` | `IsolationWidth[]` | **Structural** — always emitted. |
+| `Stages[i].CollisionEnergy` | `CollisionEnergy[]` (rounded to `int`) | **Structural** — always emitted; `0` is a legal energy. |
+| `Stages[i].ActivationType` | `ActivationType[]` | **Structural** — always emitted. |
+| `Stages[i].ChargeState` | `ChargeStates[]` | **Structural** — always emitted; clamped to `Min(25)`. |
+| `Stages[i].ReactionTime` | `ReactionTime[]` | **Optional** — zero-filled per stage; key omitted entirely if no stage uses it. |
+| `Stages[i].ReagentMaxIt` | `ReagentMaxIT[]` | **Optional** — same rule. |
+| `Stages[i].ReagentAgcTarget` | `ReagentAGCTarget[]` | **Optional** — same rule. |
 | `ScanDescription` | `ScanDescription` | Set only if non-empty. **Carries the encoded tracking ID + annotation — critical for round-trip identification of the returning scan. Do not strip.** |
 | `FaimsCv` | `FAIMS_CV` | Set if `|value| > 0.001`; also sets `FAIMS_Voltages = "on"`. |
 | `Microscans` | `Microscans` | Set only if `> 0`. |

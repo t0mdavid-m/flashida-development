@@ -1,6 +1,9 @@
 # 0009. A scan config fully determines a scan's instrument parameters
 
-Status: Accepted (2026-08-05)
+Status: Accepted (2026-08-05). Extended by [ADR-0010](0010-stage-arrays-are-positional.md), which
+carries the same principle into the per-stage arrays and discharges two items deferred below: the
+522-row stage-0 `collision_energy`/`hcd_energy` disagreement, and the missing assertion on the
+built `ScanCommand`.
 
 ## Context
 
