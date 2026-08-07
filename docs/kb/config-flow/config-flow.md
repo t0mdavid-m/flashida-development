@@ -1,7 +1,7 @@
 ---
 title: Config Flow — one bridge schema, C# to C++ engine
 applies_to: FlashIDA/src/Flash/MethodParameters.cs, FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp
-last_verified: 2026-07-13
+last_verified: 2026-08-07
 code_anchors:
   - FlashIDA/src/Flash/MethodParameters.cs:92   # Load
   - FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs:23   # Deserialize
@@ -205,5 +205,17 @@ side if a field is added to only one. A permanent, CI-gated guard makes that a t
   arrays are required.
 
 - **`FAIMSConfig::enabled` is derived.** There is no `enabled` key in the C++ FAIMS
-  config. Enabled is true iff `cv_values.size() > 1`. Setting `enabled: true` in the
-  method without multiple CV values has no effect.
+  config. Enabled is true iff `cv_values` is **non-empty** — an empty list is the only
+  way to say "no FAIMS", and it makes FLASHIda command `FAIMS Voltages = "off"` rather
+  than stay silent. Cycling is a separate predicate, `FAIMS::isCycling()`
+  (`cv_values.size() > 1`), which guards the CV-transition MS1 push and the skip policy.
+  This was `size() > 1` until ADR-0012, so a single-CV method silently ran with no FAIMS.
+
+- **The C# schema is the binding constraint, not `kScanKeys`.** C++ admits and reads all
+  17 scan keys at every scan site; a key absent from `MS2Parameters`/`MS3Parameters`/
+  `JsonMs2Config` is unreachable from `method.json` regardless. See ADR-0011.
+
+- **Source-region keys inherit the survey's value.** `rf_lens`, `source_cid` and
+  `source_cid_scaling` left at 0 on an MSn scan take `ms_settings.ms1`'s, resolved inside
+  `ToJsonScanConfig` so the bridge JSON always carries a concrete number. `scan_rate` is
+  analyzer-side and does not inherit.

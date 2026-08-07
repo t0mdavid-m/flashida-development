@@ -326,9 +326,27 @@ One fully-specified set of instrument parameters for a scan (analyzer, resolutio
 injection time, mass range, activation and its parameters). It appears at five places in
 `method.json` — `ms_settings.ms1`, `ms_settings.ms2[]`, `ms_settings.ms3[]`,
 `tagging.follow_up_scan` and `quantification.follow_up_scan` — and means the same thing at
-every one of them: **the config fully determines the scan's instrument parameters**. A value
-left unset means "use the instrument method default", never "inherit from another scan".
+every one of them: **the config fully determines the scan's instrument parameters**. For an
+analyzer-side parameter a value left unset means "use the instrument method default", never
+"inherit from another scan"; a source-region parameter left unset takes the survey's, resolved
+while the config is built so that the config still fully determines the scan.
 _Avoid_: treating any occurrence as a patch or delta on another scan.
+
+**Source-region parameter**:
+A parameter of the ion source and transfer optics — RF lens, source CID energy, source CID
+scaling — which act on ions *before* the analyzer and therefore govern **which ions arrive**
+rather than how they are measured. It is a property of the ion population an acquisition cycle
+draws from, not of any single scan, so every scan in a cycle shares one value: a survey that
+declusters at some source CID and a fragment scan that isolates from an un-declustered
+population are not measuring the same species. Zero is a real setting for these, not an absence.
+_Avoid_: calling these "MS1 parameters" (they apply to every scan); treating a zero as unset.
+
+**Analyzer-side parameter**:
+A parameter governing **how the arriving ions are measured** — resolution, AGC target, injection
+time, microscans, data type, scan rate, and the activation and its coupled parameters. Belongs
+to one scan, is never inherited from another, and reads zero or empty as "use the instrument
+method default".
+_Avoid_: assuming a per-scan parameter can be defaulted from a neighbouring scan.
 
 **Activation-coupled parameter**:
 A scan parameter that is meaningful only for particular activation types, and which must

@@ -1,24 +1,24 @@
 ---
 title: ScanCommand & ScanCommandQueue
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h, OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.cpp
-last_verified: 2026-04-20
+last_verified: 2026-08-07
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:48    # IsolationStage struct
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:59    # IsolationStage size assertion (80B)
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:64    # ScanCommand struct
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:107   # ScanCommand size assertion (2048B)
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:64    # ScanCommandQueue class
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:73    # buildMS2
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:76    # buildMS3
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:81    # makeMS1
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:84    # makeAGC
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:88    # buildFollowUp
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:122   # nextTrackingId public
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:171   # tracking_alphabet_ decl
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:174   # nextTrackingIdInt_ private
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.cpp:48   # tracking_alphabet_ definition (94 ASCII)
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.cpp:83   # nextTrackingIdInt_ impl
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.cpp:93   # nextTrackingId public wrapper
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:66    # ScanCommand struct
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:137   # ScanCommand size assertion (2048B)
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:69    # ScanCommandQueue class
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:79    # buildMS2
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:88    # buildMS3
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:96    # makeMS1
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:99    # makeAGC
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:103    # buildFollowUp
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:146   # nextTrackingId public
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:204   # tracking_alphabet_ decl
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.h:207   # nextTrackingIdInt_ private
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.cpp:51   # tracking_alphabet_ definition (94 ASCII)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.cpp:105   # nextTrackingIdInt_ impl
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandQueue.cpp:115   # nextTrackingId public wrapper
 see_also:
   - bridge-functions.md
   - csharp-consumer.md
@@ -28,7 +28,7 @@ see_also:
 
 ## `ScanCommand` — one 2048-byte blittable record
 
-`ScanCommand` (`ScanCommand.h:64`) is the unit of work that moves between the C++ engine and the C# acquisition loop. It describes a single scan to run on the instrument. The whole struct is POD and blittable — no pointers, no dynamic allocation, fixed 2048-byte footprint (`static_assert` at `:107`). The byte-layout contract with the C# mirror is owned by [bridge-functions.md](bridge-functions.md).
+`ScanCommand` (`ScanCommand.h:66`) is the unit of work that moves between the C++ engine and the C# acquisition loop. It describes a single scan to run on the instrument. The whole struct is POD and blittable — no pointers, no dynamic allocation, fixed 2048-byte footprint (`static_assert` at `:137`). The byte-layout contract with the C# mirror is owned by [bridge-functions.md](bridge-functions.md).
 
 Field groups:
 
@@ -36,12 +36,12 @@ Field groups:
 - **Instrument parameters** — `analyzer[32]`, `first_mass` / `last_mass`, `orbitrap_resolution`, `agc_target`, `max_it`, `microscans`, `rf_lens`, `source_cid` / `source_cid_scaling`, `scan_rate[32]`, `data_type[32]`.
 - **Isolation** — `stages[10]` (`IsolationStage` — `:48`, each 80B: 5 doubles `precursor_mz` / `isolation_width` / `collision_energy` / `reaction_time` / `reagent_max_it`, 2 int32 `reagent_agc_target` / `charge_state`, `activation_type[32]`), `num_stages` (count of valid entries).
 - **Precursor scoring (diagnostic only)** — `qscore`, `mono_mass`, `charge_cos`, `charge_snr`, `iso_cos`, `snr`, `charge_score`, `ppm_error`, `precursor_intensity`, `peakgroup_intensity`. Populated by `buildMS2` from the source `PeakGroup`. These ride along for TSV logging and diagnostics; they are *not* mapped to any instrument parameter (see [csharp-consumer.md](csharp-consumer.md)).
-- **Environment** — `hcd_energy`, `faims_cv`.
-- **Bookkeeping** — `priority` (**0 = highest**, 3 = lowest), `is_agc` (1 if calibration scan), `enqueue_timestamp_ms` / `dequeue_timestamp_ms` (`steady_clock` ms; stamped on enqueue/dequeue, not on build), `pad1`/`pad2`/`pad3` (alignment padding — do not reorder), `reserved_[692]` (future growth buffer; shrink this to add fields without changing total size).
+- **Environment** — `hcd_energy`, `faims_cv`, `faims_enabled` (1 if FAIMS is in use for the run). The two FAIMS fields are separate on purpose: `faims_cv = 0.0` is both "no FAIMS" and a legitimate compensation voltage, so the flag is what lets `ScanFactory` command `FAIMS Voltages = "off"` — an instruction the instrument must actually be given — instead of inferring intent from the CV magnitude and only ever being able to say "on". See ADR-0012.
+- **Bookkeeping** — `priority` (**0 = highest**, 3 = lowest), `is_agc` (1 if calibration scan), `enqueue_timestamp_ms` / `dequeue_timestamp_ms` (`steady_clock` ms; stamped on enqueue/dequeue, not on build), `pad1`/`pad2`/`pad3` (alignment padding — do not reorder), `reserved_[596]` (future growth buffer; shrink this to add fields without changing total size).
 
 ## `ScanCommandQueue` — priority queues + pending map
 
-`ScanCommandQueue` (`ScanCommandQueue.h:64`) owns all `ScanCommand` objects in flight. State:
+`ScanCommandQueue` (`ScanCommandQueue.h:69`) owns all `ScanCommand` objects in flight. State:
 
 - Four priority queues (0 = highest, 3 = lowest). `dequeue()` returns the highest-priority command available.
 - `pending_scan_map_` keyed by `scan_id` — scans that have been dequeued (or registered as bypass) but not yet completed on the instrument.
@@ -52,15 +52,15 @@ Field groups:
 
 All five helpers return a fully-populated `ScanCommand`; the caller chooses whether to `push()` or treat it as a bypass.
 
-- `makeMS1()` (`ScanCommandQueue.h:81`) — const, no lock. Produces the survey MS1 command from the method config. Does not assign a tracking ID (`scan_id` stays 0); `scan_description` is the literal `"S"`.
-- `makeAGC()` (`:84`) — const, no lock. Produces an AGC calibration scan; `is_agc == 1`. Does not assign a tracking ID; `scan_description` is the literal `"A"`.
-- `buildMS2(const PeakGroup& pg, int charge, const ScanConfig& scan_config, int priority = 2, int parent_scan_id = 0)` (`:73`) — populates precursor-scoring fields from `pg` accessors (`getQscore`, `getMonoMass`, …); builds a single `IsolationStage` from the selected precursor m/z.
-- `buildMS3(const ScanCommand& ms2_ctx, const ScanConfig& ms3_config, double frag_mz, int frag_charge, double iso_width, char ion_type = '\0', int frag_index = 0, int priority = 1)` (`:76`) — two-stage isolation: inherits the MS1 precursor stage from `ms2_ctx`, appends the MS3 fragment stage. `parent_scan_id` is copied from `ms2_ctx.scan_id` encoded into 3 chars.
-- `buildFollowUp(const ScanCommand& ctx, const ScanConfig& follow_up_config, char suffix, int priority = 0)` (`:88`) — clones `ctx` with a fresh tracking ID and a `scan_description` suffix character.
+- `makeMS1()` (`ScanCommandQueue.h:96`) — const, no lock. Produces the survey MS1 command from the method config. Does not assign a tracking ID (`scan_id` stays 0); `scan_description` is the literal `"S"`.
+- `makeAGC()` (`:99`) — const, no lock. Produces an AGC calibration scan; `is_agc == 1`. Does not assign a tracking ID; `scan_description` is the literal `"A"`.
+- `buildMS2(const PeakGroup& pg, int charge, const ScanConfig& scan_config, int priority = 2, int parent_scan_id = 0)` (`:79`) — populates precursor-scoring fields from `pg` accessors (`getQscore`, `getMonoMass`, …); builds a single `IsolationStage` from the selected precursor m/z.
+- `buildMS3(const ScanCommand& ms2_ctx, const ScanConfig& ms3_config, double frag_mz, int frag_charge, double iso_width, char ion_type = '\0', int frag_index = 0, int priority = 1)` (`:88`) — two-stage isolation: inherits the MS1 precursor stage from `ms2_ctx`, appends the MS3 fragment stage. `parent_scan_id` is copied from `ms2_ctx.scan_id` encoded into 3 chars.
+- `buildFollowUp(const ScanCommand& ctx, const ScanConfig& follow_up_config, char suffix, int priority = 0)` (`:103`) — clones `ctx` with a fresh tracking ID and a `scan_description` suffix character.
 
 ## Tracking IDs — base-94 into `scan_description`
 
-The monotonic `tracking_id_counter_` int is encoded into **3 printable ASCII characters** using a 94-character alphabet (`!` through `~`, i.e. `0x21`-`0x7E`; definition at `ScanCommandQueue.cpp:48`; encode at `:60`). The `scan_description` format depends on which helper built the command:
+The monotonic `tracking_id_counter_` int is encoded into **3 printable ASCII characters** using a 94-character alphabet (`!` through `~`, i.e. `0x21`-`0x7E`; definition at `ScanCommandQueue.cpp:51`; encode at `:61`). The `scan_description` format depends on which helper built the command:
 
 - `makeMS1()` writes the literal `"S"` (no encoded ID — survey scans don't carry a tracking ID; `scan_id` stays at 0).
 - `makeAGC()` writes the literal `"A"` (no encoded ID — same reason).
@@ -68,11 +68,11 @@ The monotonic `tracking_id_counter_` int is encoded into **3 printable ASCII cha
 - `buildMS3` writes `{encoded}R{frag_mass_kDa:.1f}@{frag_charge}`, optionally followed by `{ion_type}{frag_index}` when a specific fragment is targeted (e.g. `"xyzR1.2@3b7"`).
 - `buildFollowUp` writes `{encoded}{suffix}{mass_kDa:.1f}@{charge}` — the only helper that embeds a single-letter suffix after the encoded ID.
 
-The literal format lives in `ScanCommandQueue.cpp:239/329/363`.
+The literal format lives in `ScanCommandQueue.cpp:314/428/515`.
 
 `parent_scan_id[4]` carries the parent scan's 3-char encoded ID plus a null terminator: empty for MS1, the parent MS1's ID on MS2, and the parent MS2's ID on MS3. `buildFollowUp` inherits `parent_scan_id` unchanged from its source command.
 
-ID allocation is thread-safe: `nextTrackingId()` (`ScanCommandQueue.h:122`, impl `:93`) locks `queue_mutex_`; the private `nextTrackingIdInt_()` (`:174`, impl `:83`) is called from within already-locked build paths.
+ID allocation is thread-safe: `nextTrackingId()` (`ScanCommandQueue.h:146`, impl `ScanCommandQueue.cpp:115`) locks `queue_mutex_`; the private `nextTrackingIdInt_()` (`ScanCommandQueue.h:207`, impl `ScanCommandQueue.cpp:105`) is called from within already-locked build paths.
 
 ## Queue API
 
@@ -90,4 +90,4 @@ All public methods are thread-safe (lock `queue_mutex_`):
 - **`parent_scan_id[4]` is 3 chars + null**, not 4 chars. Treat it as a C string.
 - **Timestamps stamped on enqueue/dequeue**, not on build. A command sitting in the pending map between dequeue and completion has non-zero `dequeue_timestamp_ms`.
 - **Precursor-scoring fields are diagnostic**. They cross the ABI for TSV logging but are ignored by `ScanFactory.BuildFromCommand`.
-- **Adding a field** requires updating the C++ struct, shrinking `reserved_[692]` by the new field's size, and mirroring the change byte-for-byte on the C# side. See [bridge-functions.md](bridge-functions.md) for the ABI ritual.
+- **Adding a field** requires updating the C++ struct, shrinking `reserved_[596]` by the new field's size, and mirroring the change byte-for-byte on the C# side. See [bridge-functions.md](bridge-functions.md) for the ABI ritual.

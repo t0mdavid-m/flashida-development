@@ -3,7 +3,13 @@
 Status: Accepted (2026-08-05). Extended by [ADR-0010](0010-stage-arrays-are-positional.md), which
 carries the same principle into the per-stage arrays and discharges two items deferred below: the
 522-row stage-0 `collision_energy`/`hcd_energy` disagreement, and the missing assertion on the
-built `ScanCommand`.
+built `ScanCommand`. Scoped by
+[ADR-0011](0011-source-region-parameters-are-survey-scoped.md): the "never inherit from another
+scan" rule below governs **analyzer-side** parameters. The three **source-region** parameters
+(`rf_lens`, `source_cid`, `source_cid_scaling`) describe the ion population every scan in the cycle
+draws from rather than any one scan, and an MSn scan that states none of its own takes the survey's
+— resolved at C# emit time, so the invariant that a `ScanConfig` fully determines its scan still
+holds verbatim at every scan site.
 
 ## Context
 
@@ -103,3 +109,11 @@ Unlogged instrument parameters (`microscans`, `data_type`, `rf_lens`, `source_ci
 now come from the follow-up's own config. The two fixtures that relied on inheriting them declare
 them explicitly, so acquisition behaviour is unchanged and the fixture states the intent it
 previously got by accident.
+
+> ⚠️ **Corrected 2026-08-07 by [ADR-0011](0011-source-region-parameters-are-survey-scoped.md).**
+> That paragraph was true of the C++ half and false end-to-end. `rf_lens`, `source_cid`,
+> `source_cid_scaling` and `scan_rate` had no `[JsonKey]` on `MS2Parameters`/`MS3Parameters`, so a
+> follow-up (or any MSn scan) could not carry its own value — the strict loader rejected the key
+> outright and C++ received the `0.0` default. It became true only when the C# schema gained the
+> four keys. The three source-region keys now additionally inherit the survey's value when unset;
+> `scan_rate`, being analyzer-side, does not.

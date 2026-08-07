@@ -1,6 +1,8 @@
 # 0007. Strict config schema: snake_case-only `ms_settings`, hard rejection of unknown keys, self-generating reference
 
-Status: Accepted (2026-07-13)
+Status: Accepted (2026-07-13). One Consequence — trimming four "always-default emit-only keys" —
+is **reversed** by [ADR-0011](0011-source-region-parameters-are-survey-scoped.md); three of the
+four were live end-to-end. The strict-rejection decision itself stands unchanged.
 
 ## Context
 
@@ -65,6 +67,14 @@ Make the single schema **strict and self-describing**.
 - **The scan-config key set is now symmetric** (struct field ⇄ emit ⇄ on-disk ⇄ C++ read).
   Four always-default emit-only keys (`scan_rate`; `rf_lens`/`source_cid`/`source_cid_scaling`
   on ms2/ms3) were trimmed so the emitted schema equals the struct field set.
+  > ⚠️ **Reversed 2026-08-07 by [ADR-0011](0011-source-region-parameters-are-survey-scoped.md).**
+  > "Always-default" held only because the keys were unreachable from `method.json` — the
+  > symmetry was achieved by shrinking the C# side to match itself, not by checking it against
+  > `kScanKeys`. C++ parsed all four at every scan site, every `ScanCommand` builder copied them,
+  > and `ScanFactory` sent them; MSn scans simply had no way to carry a value. Restoring them made
+  > the symmetry claim true for the first time, and
+  > `ConfigSchemaParity_test::GeneratedReference_CarriesEveryScanKey` now enforces it against
+  > `Config::scanKeys()` rather than leaving it to judgement.
 - **Hard to reverse** (operators' PascalCase/legacy configs now fail — a stricter public
   contract), **surprising** (a config that "looks fine" throws on an unknown key), and a
   **genuine trade-off**: strictness + a loud failure mode was chosen over lenient tolerance
