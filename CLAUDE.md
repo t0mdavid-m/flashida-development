@@ -60,12 +60,12 @@ Set `OPENMS_DATA_PATH=<repo>/OpenMS/share/OpenMS` for the ctest run. **It is ign
 ### FlashIDA (C# NUnit — tests in `FlashIDA/src/Flash.Tests/`)
 Console runner is restored via NuGet (`NUnit.ConsoleRunner 3.16.3`).
 ```
-# all tests (CI additionally excludes CT35/CT36 via --where; see below)
+# all tests (CI runs exactly this, unfiltered — see below)
 FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll
 # a single test
 ... nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --where "test=='Flash.Tests.BridgeSmokeTests.<Method>'"
 ```
-CI runs with `--agents=1 --timeout=300000` and excludes exactly two tests — `ContinuityTests.P4_AL_CT35_MS3Mode1_MS2ReturnPipeline` and `…CT36_MS3Mode2_MS2ReturnPipeline` — real golden-backed tests whose MS3 emission is data-dependent and flapped across engine bumps. They are excluded pending recapture, not deleted.
+CI runs with `--agents=1 --timeout=300000` and **no `--where` and no category filter** — the whole suite executes. `ContinuityTests.P4_AL_CT35_MS3Mode1_MS2ReturnPipeline` and `…CT36_MS3Mode2_MS2ReturnPipeline` were excluded for a period as data-dependent and flaky; both are re-enabled and green, and the two goldens only they can write (`continuity_ms3_mode{1,2}_real.json`) have been recaptured. An exclusion here silently freezes those goldens, so don't re-add one without a plan for regenerating them.
 
 Other CI-driven suites:
 - **Offline / test-mode deconvolution** — `Flash.exe <input_spectrum> <output.tsv> <method.json> [ms2_spectrum]`, positional and in exactly that order. **There are no CLI flags.** `Flash.csproj:38` pins `<StartupObject>Flash.IDA.FLASHIdaWrapper</StartupObject>`, so the assembly's entry point *is* `FLASHIdaWrapper.Main`; `Flash.Flash.Main` — which owns the Mono.Options set (`-t/--test`, `-m`, `-o`, …) **and the entire Thermo instrument path** — is compiled but never invoked in this build. Passing `-t` makes it `args[0]`, i.e. the input filename, and the run dies with `Cannot open input file: -t`. Git history shows the StartupObject was originally `Flash.Flash`, so this is a flipped-for-offline-testing build state, not a doc typo — restoring instrument acquisition means flipping it back.
