@@ -287,14 +287,13 @@ jobs:
           Copy-Item FlashIDA\dependencies\*.dll FlashIDA\bin\ -Force
 
       # --- Unit tests (NUnit) ---
-      # CT35/CT36 (P4_AL_CT35/CT36 MS3 Mode1/Mode2 MS2-return pipeline) were excluded here as
-      # data-dependent and flaky across engine bumps. They are RE-ENABLED to analyse their diff:
-      # they are the sole writers of continuity_ms3_mode1_real.json / _mode2_real.json, which the
-      # exclusion left un-regenerable — so those two goldens still encode the pre-ADR-0009 state
-      # (10 rows of ActivationType=HCD, CollisionEnergy=30, HcdEnergy=0) and are invisible to the
-      # golden review. They are also degenerate independently of that (every scoring field is 0,
-      # unlike their sibling continuity_ms3_mode3_real.json). Expect these two to FAIL until the
-      # diff is analysed and a disposition is agreed.
+      # The whole suite runs unfiltered: no --where, no category filter. CT35/CT36
+      # (P4_AL_CT35/CT36 MS3 Mode1/Mode2 MS2-return pipeline) were once excluded as data-dependent
+      # and flaky across engine bumps, which left continuity_ms3_mode1_real.json / _mode2_real.json
+      # un-regenerable because those two tests are their sole writers. Both are re-enabled and
+      # green, and both goldens have since been recaptured: 28 entries each, ActivationType=HCD,
+      # CollisionEnergy=30, HcdEnergy=30 (MsnLevel 2:25, 3:3). Do not re-add an exclusion here
+      # without also arranging for those goldens to stay regenerable.
       - name: Run NUnit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
