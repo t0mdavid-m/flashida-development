@@ -8,14 +8,23 @@ a compare-time shim reorders the fresh capture back to golden order **by header 
 so **no recapture** is required. Motivation: human readability of live acquisition logs.
 
 **Ground truth (CURRENT order)** extracted verbatim from `IdaLogger.cpp` header emission
-(lines 68–151). Column counts: Command 31 · Results 29 · Identification 32 · Pooled 19.
+(lines 68–151). Column counts: Command 32 · Results 29 · Identification 32 · Pooled 19.
+
+> **This document models a one-time permutation and is no longer the whole story.** ADR-0012
+> *added* a column (`faims_enabled`), so the "pure permutation" framing below holds for the 2026-07
+> reorder only. A schema **addition** is a different operation with a different cost: comparison is
+> by header name, so a reorder is free, but an add makes every golden's header width wrong and
+> `GoldenListCanonicalizer` throws rather than failing softly — every log-golden mode must be
+> recaptured in the same push.
 
 ---
 
-## 1. Command Log (`scan_commands`) — 31 columns
+## 1. Command Log (`scan_commands`) — 32 columns
 
-**Verification: ✅ COMPLETE.** All 31 current columns present exactly once. Pure permutation
-(no additions, no drops).
+**Verification: ✅ COMPLETE** for the reorder. All 31 columns of the 2026-07 permutation are
+present exactly once. `faims_enabled` was subsequently added at index 30 (ADR-0012), between
+`faims_cv` and `enqueue_ts` — the one position that adds a column without invalidating any index
+pinned by `FLASHIda_LoggingFields_test` (all of which are < 29) or the `headers.back()` assertion.
 
 New (desired) order:
 
@@ -49,7 +58,8 @@ New (desired) order:
 28. ms3_proteoform
 29. scan_description
 30. faims_cv
-31. enqueue_ts
+31. faims_enabled
+32. enqueue_ts
 
 Current order (for reference): tracking_id, ms_level, scan_type, enqueue_ts, priority,
 faims_cv, mono_mass, charge, precursor_mz, isolation_width, collision_energy, activation,

@@ -69,3 +69,18 @@ cycling from enablement. Its golden is captured fresh rather than recaptured.
 
 The shipped `etc/method.json` moves from `cv_values: [0]` to `[]`. Under the old rule `[0]` meant
 off by accident; under the new one it would mean FAIMS on at CV 0.
+
+**`faims_enabled` is also a `scan_commands.tsv` column** (index 30, between `faims_cv` and
+`enqueue_ts`), added immediately after this ADR landed. It has to be: making `cv_values: [0]`
+expressible is exactly what makes `faims_cv = 0` ambiguous in the logs — a FAIMS-on-at-CV-0 run and
+a FAIMS-off run were byte-identical across all five streams, and no other column could tell them
+apart. The insertion point is the only one that adds a column without invalidating an existing
+index pin (every scan_commands index asserted by `FLASHIda_LoggingFields_test` is < 29, and
+`enqueue_ts` must stay `headers.back()`).
+
+That addition cost a recapture of `scan_commands.tsv` in all 17 log-golden modes. Adding a column
+is materially more expensive than reordering: comparison is by header name, so a reorder needs no
+recapture, but an add makes every golden's header width wrong and `GoldenListCanonicalizer` throws
+rather than failing softly. Continuity and regression goldens are untouched — `ScanCommandRecord`
+deliberately does **not** carry the flag, since adding it there would rewrite all 18
+`continuity_*.json` files and break two pinned JSON-shape tests.
