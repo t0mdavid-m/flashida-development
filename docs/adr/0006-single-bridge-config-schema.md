@@ -31,6 +31,15 @@ cutover with no backward-compat shim (Option B below). The operator now writes t
 schema, C# reads the bridge schema, and C++ reads the bridge schema, with **no translation
 between them**.
 
+> **PROGRESS NOTE (2026-08-08).** ADR-0014 has already retired the largest remaining piece of this
+> work: `MethodParameters.BuildSelectionStrategy()` is deleted. It was the biggest non-identity
+> transform left in `ToCppJson` — it *synthesised* a whole section, fabricating a shared
+> `defaultExpl` instance for three levels and emitting `ms1`+`ms2`+`ms3` unconditionally.
+> `precursor_selection` and `characterization` are now authored, emitted and parsed in the same
+> shape, and five scan-config parse sites have become three. What remains of this ADR is the
+> `developer{}` wrapper, the `target_mode`/`TargetingMode` structural transform (now done — it is a
+> string enum on both sides), and `global.duration`.
+
 - **`ToCppJson()` becomes ~identity.** The C# POCO **property** names stay stable
   (`Config.Faims.CVValues`, `MsSettings.MS1.FirstMass`, …) so the ~40 tests that read them
   do not ripple; only the `[JsonKey]`s are re-pointed at the bridge keys, plus a few
@@ -42,6 +51,24 @@ between them**.
   `cv_precursor_threshold`, `max_cv_skip`) sit flat in their sections.
 - **Legacy upper-case keys are kept as-is** (`RT_window` / `AllCharges` / `HCDEnergy`) —
   *not* normalized to snake_case — to minimize churn.
+
+  > **AMENDED by [0014-two-decision-sections-and-named-scan-configs.md](0014-two-decision-sections-and-named-scan-configs.md)
+  > (2026-08-08): this clause is reversed.** Every schema key now matches `^[a-z][a-z0-9_]*$`.
+  > `RT_window` → `rt_window`, `AllCharges` → `consider_all_charges`, `ChargeBasedExclusion` →
+  > `charge_based_exclusion`; `HCDEnergy` is deleted outright (its only export,
+  > `PrecursorSelection::getIsolationWindows()`, has zero callers repo-wide). The churn argument
+  > lost its force once the configs were being rewritten wholesale anyway.
+  >
+  > **The rule binds KEYS only.** Instrument-facing and chemistry values keep their casing because
+  > they are a wire contract, not schema: `analyzer`, `data_type` and `scan_rate` are `strncpy`'d
+  > into the `ScanCommand` and written verbatim into the Thermo iAPI's parameter dictionary, and
+  > `activation` is compared **ordinally** at `Config.cpp:107-114` and `Exploration.cpp:81-82`
+  > (though case-insensitively at `FragmentAnalysis.cpp:181-193`) — so lowercasing `"HCD"` would
+  > both stop `validate()` requiring a collision energy *and* collapse the CE sweep, silently and in
+  > two directions at once.
+  >
+  > C# POCO property names are **unaffected** — the freeze below still stands, so e.g. the key is
+  > `rt_window` while the property remains `RTWindow`.
 - **New `flashtnt` block** exposes the live FLASHTagger/FLASHExtender knobs (`min_length`,
   `max_length`, `max_ptm_count`, `max_flanking_mass_diff`, `allow_gap`, `max_aa_in_gap`,
   `fixed_mod`, `max_blind_mod_count`, `max_mod_mass`). The four old
