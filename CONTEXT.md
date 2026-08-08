@@ -280,13 +280,30 @@ per-scan leaf; the leaf uses per-scan evidence only.
 
 **Characterization**:
 The feature umbrella and the method.json config section (`characterization`) for the
-per-Precursor proteoform model: its `objective` (`ambiguity | coverage`) and the
-target `protein_sequence` (relocated out of `ms3.*`). The model engages whenever an
-MS2 selection strategy is configured; every other knob is reused from existing
-config (mapping tolerance = `deconvolution.tol[]`; MS3 budget =
-`selection_strategy.ms2.max_targets`; best proteoform = highest FLASHExtender score).
-_Avoid_: the legacy `ms3.*` control keys (the C++ parser throws on them); a separate
-enable flag (engagement is implicit).
+per-Precursor proteoform model. It holds **decisions only** — no scan parameters — and
+its `mode` (`off | ambiguity | coverage`) is the **single switch** that decides whether
+MS3 happens at all. The two on-values *are* the objectives, so there is no separate
+`objective` key and no way to express "on, but with no objective"; unknown values are
+rejected rather than defaulted. The section also carries the target `protein_sequence`,
+the MS3 budget (`max_targets`) and the fragment-charge floor (`min_fragment_charge`).
+Mapping tolerance is still reused from `deconvolution.tol[]`, and the best proteoform is
+still the highest FLASHExtender score (ADR-0013, ADR-0014).
+_Avoid_: the legacy `ms3.*` control keys and `selection_strategy` (the C++ parser throws
+on both, with migration messages); the idea that engagement is implicit — it was, and
+that produced three gates in two sections; treating `characterization.objective` as a
+live key.
+
+**Scan config name**:
+A user-authored identifier for one scan config in `ms_settings.additional_ms2`,
+referenced from wherever that scan is wanted — `precursor_selection.additional_scans`
+to fire it after every survey, or a `follow_up_scan` to fire it conditionally. The
+**reference is the selectivity**; the block is only parameters. A block nobody names is
+never acquired, which is what stops a follow-up's scan config from also firing as an
+unconditional MS2. Names are snake_case identifiers, and resolution happens at config-load
+time, so nothing downstream of `Config` ever sees a name.
+_Avoid_: assuming definition order matters (dispatch order comes from the reference
+array, never from the definition map); a name for the common case (`ms_settings.ms2` and
+`.ms3` are unnamed bare objects — only extras are named).
 
 ## Language — instrument control
 
@@ -323,10 +340,11 @@ _Avoid_: connected (connection strictly precedes it); acquisition mode.
 
 **Scan config**:
 One fully-specified set of instrument parameters for a scan (analyzer, resolution, AGC,
-injection time, mass range, activation and its parameters). It appears at five places in
-`method.json` — `ms_settings.ms1`, `ms_settings.ms2[]`, `ms_settings.ms3[]`,
-`tagging.follow_up_scan` and `quantification.follow_up_scan` — and means the same thing at
-every one of them: **the config fully determines the scan's instrument parameters**. For an
+injection time, mass range, activation and its parameters). Every one lives under
+`ms_settings` — `ms1`, `ms2`, `ms3` (bare objects) and any number of named entries in
+`additional_ms2` — and means the same thing at every one of them: **the config fully
+determines the scan's instrument parameters**. The two `follow_up_scan` keys are no longer
+scan configs; they are *references* to one (ADR-0014). For an
 analyzer-side parameter a value left unset means "use the instrument method default", never
 "inherit from another scan"; a source-region parameter left unset takes the survey's, resolved
 while the config is built so that the config still fully determines the scan.
@@ -362,7 +380,9 @@ A second MS2 of a precursor already fragmented, dispatched from the regular-MS2 
 a *different* fragmentation regime — quantification (`'F'`, when the precursor is
 differentially abundant) or conditional MS2 (`'C'`, when sequence tags were found). It inherits
 the precursor's identity, targeting, scoring and FAIMS CV from the triggering MS2; everything
-about the instrument comes from its own scan config. Depth is exactly one — a follow-up cannot
-trigger another.
+about the instrument comes from the scan config it **names** in `ms_settings.additional_ms2`.
+Depth is exactly one — a follow-up cannot trigger another.
 _Avoid_: "second MS2" (exploration variants are also second MS2s but are not follow-ups);
-conflating the `'F'` and `'C'` kinds, which have different triggers but identical mechanics.
+conflating the `'F'` and `'C'` kinds, which have different triggers but identical mechanics;
+expecting the referenced block to also fire unconditionally — it is deliberately absent from the
+dispatch roster, and that absence is the whole mechanism.
