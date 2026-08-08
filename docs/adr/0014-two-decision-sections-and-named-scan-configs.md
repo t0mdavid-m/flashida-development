@@ -82,3 +82,19 @@ schema move.
 The int→string `targeting` enum takes its mapping from the **code** (`2=in_depth`, `3=exclusion_masses`
 per `PrecursorSelection.cpp:138-141`); `MethodConfig.cs`, `Config.h` and `PrecursorSelection.cpp:564`
 all had 2 and 3 the wrong way round.
+
+**The four `200` budgets were not restored, and that is deliberate.** `method_exploration_followup`,
+`method_ms3_cytc_coverage`, `method_ms3_cytc_new` and `method_ms3_cytc_real` each wrote
+`ms3.max_targets: 200` into a key with zero read sites, so no run has ever executed a budget other
+than the default 3 and every golden reflects 3. Migration wrote the *effective* value. Raising them
+to a real 200 was considered and declined: it would be a large untested acquisition change — up to
+200 MS3 targets per precursor — made to honour a number that only ever existed in a key that did
+nothing. If a wider budget is wanted, it should be chosen from evidence and land as its own
+golden-moving change, not inherited from a typo.
+
+**`precursor_selection.HCDEnergy` is gone along with the plumbing behind it.** Its only export,
+`PrecursorSelection::getIsolationWindows()`, had zero callers repo-wide, so `trigger_hcds_`,
+`triggerHcds()`, the `TargetingConfig::hcd_energy` field and the `ChargeCandidate::hcd` member were
+all removed with it. ⚠ Do not confuse this with `ScanCommand::hcd_energy`, which is **alive and
+unrelated**: it mirrors `stages[0].collision_energy` into the log schema and is part of the
+2048-byte ABI.
