@@ -167,7 +167,8 @@ jobs:
             MS3FragmentMatcher_test \
             MS3FragmentMatcher_identification_test \
             FLASHIda_ChargeBasedExclusion_test \
-            ScanConfig_applyOverrides_test \n            Config_SchemaProjection_test \
+            ScanConfig_applyOverrides_test \
+            Config_SchemaProjection_test \
             ProteoformTracker_CEOptimization_test \
             ProteoformTracker_Trajectory_test \
             ProteoformTracker_Localization_test \
