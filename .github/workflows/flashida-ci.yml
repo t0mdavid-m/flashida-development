@@ -308,6 +308,37 @@ jobs:
           name: nunit-results
           path: TestResults.xml
 
+      # --- Config schema reference capture (ConfigSchemaParityTests.Reference_IsNeverStale) ---
+      # config_schema_reference.json is produced by a TEST, not a tool, and must never be hand
+      # edited. A local build cannot produce it either: there are no restored NuGet packages, no
+      # net48 reference assemblies, and the Thermo DLLs ship encrypted. So this is the only path
+      # that exists, and it mirrors log-golden-capture: regenerate into an artifact, then promote
+      # the artifact deliberately in its own commit.
+      #
+      # Ordering is load-bearing. This step runs AFTER the unfiltered suite above, never before.
+      # REGEN_CONFIG_REFERENCE=1 makes Reference_IsNeverStale OVERWRITE the committed file and
+      # Assert.Pass -- run first, it would rewrite the fixture under the gate's feet and the gate
+      # would then pass against its own output, reporting green while the schema silently drifted.
+      # Run second, the gate has already failed loudly on the real drift and this only captures
+      # what the fix should be. `continue-on-error` because it must not turn a genuine test failure
+      # into a second, confusing one.
+      - name: Capture config schema reference
+        if: always()
+        continue-on-error: true
+        env:
+          REGEN_CONFIG_REFERENCE: '1'
+          OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
+        run: |
+          FlashIDA\src\packages\NUnit.ConsoleRunner.3.16.3\tools\nunit3-console.exe FlashIDA\bin\Flash.Tests.dll --where "test=='Flash.Tests.ConfigSchemaParityTests.Reference_IsNeverStale'" --result=RegenResults.xml --agents=1 --timeout=300000
+
+      - name: Upload config schema reference capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-schema-reference-capture
+          path: FlashIDA/test-data/config_schema_reference.json
+          if-no-files-found: ignore
+
       # --- Golden capture (baseline) ---
       - name: Capture golden output
         shell: powershell
