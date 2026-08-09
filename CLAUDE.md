@@ -123,7 +123,23 @@ C++ tests read fixtures from `../../FlashIDA/test-data` relative to `OpenMS/buil
   - **Source-region vs analyzer-side** (ADR-0011, `CONTEXT.md`): `rf_lens`/`source_cid`/`source_cid_scaling` act before the analyzer and so are shared by every scan in a cycle — an MSn scan that leaves them at 0 inherits the survey's value (resolved in `ToJsonScanConfig`, so what crosses the bridge is always concrete), and `ScanFactory` sends them unconditionally because 0 is a real setting. Everything else is per-scan, never inherited, and 0/`""` means "use the instrument method default".
   - **`faims.cv_values` decides whether FAIMS runs at all** (ADR-0012): empty = off (and `FAIMS Voltages = "off"` is actively commanded), one CV = on at a fixed CV with no cycling, two or more = cycling. It used to be `size() > 1`, so a single-CV method silently ran with no FAIMS; 27 committed configs carried single-CV boilerplate and are now `[]`.
 - **Acquisition modes** — `precursor_selection.targeting`, a **string enum**: `none` (standard DDA), `inclusion`, `in_depth`, `exclusion_masses`. It was an int (`target_mode`) whose 2/3 meanings were documented backwards in three files; the enum takes its mapping from the code and unknown values are rejected.
-  ⚠️ **2 and 3 are swapped in every doc comment in the tree** — `MethodConfig.cs:68`, `Config.h:155`, and a stray `// deep mode` at `PrecursorSelection.cpp:564` all claim 2=exclusion/3=deep. The *implementation* is the reverse: mode 2 loads `Mass` lines into `target_mass_rt_map_`, builds the tqscore product map, runs the extra `iteration == 0` pass, and logs `"in-depth mode"`; mode 3 loads `AllMass` lines into `exclusion_rt_masses_map_` and hard-skips matches (`if (to_exclude) continue;`), logging `"exclusion mode"` (`PrecursorSelection.cpp:136-141, 302-322, 387, 564-586`). Trust the code, not the comments.
+  The 2/3 mapping used to be **backwards in every doc comment in the tree**, and all three are now
+  corrected (`MethodConfig.cs`, `Config.h`'s `TargetingConfig::mode`, and the `// deep mode` above the
+  mode-3 branch in `PrecursorSelection.cpp`). The mapping, from the code: mode 2 loads `Mass` lines
+  into `target_mass_rt_map_`, builds the tqscore product map and runs the extra `iteration == 0` pass,
+  logging `"in-depth mode"`; mode 3 loads `AllMass` lines into `exclusion_rt_masses_map_` and hard-skips
+  matches (`if (to_exclude) continue;`), logging `"exclusion mode"`. That mislabelling cost real time —
+  `method_deep.json` and `method_exclusion.json` were each *named for the mode they did not set*, and
+  the goldens and continuity tests downstream inherited the error, so three independent naming layers
+  agreed with each other and disagreed with the engine (ADR-0014).
+  ⚠️ **`in_depth` is a SOFT reorder, not an exclusion.** Iteration 0 skips tqscore-exceeding masses and
+  **iteration 1 back-fills them**, so it changes nothing unless the per-scan slot budget is contended.
+  Two gates must both hold: `1 - ∏(1-qscore) > tqscore_threshold` (which needs *repeated* target-log
+  observations — a single one peaks at `1-qscore`), and a saturated budget. `ms1_standard` satisfies
+  neither, which is why `phase4_deep_mode.tsv` is row-identical to `phase4_standard_dda.tsv` and why
+  `ContinuityTests.CT42` is `[Ignore]`d. To observe it, use a rich survey with a tiny cap, as
+  `FLASHIda_LoggingFields_test::exclusion_mode2_tqscore_suppresses_target_mass` does
+  (`ms1_ecoli_rich`, ≥9 selectable masses/scan, `max_targets: 1`).
   Orthogonal, config-flag-driven feature modes (all through the unified pipeline, not separate processors): MS2 sequence tagging, conditional MS2, isobaric quantification, targeted MS3 characterization. See `docs/kb/`.
 - **What drives targeted MS3** — **one** knob now (ADR-0013), where there used to be three:
   - `characterization.mode` (`off | ambiguity | coverage`) is the whole gate *and* chooses the targets — the two on-values *are* the objectives. Unknown values **throw**; the old `objective` key is gone. Reading a method, this single line answers "does this run MS3, and against what?".
