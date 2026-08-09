@@ -2,15 +2,17 @@
 title: C# Orchestration — startup, per-scan event flow, shutdown
 applies_to: FlashIDA/src/Flash/Flash.cs, FlashIDA/src/Flash/DataPipe.cs,
             FlashIDA/src/Flash/IDA/UnifiedScanProcessor.cs
-last_verified: 2026-04-20
+last_verified: 2026-08-09
 code_anchors:
-  - FlashIDA/src/Flash/Flash.cs:191      # Main's stopRequest spin-wait
-  - FlashIDA/src/Flash/Flash.cs:202      # InstrumentConnected
-  - FlashIDA/src/Flash/Flash.cs:357      # OnContactClosure
-  - FlashIDA/src/Flash/Flash.cs:393      # SendCustomScan
-  - FlashIDA/src/Flash/Flash.cs:430      # ProcessSpectrum
-  - FlashIDA/src/Flash/Flash.cs:476      # HandleAcqError
-  - FlashIDA/src/Flash/Flash.cs:484      # StopExecution
+  - FlashIDA/src/Flash/Flash.cs:163      # Main (CLI, method load, run folder, log4net)
+  - FlashIDA/src/Flash/Flash.cs:255      # Main's stopRequest spin-wait
+  - FlashIDA/src/Flash/Flash.cs:266      # InstrumentConnected
+  - FlashIDA/src/Flash/Flash.cs:401      # OnContactClosure
+  - FlashIDA/src/Flash/Flash.cs:471      # SendCustomScan
+  - FlashIDA/src/Flash/Flash.cs:508      # ProcessSpectrum
+  - FlashIDA/src/Flash/Flash.cs:570      # HandleAcqError
+  - FlashIDA/src/Flash/Flash.cs:578      # StopExecution
+  - FlashIDA/src/Flash/LogPathResolver.cs   # run-folder composition
   - FlashIDA/src/Flash/DataPipe.cs:12    # 2-stage TPL Dataflow
   - FlashIDA/src/Flash/IDA/UnifiedScanProcessor.cs:15   # ProcessMS adapter
 see_also:
@@ -28,22 +30,31 @@ shutdown flag.
 
 ## Startup Sequence
 
-`Main` (`Flash.cs:154`) kicks off instrument-container creation; the Thermo
-runtime fires `InstrumentConnected` (`Flash.cs:202`) once it attaches. That
-handler:
+`Main` first parses the CLI, then **loads `method.json` and resolves this run's log
+folder** — `LogPathResolver.Compose(runtime.log_dir, --rawname, now)`, `CreateDirectory`,
+and the absolute result written back into `Config.Runtime.LogDir`. That has to happen
+before `XmlConfigurator.Configure`, because configuring log4net opens the two appender
+files immediately; the method load used to sit inside `InstrumentConnected`, roughly one
+async event later, where its folder could never have reached them. A method file that
+fails to load, or a log folder that cannot be created, exits 1 here via `Console.Error`
+(`log` does not exist yet). See [ADR-0015](../../adr/0015-log-dir-is-resolved-host-side.md).
+
+`Main` then kicks off instrument-container creation; the Thermo runtime fires
+`InstrumentConnected` once it attaches. That handler:
 
 1. Obtains `acquisition` + `control` + `scanControl` interfaces; detects FAIMS
    capability by scanning `scanControl.PossibleParameters`.
 2. Builds `scanFactory` (for constructing `IFusionCustomScan`s from
    `ScanCommand`s — see
    [`../scan-pipeline/csharp-consumer.md`](../scan-pipeline/csharp-consumer.md)).
-3. Loads `method.json` into `methodParams` (see
-   [`../config-flow/README.md`](../config-flow/README.md)).
+3. Consumes the already-loaded `methodParams` (see
+   [`../config-flow/README.md`](../config-flow/README.md)) — the load itself moved to
+   `Main`, above.
 4. Constructs `FLASHIdaWrapper`, `UnifiedScanProcessor`, and `DataPipe`.
 5. Subscribes `AcquisitionErrorsArrived` to `HandleAcqError`.
 6. Waits for contact closure (or skips via `--nocc`).
 
-`OnContactClosure` (`Flash.cs:357`) — or the `OverrideCC` branch inside
+`OnContactClosure` (`Flash.cs:401`) — or the `OverrideCC` branch inside
 `InstrumentConnected` if contact-closure is disabled — then:
 
 1. Subscribes `MsScanArrived` to `ProcessSpectrum`.
@@ -54,7 +65,7 @@ handler:
 
 ## Per-Scan Event Flow
 
-`ProcessSpectrum` (`Flash.cs:430`) is the acquisition loop's heartbeat. Called
+`ProcessSpectrum` (`Flash.cs:508`) is the acquisition loop's heartbeat. Called
 on the Thermo callback thread, it performs two independent actions per
 invocation:
 
@@ -78,7 +89,7 @@ if (wrapper.GetNextScanCommand(ref cmd) == 1)
 }
 ```
 
-`SendCustomScan` (`Flash.cs:393`) increments `currentNumber` (becomes the
+`SendCustomScan` (`Flash.cs:471`) increments `currentNumber` (becomes the
 `RunningNumber` on the submitted scan) and logs a one-line summary before
 calling `scanControl.SetFusionCustomScan`.
 
@@ -134,9 +145,9 @@ for the P/Invoke surface.
 
 Shutdown is initiated by the duration timer:
 
-1. `duration.Elapsed` fires `StopExecution` (`Flash.cs:484`), which sets
+1. `duration.Elapsed` fires `StopExecution` (`Flash.cs:578`), which sets
    `stopRequest = true` and calls `duration.Close()`.
-2. `Main`'s spin-wait (`Flash.cs:191`):
+2. `Main`'s spin-wait (`Flash.cs:255`):
 
    ```csharp
    while (!stopRequest) { }
@@ -155,17 +166,18 @@ the tail work is not useful.
 
 Try/catch wraps every Thermo-API boundary:
 
-- Instrument container creation (`Flash.cs:172`–`:187`)
-- `ScanControl` acquisition (`Flash.cs:235`–`:260`)
-- Method load (`Flash.cs:269`–`:279`)
-- `DataPipe` creation (`Flash.cs:299`–`:307`)
+- Instrument container creation (`Flash.cs:236`–`:252`)
+- `ScanControl` acquisition (`Flash.cs:299`–`:324`)
+- Method load + log-folder creation (in `Main`, before log4net is configured; reports via
+  `Console.Error` rather than `log`)
+- `DataPipe` creation (`Flash.cs:354`–`:363`)
 - First custom-scan submission (in `OnContactClosure` and the `OverrideCC`
   branch inside `InstrumentConnected`)
 
-`AcquisitionErrorsArrived` → `HandleAcqError` (`Flash.cs:476`) logs
+`AcquisitionErrorsArrived` → `HandleAcqError` (`Flash.cs:570`) logs
 instrument-side errors (spray instability, etc.) but does not retry.
 
-The code comment at `Flash.cs:256` warns: *"unhandled exception does not
+The code comment at `Flash.cs:320` warns: *"unhandled exception does not
 crash the software the usual way, but lead to weird behavior"*. That is why
 the try/catch density is high in the instrument-facing paths.
 

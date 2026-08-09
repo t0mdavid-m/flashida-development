@@ -111,8 +111,7 @@ loop does not apply — mode 3 runs only the single `iteration = 1` pass.
 | `rt_window` | Seconds; governs which RT-keyed list entries are active in Modes 2 and 3. |
 | `tqscore_threshold` | Cumulative exclusion threshold for Mode 2; mass is skipped if `1 - tqscore > threshold`. |
 | `inclusion_list_file` | Path to TSV target file (Mode 1). |
-| `tag_based_enabled` | Enables protein-family tag expansion of target masses. |
-| `fasta_file` | FASTA database for tag-based target expansion. |
+| `fasta_file` | FASTA database for tag-based target expansion — a non-empty `files.fasta` is the ONLY thing that enables it. (`tag_based_enabled` used to be listed here; it was declared, never assigned and never read, and has been deleted.) |
 
 > Related but distinct: the MS1-side tag-biased precursor selection controlled by the two keys above is different from the MS2-side tag confirmation + conditional follow-up scan, which is covered in [`../fragment-analysis/tag-follow-up.md`](../fragment-analysis/tag-follow-up.md).
 | `consider_all_charges` | Ranks across all charge states rather than only the representative charge. |
