@@ -127,8 +127,10 @@ parses the string and the constructor populates `DeconvolutionConfig`,
 `TargetingConfig`, `FAIMSConfig`, `SchedulingConfig`, `QuantConfig`, `RuntimeConfig`,
 and `std::map<int, MSLevelConfig> levels_`. The `flashtnt` section
 (`Config.cpp:132`) fills the FLASHTagger/FLASHExtender fields on `TargetingConfig`
-(`min_tag_length`, `max_tag_length`, `max_total_ptm_count`, `max_flanking_mass_diff`,
-`allow_gap`, `max_aa_in_gap`, `max_blind_mod_count`, `max_mod_mass`, `fixed_mod`). Every
+(`min_tag_length`, `max_tag_length`, `allow_gap`, `max_aa_in_gap`, `max_blind_mod_count`,
+`max_mod_mass`, `fixed_mod`). `max_total_ptm_count` and `max_flanking_mass_diff` live on the
+same struct but are filled from **`precursor_selection.tag_expansion`**, not from `flashtnt` —
+they drive FLASHIda's own FASTA target expansion, not FLASHTnT. Every
 scalar field uses `.value(key, default)`, so missing keys silently take the compiled-in
 default — no exception for absent optional keys. One default is load-bearing:
 `flashtnt.max_mod_mass` defaults to **700**, not the extender's own 500, to preserve the
