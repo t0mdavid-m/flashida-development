@@ -127,7 +127,8 @@ nothing to skip to.
 | `strict_inclusion` | `true` / **`false`** | `true` restricts acquisition to inclusion-list matches only; `false` lets unmatched masses fill the remaining slots. |
 | `tie_threshold` | score delta — **0.1** | QScore gap below which two candidates count as tied, letting inclusion-list priority decide the order — inert unless `targeting` is `inclusion` with targets loaded. |
 | `consider_all_charges` | `true` / **`false`** | `true` ranks the survey by QScore across every observed charge state rather than one representative charge per mass. |
-| `charge_based_exclusion` | `true` / **`false`** | `true` makes exclusion `(mass, charge)`-scoped so other charge states of the same mass stay selectable. |
+| `charge_based_exclusion` | `true` / **`false`** | `true` makes exclusion `(mass, charge)`-scoped so other charge states of the same mass stay selectable — a **fallback**, not a fan-out: still one acquisition per detection, but at the best charge not yet excluded, so a species is sampled at a different charge on each later survey (ADR‑0018). |
+| `precursor_charges` | **`single`** / `separate` / `multiplexed` | How many charge states of a selected precursor one MS2 acquires. `single` = the representative charge. `separate` = one MS2 per charge state, each its own precursor with its own model. `multiplexed` = one MS2 co-isolating the whole SNR-positive set as notches — one precursor, one model, not a chimeric spectrum, since every notch is the same neutral mass. Orthogonal to `charge_based_exclusion`, which keys *exclusion* rather than *geometry*. |
 | `rank_by` | **`qscore`** | Ranks MS1 candidates by deconvolution quality score. |
 | | `intensity` | Ranks them by raw intensity. |
 | | `none` | Disables MS1 selection entirely — the run acquires surveys and nothing else. |
@@ -190,7 +191,7 @@ Requires the level to dispatch exactly one scan config, so it is mutually exclus
 | `protein_sequence` | amino-acid string — **cytochrome C** | The sequence MS3 fragments are matched against; required, and non-empty, whenever `mode` is not `off`. |
 | `max_targets` | integer — **3** | The MS3 budget per identified precursor; `0` loads fine and silently disables MS3 while leaving `mode` looking on. |
 | `min_fragment_charge` | integer, `0` = off — *(omitted, so 0)* | Charge floor an MS2 fragment must clear to become an MS3 target. |
-| `ms3_all_charges` | `true` / *(omitted, so `false`)* | `true` dispatches one MS3 per observed charge state of a target fragment instead of the single best charge. |
+| `fragment_charges` | **`single`** / `separate` / `multiplexed` | How many charge states of a target fragment one MS3 acquires. `single` = the fragment's best-MS2 charge. `separate` = one MS3 per observed charge, so `max_targets` is spent on (fragment, charge) **pairs** and a fragment seen at three charges can consume the whole budget on one cleavage site. `multiplexed` = one MS3 co-isolating them as notches, so the budget is spent on **fragments** and the same slots buy more sites. Replaces the bool `ms3_all_charges` (`false`→`single`, `true`→`separate`); the old key is a migration error. |
 | `exploration` | same keys as above — *(omitted)* | An independent CE/reaction-time sweep for MS3, so MS2 and MS3 can sweep different ranges. |
 
 `ms_settings.ms3` must exist whenever `mode` is not `off` — the MS3 builder reads `scans[0]`
