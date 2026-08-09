@@ -11,18 +11,19 @@ A molecular species selected from MS1 for fragmentation, identified by its
 *nominal mass* — the averagine-adjusted, rounded integer mass
 `round(monoisotopic_mass × 0.999497)` (`SpectralDeconvolution::getNominalMass`,
 `SpectralDeconvolution.cpp:79`), the same key DDA mass-exclusion uses. A Precursor
-is detected **once** at MS1 at a single **representative charge** (highest-SNR
-`getRepAbsCharge`, one m/z isolation window); that one detection schedules the
-whole downstream cascade — its MS2 (plus any CE-sweep exploration variants at that
-*same* charge) and the MS3 scans that increase coverage — and the mass is put on
-**dynamic exclusion immediately** so it is never re-detected/re-selected (in
-particular not at a different charge state), including for inclusion targets. So
-in practice **one charge state's** evidence feeds the proteoform model; the
-nominal-mass key remains, but cross-charge-state pooling no longer occurs.
-Coverage is deepened by **MS3**, not by acquiring multiple charge states.
-_Avoid_: pooling MS2 from different charge states of the same mass (an artifact of
-deferred exclusion — the same molecule re-selected at charges 8/10/15 — which
-produced physically-impossible MS3 charge pairings); PeakGroup (one survey scan's
+is detected **once** at MS1 and acquired at one **acquisition charge set** — by
+default a single **representative charge** (highest-SNR `getRepAbsCharge`, one m/z
+isolation window). That one detection schedules the whole downstream cascade — its
+MS2 (plus any CE-sweep exploration variants over that *same* charge set) and the
+MS3 scans that increase coverage — and the mass is put on **dynamic exclusion
+immediately** so it is never re-detected as a *new* Precursor, including for
+inclusion targets. So one Precursor's evidence comes from **one charge set**, never
+from separate detections of the same mass at different charges.
+_Avoid_: pooling MS2 from **separate detections** at different charge states (an
+artifact of deferred exclusion — the same molecule re-selected at charges 8/10/15 —
+which produced physically-impossible MS3 charge pairings; charges *co-isolated
+within one detection* are a different thing, see **Acquisition charge set**);
+PeakGroup (one survey scan's
 ephemeral deconvolved feature); tracking_id (per-scan); ExplorationGroup
 (per-precursor-per-MSn-level CE-sweep state, erased on group completion).
 
@@ -31,13 +32,54 @@ A fragment ion's charge can never exceed the charge of the precursor it was
 produced from — a charge-`z` precursor yields fragments of charge `1..z`, and an
 MS3 sub-fragment cannot exceed its MS2-fragment charge. Enforced at the **root**:
 when deconvolving an MSn scan, the deconvolution's `max_charge` is set to the
-**precursor's charge** (`Deconvolution::deconvolveMSn`, configuring
+**highest charge the scan actually isolated** — the anchor charge for a
+single-charge acquisition, the **maximum of the acquisition charge set** when
+charges were co-isolated (`Deconvolution::deconvolveMSn`, configuring
 SpectralDeconvolution per call — not modifying it), so no fragment is ever
-*assigned* a charge above its precursor. This makes the MS3 stage-0/stage-1 charge
-pairing physically valid by construction.
+*assigned* a charge above every precursor present in the isolation. This keeps the
+MS3 stage-0/stage-1 charge pairing physically valid by construction: a co-isolated
+stage-0 replays the same charge set, so the charge that produced a fragment is
+present again when that fragment is re-isolated.
 _Avoid_: a post-hoc dispatch filter that drops over-charged fragments after the
 fact (treats the symptom); deconvolving MSn with the global MS1 `max_charge` (50),
-which is what let a fragment be assigned a charge above its precursor.
+which is what let a fragment be assigned a charge above its precursor; using the
+anchor charge as the ceiling when a higher charge was co-isolated (that discards
+real fragments).
+
+**Acquisition charge set**:
+The charge states of one Precursor — or of one target fragment — that a single scan
+isolates. Size one by default: the representative charge. Membership is a
+signal-to-noise judgement, a charge joining only if its own envelope rises above
+noise, because a charge contributing no signal still consumes part of the scan's
+ion budget. A set may be **co-isolated** — all members isolated together in one
+scan as separate **notches**, sharing one isolation event and one identity — or
+acquired as one scan per member, which yields that many independent Precursors
+rather than one. The instrument caps the set's size.
+_Avoid_: "all charge states" unqualified (the set is SNR-gated and capped);
+treating co-isolation and one-scan-per-charge as interchangeable — the first is one
+Precursor, the second is several.
+
+**Anchor charge**:
+The member of an acquisition charge set that a scan's **identity and per-charge
+scores** are attributed to — the highest-SNR member. What a scan is *keyed* by is
+the anchor's (its tracking id, its scan description, the charge on its
+identification row); what the scan *isolates* is the whole set. A single-charge
+acquisition acquires the anchor and nothing else.
+_Avoid_: reading a scan's logged charge as the only charge it isolated; equating
+the anchor with the representative charge — the representative charge is a property
+of the deconvolved feature, the anchor is a property of the acquisition, and
+per-charge qscore or an exclusion fallback can make them differ.
+
+**Charge-keyed exclusion**:
+The variant of dynamic exclusion that keys on `(nominal mass, charge)` rather than
+on nominal mass alone, so a mass already fragmented at one charge stays eligible at
+another. Its effect is a **fallback**, not a fan-out: a Precursor is still acquired
+once per detection, but at the best charge not yet excluded, so a species seen
+across several surveys is sampled at a different charge each time. When a scan
+co-isolates a charge set, **every member it isolated** is recorded as acquired —
+otherwise the next survey falls back onto a charge already fragmented.
+_Avoid_: expecting it to acquire several charges of one mass within a single survey
+(that is one-scan-per-charge acquisition, a separate choice).
 
 **Proteoform model** (`ProteoformModel`):
 The pooled, evolving best-known identification of a single Precursor: the winning
@@ -144,6 +186,18 @@ with the optional CE sweep centered on them.
 _Avoid_: thinking the best-MS2 parameters set the MS3 fragmentation chemistry —
 they set the MS2 fragmentation (`stage[0]`) that *feeds* the MS3 (`stage[1]`).
 More fragment ion = more MS3 precursor = strictly better.
+
+**Notch**:
+One of several isolation windows a single scan opens **in parallel within one
+fragmentation stage** — as against a *stage*, which is a further fragmentation
+performed **in sequence** (see **MS3 scan (two-stage)**). All notches of a stage
+fire into the same fragmentation event and are read out as one spectrum, so a
+three-notch scan yields one spectrum, not three. Every notch of a stage holds a
+different charge state of the *same* species, so a multi-notch spectrum is **not
+chimeric**: all its fragments belong to one neutral mass, and it carries one
+Precursor identity.
+_Avoid_: calling a notch a stage (a stage descends to the next MS level, a notch
+widens the current one); assuming several notches means several precursors.
 
 **Pre-scan**:
 An exploration scan acquired solely to optimize an MSn parameter — not kept as the

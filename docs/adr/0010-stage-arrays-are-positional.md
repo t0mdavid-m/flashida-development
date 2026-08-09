@@ -54,7 +54,11 @@ defaults to 0.
 ## Decision
 
 - **Per-stage arrays are positional.** Element `i` is stage `i`, for `i < min(num_stages, 10)`.
-  Every emitted per-stage array is either absent or exactly `num_stages` long. Rejected
+  Every emitted per-stage array is either absent or exactly `num_stages` long. ⚠️ **Amended by
+  [ADR-0017](0017-notches-occupy-spare-stage-slots.md):** with co-isolation notches an emitted array
+  carries `num_stages` semicolon-separated *groups*, each `1 + notch_count` comma-separated values.
+  The indexing clause above is unaffected — it is scoped to `i < num_stages`, and notches occupy
+  `stages[i >= num_stages]`. Rejected
   alternative: emitting `null` for an unused stage — value-type arrays cannot express it without
   changing the `ScanParameters` field types, and it reaches the wire as an *empty token*
   (`";10"`), whose handling is undocumented. A literal `0` is the documented producer-side sentinel,

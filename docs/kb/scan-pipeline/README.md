@@ -35,6 +35,9 @@ C# acquisition loop → GetNextScanCommand (bridge) → queue.dequeue
 1. [scan-command.md](scan-command.md) — the `ScanCommand` struct and its queue.
 2. [bridge-functions.md](bridge-functions.md) — how `ScanCommand` crosses the ABI.
 3. [csharp-consumer.md](csharp-consumer.md) — what the C# side does with it.
+4. [multi-notch-wire-grammar.md](multi-notch-wire-grammar.md) — the two-axis iAPI parameter grammar
+   (`;` descends an MSⁿ stage, `,` widens one into co-isolation notches), why
+   `PossibleParameters` documents only the first axis, and what `MSXTargets` actually is.
 
 ## Out of Scope
 
