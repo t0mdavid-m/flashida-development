@@ -1,6 +1,10 @@
 # 0006. One bridge config schema: C# and C++ read the same JSON; ToCppJson becomes identity
 
-Status: Accepted (2026-07-13)
+Status: Accepted (2026-07-13). **Amended by
+[ADR-0015](0015-log-dir-is-resolved-host-side.md)**, which makes `runtime.log_dir` a deliberate
+exception to "`ToCppJson` becomes ~identity": the key is authored as a base directory and emitted
+as a resolved run folder, and empty means "." on one side and "open nothing" on the other. Every
+other key still round-trips unchanged.
 
 ## Context
 

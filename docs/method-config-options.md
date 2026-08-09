@@ -263,11 +263,22 @@ rejected, because it would fire twice per precursor at two different priorities.
 
 | Key | Values | What it does |
 |---|---|---|
-| `ida_log_path` | path | Where the free-text MS1 summary log is written; empty disables that stream. |
-| `scan_commands_path` | path | Where the per-dequeued-command TSV is written. |
-| `scan_results_path` | path | Where the per-`processScan` acquisition-event TSV is written. |
-| `identification_log_path` | path | Where the per-scan identification TSV is written. |
-| `pooled_identification_log_path` | path | Where the per-precursor cumulative proteoform TSV is written. |
+| `log_dir` | folder, **`""`** | Folder that receives **every** log file. Empty means `.` — the process working directory. |
+
+Each run gets its own subfolder inside `log_dir`, holding all seven files under fixed names:
+
+```
+<log_dir>/sample_042_2026-08-09-14-33-02/    <- "<-r value>_<stamp>", or "<stamp>" with no -r
+    ida.log                     scan_commands.tsv        scan_results.tsv
+    identification.tsv          pooled_identification.tsv
+    FlashLog.log                IDALog.log
+```
+
+There is no way to disable a stream and no way to place one somewhere else — the five per-stream
+path keys were deleted, and a config still carrying one is rejected with a migration error. The
+timestamp is minted once per process, so all seven files necessarily agree. If the folder cannot
+be created the run exits 1 before touching the instrument. See
+[ADR-0015](adr/0015-log-dir-is-resolved-host-side.md).
 
 ---
 

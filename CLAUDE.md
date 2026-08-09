@@ -84,6 +84,13 @@ A behaviour change usually moves more than one set. Know which you touched:
 | Set | Location | How to recapture |
 |---|---|---|
 | Log goldens (largest surface) | `FlashIDA/test-data/golden/logs/<mode>/<stream>.golden.tsv` — 17 modes × 5 streams | Re-run `FLASHIdaLogGolden_test` with env `LOG_GOLDEN_CAPTURE=1`, or promote CI artifact `log-golden-capture` (`<mode>/<stream>.normalized` is byte-identical to a local capture) |
+
+The five `<stream>` basenames are fixed **in the engine** (`IdaLogger`'s `k*Name` constants,
+mirrored by `LogGoldenComparer.FileNames`); only their location is configurable, via the single
+`runtime.log_dir` key. Renaming one is a golden-moving change on both sides. A capture run now
+refuses to write when the engine did not produce all five streams — it performs no comparison at
+all, and a missing file normalizes to `""`, so an unguarded capture over a mislocated run would
+blank the goldens and pass.
 | Regression TSVs | `FlashIDA/test-data/golden/phase4_*.tsv`, `baseline_*.tsv` | `regression-runner.ps1 -captureMode` |
 | Continuity JSONs | `FlashIDA/test-data/golden/continuity_*.json` | continuity-golden capture; CI artifact `continuity-golden-capture` |
 
@@ -151,7 +158,7 @@ C++ tests read fixtures from `../../FlashIDA/test-data` relative to `OpenMS/buil
 ## Docs Map
 
 - `docs/kb/` — the agent-facing knowledge base, imported above. Packet README first, then drill down. Entries carry `last_verified` + `code_anchors`; if the anchors don't resolve, the entry is stale — fix or remove it rather than relying on it.
-- `docs/adr/` — accepted architecture decisions, **thirteen files numbered 0001–0012**: direct-infusion precursor scope, ProteoformTracker dispatch authority, two-stage MS3 parameter sourcing, characterization config reshape, MS3-target-is-a-containing-fragment, single bridge config schema, winner-anchored fragment pooling, strict config-schema rejection, separate scan identity channels, scan-config-determines-instrument-parameters, positional stage arrays, source-region-parameters-are-survey-scoped, FAIMS-enablement-is-explicit. Read the relevant ADR before re-litigating one of these.
+- `docs/adr/` — accepted architecture decisions, **sixteen files numbered 0001–0015** (0006 is used twice): direct-infusion precursor scope, ProteoformTracker dispatch authority, two-stage MS3 parameter sourcing, characterization config reshape, MS3-target-is-a-containing-fragment, single bridge config schema, winner-anchored fragment pooling, strict config-schema rejection, separate scan identity channels, scan-config-determines-instrument-parameters, positional stage arrays, source-region-parameters-are-survey-scoped, FAIMS-enablement-is-explicit, characterization-mode-is-the-single-MS3-switch, two-decision-sections-and-named-scan-configs, log-dir-is-resolved-host-side. Read the relevant ADR before re-litigating one of these.
   ⚠️ **0011 amends 0007 and scopes 0009.** It reverses 0007's "trim four always-default emit-only keys" consequence, and narrows 0009's "never inherit from another scan" rule to analyzer-side parameters. Both older files carry a pointer at the amended text; don't cite them without it.
   ⚠️ **`0006` is used twice** — `0006-single-bridge-config-schema.md` (2026-07-13) and `0006-winner-anchored-fragment-pooling.md` (2026-07-09). Cite them by filename, never by bare number, until one is renumbered.
 - `docs/superpowers/plans/` and `docs/superpowers/specs/` — approved designs, several of them **signed off but not yet implemented**; check here before assuming a described behaviour exists in the code. `specs/archive/` holds specs the Stop hook has retired.
