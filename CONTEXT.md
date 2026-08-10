@@ -122,7 +122,9 @@ energy. If no variant scan identifies anything, the Precursor has no proteoform
 and therefore no MS3 plan.
 _Avoid_: the ExplorationMetric scores (MassCount / RemainingPrecursor /
 FragmentCount) — those are parameter-sweep objectives, only comparable within one
-exploration group, NOT identification quality.
+exploration group, NOT identification quality. Note the one place the two touch:
+a metric never *measures* identification quality, but at MS3 it does decide whether
+a pre-scan is identified at all (**Pre-scan**, reading vs measuring metrics).
 
 **MS2 parameter set**:
 The concrete tuple of fragmentation parameters under which one MS2 acquisition was
@@ -205,7 +207,17 @@ final measurement. Example: a CE sweep under the RemainingPrecursor metric, whos
 pre-scans find the collision energy that leaves the target remaining-precursor
 ratio. Pre-scans feed winner selection; the Follow-up MSn is then acquired at the
 chosen parameters.
-_Avoid_: confusing a pre-scan with the production scan it informs.
+**Whether a sweep also *reads* its pre-scans is a property of its metric, not of the
+scans.** A **reading** metric (FragmentCount) matches every variant against the
+proteoform to score it, so its pre-scans leave identifications behind as a side
+effect. A **measuring** metric (RemainingPrecursor, MassCount) only weighs bulk
+signal and never matches fragments, so at MS3 its pre-scans leave *no* evidence
+whatsoever — which is why a measuring MS3 sweep must always be closed by a
+Follow-up MSn. This asymmetry is MS3-only: at MS2 every variant is matched under
+every metric, because the whole-protein matcher used there is the right one.
+_Avoid_: confusing a pre-scan with the production scan it informs; assuming a
+completed sweep has produced evidence (a measuring metric produces a *parameter*,
+not a measurement).
 
 **Baseline variant**:
 A special CE-0 / RT-0 pre-scan prepended (index 0) to an exploration group. It
@@ -223,10 +235,33 @@ it feed the pooled model.
 **Follow-up MSn**:
 The production MSn scan emitted at the parameters chosen by a parameter-optimizing
 pre-scan exploration (e.g. the CE that hit the target remaining-precursor ratio).
-Dispatched via the model. Today this is the Exploration "production scan" emitted
-when the level's overrides are non-empty after winner selection.
+Dispatched via the model, and — unlike a pre-scan — identified on the ordinary MSn
+path, so it is the scan that actually contributes evidence.
+It is emitted when **either** of two conditions holds after winner selection:
+- the pre-scans were **degraded** relative to production (**Exploration overrides**
+  non-empty), so no variant was acquired at production settings; or
+- the sweep's metric never read its pre-scans (**Pre-scan**, a measuring metric —
+  MassCount or RemainingPrecursor) and the level is **MS3**. An MS3 sweep that
+  leaves no evidence must be closed by a scan that does.
+An MS2 sweep is exempt from the second condition: its variants are already
+identified, and it cascades to MS3 rather than re-acquiring itself.
 _Avoid_: treating follow-up MSn as ad-hoc re-acquisition for a missing fragment —
-it is specifically the optimized production scan that *follows* pre-scans.
+it is specifically the optimized production scan that *follows* pre-scans; assuming
+"overrides empty" implies "no follow-up" (that was the rule before the metric
+condition was added).
+
+**Exploration overrides**:
+The scan settings a sweep's **pre-scans** run under, expressed as a patch on the
+level's scan config. Their purpose is to make pre-scans *cheaper* than the real
+measurement (lower resolution, fewer microscans), so a sweep costs less than the
+production scan it informs. Their presence is therefore also a statement about
+fidelity: with overrides, no pre-scan was acquired at production settings, so a
+**Follow-up MSn** is mandatory; without them, the pre-scans ran at production
+settings and the winner is production-grade — provided the metric read it.
+_Avoid_: reading overrides as settings for the follow-up scan (the follow-up is
+built from the *un-overridden* config, plus the winning parameters); treating an
+empty overrides map as "nothing special" rather than as "pre-scans ran at
+production fidelity".
 
 **Pooled identification log**:
 A new optional output — enabled, like every other FLASHIda log, by a non-empty
