@@ -98,19 +98,27 @@ New (desired) order:
 21. collision_energy
 22. reaction_time
 23. deconv_masses
-24. deconv_intensities
-25. deconv_min_charge
-26. deconv_max_charge
-27. resolve_ts
-28. received_ts
-29. dequeue_ts
+24. deconv_charges
+25. deconv_intensities
+26. resolve_ts
+27. received_ts
+28. dequeue_ts
 
 Current order (for reference): tracking_id, ms_level, resolve_ts, duration_ms, received_ts,
 duration_received_ms, rt, mass_count, commands_pushed, child_ids, exploration_group_id,
 exploration_metric, variant_index, total_variants, collision_energy, exploration_score,
-remaining_ratio, activation_type, reaction_time, deconv_masses, deconv_intensities,
-deconv_min_charge, deconv_max_charge, parent_tracking_id, dequeue_ts, queue_duration_ms,
+remaining_ratio, activation_type, reaction_time, deconv_masses, deconv_charges,
+deconv_intensities, parent_tracking_id, dequeue_ts, queue_duration_ms,
 instrument_duration_ms, processing_duration_ms, winner_tracking_id.
+
+**28 columns, not 29.** The per-charge deconvolved output replaced four columns
+(`deconv_masses`, `deconv_intensities`, `deconv_min_charge`, `deconv_max_charge`) with three
+(`deconv_masses`, `deconv_charges`, `deconv_intensities`): each PeakGroup now contributes one
+`;`-group per column, with its observed charges and their **own** intensities `,`-joined inside and
+index-aligned. `deconv_intensities` used to be the PeakGroup total summed across charge states, so the
+log could say how much signal a mass carried but never how it was distributed — and that distribution
+is exactly what decides which charges clear the SNR gate for co-isolation. Min and max are derivable
+from the charge list.
 
 ---
 
