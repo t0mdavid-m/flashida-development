@@ -1,9 +1,24 @@
 # 0017. Co-isolation notches occupy the spare stage slots
 
-Status: Accepted (2026-08-09), **not yet implemented**. Amends the *emit* clause of
+Status: **SUPERSEDED (2026-08-10) by
+[ADR-0019](0019-notches-get-their-own-array-and-a-per-stage-cap.md)** as to the layout and the
+capacity. Was: Accepted (2026-08-09). Amends the *emit* clause of
 [ADR-0010](0010-stage-arrays-are-positional.md); follows the carve-from-`reserved_` pattern of
 [ADR-0012](0012-faims-enablement-is-explicit.md). Depends on
 [ADR-0016](0016-co-isolated-charges-are-one-detection.md).
+
+> ⚠️ **Read 0019 before citing anything below.** Notches now live in a dedicated 24-byte `Notch`
+> array in fixed per-stage blocks, **not** in `stages[num_stages..]`, and the cap is 9 **per stage**
+> rather than `10 - num_stages` shared. What survives from this ADR: `num_stages` never counts
+> notches, the carve-from-`reserved_` discipline, the ADR-0010 emit-clause amendment, and the wire
+> grammar — all of which follow from the wire format rather than the byte layout.
+>
+> The section below titled *"Considered and rejected: parallel notch arrays in `reserved_`"* is the
+> option 0019 adopted. It was rejected here on the grounds that the extra bytes bought "only the
+> independent caps" — and the independent caps turned out to be the whole ballgame: with one shared
+> pool, an MS3 inheriting a fully multiplexed parent left its own fragment stage with zero slots. The
+> capacity paragraph is also wrong on the instrument, conflating `PrecursorMass`'s 10-value `';'`-axis
+> limit with `MSXTargets`' 10-window `','`-axis one.
 
 ## Context
 

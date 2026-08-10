@@ -1,14 +1,14 @@
 ---
 title: The two-axis iAPI scan-parameter grammar (';' stages, ',' notches)
 applies_to: FlashIDA/src/Flash/ScanFactory.cs, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp, OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h
-last_verified: 2026-08-09
+last_verified: 2026-08-10
 code_anchors:
   - FlashIDA/src/Flash/ScanFactory.cs:30    # MSXTargets — declared, never assigned
-  - FlashIDA/src/Flash/ScanFactory.cs:32    # PrecursorMass field (double[])
+  - FlashIDA/src/Flash/ScanFactory.cs:44    # PrecursorMass field (string[]: one pre-formatted group per stage)
   - FlashIDA/src/Flash/ScanFactory.cs:133   # FillParameters — reflection, arrays joined with ';'
-  - FlashIDA/src/Flash/ScanFactory.cs:196   # per-stage block guard
-  - FlashIDA/src/Flash/ScanFactory.cs:198   # int n = Math.Min(cmd.NumStages, 10)
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:44   # MAX_ISOLATION_STAGES = 10
+  - FlashIDA/src/Flash/ScanFactory.cs:168   # NotchesForStage — stage k's fixed block
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:45   # MAX_ISOLATION_STAGES = 10 (';' axis)
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:56   # MAX_NOTCHES_PER_STAGE = 9 (',' axis)
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp:256   # per-stage ';' join loop
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp:279   # num_stages == 0 placeholder branch
 ---
@@ -85,8 +85,15 @@ so it costs nothing at runtime — but grepping for it gives the false impressio
 - **`MaxIT` cannot be split per notch on a tribrid.** It is a scalar, so N notches share one
   injection-time budget with equal time each — MS2 co-isolation buys fragmentation diversity, not
   signal. `MSXTargets` is the only per-window budget knob.
-- **The 10-value cap is on the whole string.** `num_stages + total_notches <= 10`, which is why
-  `MAX_ISOLATION_STAGES` (10) and the wire limit coincide exactly.
+- **There are TWO tens, one per axis, and conflating them is a real bug we shipped.** The dump gives
+  every stage-carried key the same sentence — *"a maximum of 10 values can be defined"* — and it counts
+  `';'` **groups**: `ActivationType` and `CollisionEnergy` say it too, and those have no `,` axis at
+  all. So that ten is cascade depth, `MAX_ISOLATION_STAGES`. The per-stage **window** cap is
+  `MSXTargets`': *"AGC target values for MSX windows, in m/z order … a maximum of 10 values"* — one
+  value per MSX window, so **10 windows per fragmentation stage**, matching the Q Exactive editor's
+  "MSX count … 1 to 10 fillings". Hence `MAX_NOTCHES_PER_STAGE = 9` (10-plex minus the anchor) applied
+  **per stage**, giving an MS3 up to 20 windows. Reading the first ten as a joint stage+notch budget
+  gave 8 slots shared across an MS3's two stages and starved its fragment stage — ADR-0019.
 - **`,` is inside the base-94 tracking-id alphabet.** Encoded ids may contain both `;` and `,`, which
   is why `child_ids` and `contributing_scan_ids` join with a *space* — the only printable character
   the alphabet excludes. Numeric log columns may use `,` freely; id columns may not.
