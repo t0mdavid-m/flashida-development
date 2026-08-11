@@ -1,8 +1,15 @@
 # 0018. Charge-keyed exclusion is a fallback, not a fan-out
 
-Status: Accepted (2026-08-09), **not yet implemented**. Corrects shipped behaviour of
-`precursor_selection.charge_based_exclusion`. Related:
+Status: **Superseded by [ADR-0021](0021-precursor-charges-is-the-only-acquisition-geometry.md)**
+(2026-08-11). Implemented as described, then retired: `precursor_selection.charge_based_exclusion` no
+longer exists, so the fallback semantics decided here have no subject. Kept for the history of why
+the fan-out was separated from the flag in the first place. Related:
 [ADR-0016](0016-co-isolated-charges-are-one-detection.md).
+
+> The decision below was correct and did land — the `break` and the two within-survey tests were
+> added. What it did not anticipate is that naming the fan-out `precursor_charges: "separate"` while
+> leaving its *charge list* built by this flag meant the new mode inherited the old coupling: it fanned
+> out only when the flag was on. That is what ADR-0021 fixes and why this flag is gone.
 
 ## Context
 

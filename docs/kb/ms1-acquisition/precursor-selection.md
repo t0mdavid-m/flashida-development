@@ -144,11 +144,17 @@ filters.
   for exactly this reason: a low-SNR peak group may be followed by a high-SNR one at the same
   or lower score.
 
-- `charge_based_exclusion` (developer flag, default off) changes the accumulation
-  block at `:596-630` to use a per-`(nominal_mass, charge)` key
-  (`mass_charge_qscore_map_`) and replaces the mass-level write into
-  `tqscore_exceeding_mass_rt_map_` / `_mz_rt_map_` with an insert into
-  `tqscore_exceeding_mass_charge_set_`. When on, the mass is never globally
-  excluded; instead, specific charges are excluded individually. The candidate
-  loop also expands per-peak-group to one iteration per observed charge. See
-  `docs/superpowers/specs/2026-04-19-charge-based-exclusion-design.md`.
+- **Exclusion is always mass-keyed.** `charge_based_exclusion` — a developer flag that keyed it
+  per-`(nominal_mass, charge)` — was removed (ADR-0021) along with its three containers. There is no
+  way to re-select one mass at a different charge on a later survey.
+
+- **How many charges a survey fragments is decided in one place**: `precursor_charges`, at the emit
+  loop after the anchor clears every guard. `single` emits one record, `multiplexed` one with the
+  set as notches, `separate` one per member — all three reading the same set from
+  `peakGroupNotchCandidates` + `selectNotches`.
+  ⚠️ The candidate loop does **not** expand per charge, and must not: the mass-level bookkeeping
+  above it runs once per species, and both its guards (`tqscore_exceeding_mass_rt_map_`, and the
+  "previously acquired with higher qscore" skip) are keyed on `nominal_mass`, so a second pass
+  `continue`s on every sibling charge. `separate` was originally implemented as a walk of that loop
+  and was inert for exactly this reason — plus the list it walked was only ever multi-valued under
+  `charge_based_exclusion`.
