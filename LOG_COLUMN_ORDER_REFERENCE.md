@@ -71,7 +71,8 @@ reagent_max_it, reagent_agc_target, scan_description, precursor_id, ms3_proteofo
 
 ## 2. Results Log (`scan_results`) — 29 columns
 
-**Verification: ✅ COMPLETE.** All 29 current columns present exactly once. Pure permutation.
+**Verification: ✅ COMPLETE** for the reorder. All columns of the 2026-07 permutation are present
+exactly once; the deconv block has since been restructured and extended — see the note below.
 
 New (desired) order:
 
@@ -98,27 +99,36 @@ New (desired) order:
 21. collision_energy
 22. reaction_time
 23. deconv_masses
-24. deconv_charges
-25. deconv_intensities
-26. resolve_ts
-27. received_ts
-28. dequeue_ts
+24. deconv_qscores
+25. deconv_charges
+26. deconv_intensities
+27. resolve_ts
+28. received_ts
+29. dequeue_ts
 
 Current order (for reference): tracking_id, ms_level, resolve_ts, duration_ms, received_ts,
 duration_received_ms, rt, mass_count, commands_pushed, child_ids, exploration_group_id,
 exploration_metric, variant_index, total_variants, collision_energy, exploration_score,
-remaining_ratio, activation_type, reaction_time, deconv_masses, deconv_charges,
+remaining_ratio, activation_type, reaction_time, deconv_masses, deconv_qscores, deconv_charges,
 deconv_intensities, parent_tracking_id, dequeue_ts, queue_duration_ms,
 instrument_duration_ms, processing_duration_ms, winner_tracking_id.
 
-**28 columns, not 29.** The per-charge deconvolved output replaced four columns
-(`deconv_masses`, `deconv_intensities`, `deconv_min_charge`, `deconv_max_charge`) with three
-(`deconv_masses`, `deconv_charges`, `deconv_intensities`): each PeakGroup now contributes one
-`;`-group per column, with its observed charges and their **own** intensities `,`-joined inside and
-index-aligned. `deconv_intensities` used to be the PeakGroup total summed across charge states, so the
-log could say how much signal a mass carried but never how it was distributed — and that distribution
-is exactly what decides which charges clear the SNR gate for co-isolation. Min and max are derivable
-from the charge list.
+**29 columns — but not the 29 this section was drafted against.** The count went 29 → 28 → 29, so an
+equal column count is no evidence a golden header is current; compare the names. The per-charge
+deconvolved output first replaced four columns (`deconv_masses`, `deconv_intensities`,
+`deconv_min_charge`, `deconv_max_charge`) with three (`deconv_masses`, `deconv_charges`,
+`deconv_intensities`): each PeakGroup contributes one `;`-group per column, with its observed charges
+and their **own** intensities `,`-joined inside and index-aligned. `deconv_intensities` used to be the
+PeakGroup total summed across charge states, so the log could say how much signal a mass carried but
+never how it was distributed — and that distribution is exactly what decides which charges clear the
+SNR gate for co-isolation. Min and max are derivable from the charge list.
+
+`deconv_qscores` adds the 29th back. It is `PeakGroup::getQscore()` — **one value per mass, not per
+charge**, so `;`-joined only, index-aligned 1:1 with `deconv_masses`, and written on every MS level
+(1, 2 and 3), never level-conditionally. It is the score at the **representative** charge — the
+rep-charge element of the per-charge qscore set, not an aggregate over the envelope — and it is the
+same call that fills `cmd.qscore` in `ScanCommandQueue`, so a selected mass's value reappears in
+`scan_commands.qscore`.
 
 ---
 

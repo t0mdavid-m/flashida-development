@@ -113,6 +113,28 @@ math + winner selection in `computeExplorationScore_`) and consults the tracker 
 identification inputs; the tracker does **not** compute the exploration metric
 score. PrecursorSelection (MS1 → MS2 ranking).
 
+**QScore**:
+FLASHDeconv's confidence that a deconvolved mass is real — a fixed logistic over five
+features (isotope cosine, the per-charge cosine deficit, per-charge SNR, that SNR's
+excess over the whole group's, and the average ppm error), all sharing one weight vector
+(`PeakGroupScoring::weight_`, `PeakGroupScoring.cpp:16`). It is **one model with three
+read points**, not three scores: `getQscore()` evaluates it at the **representative
+charge**, `getAllQscores()[z]` at charge `z` (only for charges carrying intensity), and
+`getBestQScore()` takes the maximum over those. So the per-mass value is an *element* of
+the per-charge set, never an aggregate of it, and the two cannot disagree about the
+representative charge. Which one gates MS1 selection is
+`precursor_selection.consider_all_charges` — off in every shipped config, i.e. the
+representative-charge value, which is also what ranks the survey list. Recomputed per
+scan at every MS level against that level's minimum isotope cosine, so MSn fragments
+carry real scores too.
+_Avoid_: the ExplorationMetric scores and the **Identification score** — different
+quantities entirely, see those entries; `getQscore2D()`, a feature-trace refinement
+written only by MassFeatureTrace / FLASHTnT / FLASHDeconvAlgorithm, none of which run in
+real time, so it is identical to `getQscore()` here and its name misleads; comparing
+scores across runs at full precision (CI relinks OpenMS every run, so the low digits
+jitter); assuming the representative charge is the most intense one — it is the highest
+**ChargeSNR** one (see **Anchor charge**).
+
 **Identification score**:
 The scalar used to pick the single best proteoform across a Precursor's MS2
 parameter sets: the **FLASHExtender proteoform hit score**
