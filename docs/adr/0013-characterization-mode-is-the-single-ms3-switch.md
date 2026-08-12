@@ -1,9 +1,21 @@
 # 0013. `characterization.mode` is the single MS3 switch
 
-Status: Accepted (2026-08-08)
+Status: Accepted (2026-08-08). **Extended by
+[ADR-0023](0023-exhaustive-characterization-targets-unassigned-masses.md)** (2026-08-12), which adds
+a fourth value, `exhaustive`.
 
 Supersedes the "there is no enable flag" decision in
 [0004-characterization-config-reshape.md](0004-characterization-config-reshape.md).
+
+> **Amendment note (2026-08-12).** Wherever this ADR says the mode has *two* on-values, read
+> **three**: `off | ambiguity | coverage | exhaustive`. The decision itself is unchanged and the
+> extension is deliberately shaped to fit it — `exhaustive` is a mode *value*, not an orthogonal
+> pool switch layered underneath the others, so "one key answers *does this run MS3, and against
+> what?*" still holds. It also gains its own `CharacterizationObjective` enumerator, so the
+> "on-values **are** the objectives" identity below stays exact rather than becoming an
+> approximation (ADR-0023 D-a). The projection needed no change: it derives levels 2 and 3 from
+> `mode != Off`, an inequality rather than an enumeration of on-values, which is what makes a fourth
+> value correct by construction — see the warning in *Level 1 is the hazard this creates*.
 
 ## Context
 

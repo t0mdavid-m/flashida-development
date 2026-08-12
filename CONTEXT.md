@@ -175,6 +175,21 @@ distinct winner ions goes to the closest by ppm (ADR-0006).
 _Avoid_: FragmentMatch (single-scan, transient, carries no intensity or
 provenance), peak (pre-deconvolution).
 
+**Unassigned mass**:
+A deconvolved mass of an MSn scan that matched **no** theoretical fragment of the
+winning proteoform — the complement of **Mapped fragment** within the same scan's
+deconvolution output. It is real measured signal, not noise: a rich MS2 resolves on
+the order of a hundred masses of which fewer than half typically map (a cytochrome-C
+MS2 in the reference data: 117 deconvolved, ~44 mapped). An unassigned mass has an
+intensity, a charge envelope and an isolation window like any other, but **no ion
+type and no ion index**, so it has no frame to project MS3 sub-fragments back
+through. It is therefore addressable as an acquisition target while remaining
+un-matchable as evidence.
+_Avoid_: "unmatched peak" (pre-deconvolution); "contaminant" or "noise" (an
+unassigned mass is frequently a real fragment of a proteoform *other* than the
+winner, or of the winner under an unmodelled modification); treating it as a defect
+of the identification.
+
 **Modification state** (a.k.a. resolving a sequence ambiguity):
 A modification of known mass whose location is known only to a residue *range*
 [start, end], narrowed toward a single residue by bracketing fragments that match

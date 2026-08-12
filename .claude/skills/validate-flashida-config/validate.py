@@ -37,7 +37,7 @@ REFERENCE = os.path.join(REPO, "FlashIDA", "test-data", "config_schema_reference
 CONFIG_DIR = os.path.join(REPO, "FlashIDA", "test-data", "configs")
 
 # --- values the engine accepts, from the code (NOT the doc comments) ----------
-MODE_VALUES = {"off", "ambiguity", "coverage"}
+MODE_VALUES = {"off", "ambiguity", "coverage", "exhaustive"}
 RANK_BY_VALUES = {"intensity", "qscore", "none"}
 METRIC_VALUES = {"none", "mass_count", "remaining_precursor", "fragment_count"}
 TARGETING_VALUES = {"none", "inclusion", "in_depth", "exclusion_masses"}
@@ -47,6 +47,21 @@ NEEDS_CE = {"HCD", "CID", "EThcD"}
 NEEDS_RT = {"ETD", "EThcD"}
 # ADR-0011 source-region parameters: 0 means "inherit the survey's value"
 SOURCE_REGION = ("rf_lens", "source_cid", "source_cid_scaling")
+
+# Keys the schema has gained but the COMMITTED config_schema_reference.json has not yet.
+#
+# The reference is GENERATED (a C# test under REGEN_CONFIG_REFERENCE=1, promoted from the CI
+# artifact), so it structurally lands one commit behind the C#/C++ pair that adds a key -- there
+# is no way to regenerate it in this workspace. Without this exemption the recursive allowlist in
+# check_unknown_keys reports A3 "unknown key" for a key that is in fact legal on both sides, and a
+# validator that emits false CLASS A errors is worse than no validator: the next reader learns to
+# ignore its output.
+#
+# DELETE an entry the moment the regenerated reference lands carrying that key. A stale entry here
+# is a hole in the allowlist, which is the failure this file exists to prevent (ADR-0007).
+PENDING_REFERENCE_KEYS = {
+    "characterization.min_target_mass",  # ADR-0023, exhaustive-mode pool floor
+}
 
 SCAN_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 RESERVED_SCAN_NAMES = {"ms1", "ms2", "ms3", "none", "off", "all"}
@@ -140,12 +155,15 @@ def check_unknown_keys(cfg, ref, rep):
                     walk(v, sample, f"{path}.{k}")
             return
         for k, v in node.items():
+            full = f"{path}.{k}" if path else k
             if k not in refnode:
-                rep.error("A3", f"unknown key '{path + '.' if path else ''}{k}'")
+                if full in PENDING_REFERENCE_KEYS:
+                    continue
+                rep.error("A3", f"unknown key '{full}'")
                 continue
             rv = refnode[k]
             if isinstance(v, dict) and isinstance(rv, dict):
-                walk(v, rv, f"{path}.{k}" if path else k)
+                walk(v, rv, full)
 
     walk(cfg, ref, "")
 
@@ -338,6 +356,15 @@ def validate(path, ref):
         rep.warn("B2", "characterization.max_targets is 0 -- planNextScans returns no targets for "
                        "every precursor. A silent, total MS3 kill switch that leaves mode looking on.")
 
+    # min_target_mass is read by ONE branch. Set anywhere else it loads clean, crosses the bridge
+    # (ToCppJson emits every scalar unconditionally) and is never consulted -- textbook CLASS B.
+    if chz.get("min_target_mass", 0) and mode != "exhaustive":
+        rep.warn("B8", f"characterization.min_target_mass is {chz['min_target_mass']} but "
+                       f"characterization.mode is \"{mode}\". The floor is consulted only by the "
+                       "exhaustive pool builder (ADR-0023 decision 9), so here it is parsed, "
+                       "emitted across the bridge, and ignored. It is NOT a second "
+                       "deconvolution.min_mass -- that floor does not reach MSn output at all.")
+
     ref_scan_keys = set(ref["ms_settings"]["ms2"].keys())
     for sect, lvl, expl in explorations(cfg):
         metric = expl.get("metric", "none")
@@ -383,6 +410,15 @@ def validate(path, ref):
         if dead:
             rep.note(f"mode is \"off\", so {', '.join(dead)} is carried but never read. Legal "
                      "(ADR-0013 keeps it optional rather than forbidden) -- just dead weight.")
+
+    if mode == "exhaustive":
+        floor = chz.get("min_target_mass", 0)
+        rep.note("exhaustive: MS3 targets are EVERY deconvolved mass of the winner MS2 scan, not "
+                 "only the ones that mapped to the winning proteoform (ADR-0023). Pool filters: "
+                 f"min_target_mass={floor}{' (off)' if not floor else ' Da'}, "
+                 f"min_fragment_charge={chz.get('min_fragment_charge', 0)}"
+                 f"{' (off)' if not chz.get('min_fragment_charge', 0) else ''}. max_targets bounds "
+                 "TARGETS, not commands -- a CE sweep or fragment_charges multiplies on top of it.")
 
     cv = (cfg.get("faims") or {}).get("cv_values")
     if isinstance(cv, list):
