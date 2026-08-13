@@ -63,7 +63,11 @@ logged rather than matched.
    MS3-incapable (`isMs3CapableActivation` is `HCD || CID`, because an MS3's `stage[0]` replays the
    MS2 that made the fragment — ADR-0003), so the mode plans nothing for that Precursor.
 
-4. **Ranking is intensity, descending, with no tiebreak.** The same rule as every other target-ranking
+4. **Ranking is intensity, descending, with no ordering tiebreak.** *(Amended 2026-08-13: the code
+   uses `std::stable_sort`, not `std::sort`, so equal intensities keep pool order rather than an
+   unspecified one. `PeakGroup::getChargeIntensity()` returns 0 for a group that never went through
+   the intensity path, which makes an all-ties pool a real state for hand-built fixtures — the
+   original "no tiebreak" wording described `std::sort` and was stale on arrival.)* The same rule as every other target-ranking
    site in the engine, for ADR-0003's reason: more fragment ion means more MS3 precursor. It needs no
    conversion between the two halves of the pool — `FragmentObservation::intensity` is assigned
    straight from `PeakRecord::intensity` (`ProteoformTracker.cpp:1233`), so a mapped fragment ranks on
