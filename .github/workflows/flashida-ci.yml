@@ -502,12 +502,6 @@ jobs:
               exit 1
           }
 
-      # --- Stress tests (Phase 3: activated) ---
-      - name: Run stress tests
-        shell: powershell
-        run: |
-          Write-Host "Stress tests run as part of NUnit test suite (CT31, CT32)."
-
   # ----------------------------------------------------------------
   # FLASH C++ unit tests — windows-2022, MSVC/Release. Reuses the test
   # exes built once in the `build` job (artifact cpp-test-build); runs in
