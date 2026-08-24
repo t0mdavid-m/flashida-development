@@ -1,6 +1,6 @@
 # 0026. A remaining-precursor sweep scans only the window it reads
 
-Status: Accepted (2026-08-24), not yet implemented.
+Status: Accepted (2026-08-24), implemented.
 Amends: [ADR-0020](0020-a-measuring-ms3-sweep-must-be-closed-by-a-follow-up.md).
 Related: [ADR-0009](0009-scan-config-fully-determines-instrument-parameters.md),
 [ADR-0016](0016-co-isolated-charges-are-one-detection.md),
@@ -109,11 +109,11 @@ measures.**
    `inline const`, the last inside an anonymous namespace) -- all `.4`, with nothing keeping them in
    step and no test that would notice if one moved. This decision adds a fourth reader, which is one
    too many: a drift guard accompanies the collapse, per the standing rule that merging N definitions
-   into one requires a permanent test asserting the merge held. **The promotion lands in a later push
-   than the binding.** It is value-preserving on its own -- all three sites already read `.4`, so the
-   collapse moves no golden -- but it touches three translation units the binding does not, and the
-   push that changes acquisition geometry is easier to review without a cross-file refactor sitting
-   in the same diff.
+   into one requires a permanent test asserting the merge held. **The promotion landed on its own,
+   one push ahead of the binding** (OpenMS `f7fed49`) rather than behind it as first sketched. It is
+   value-preserving -- all three sites already read `.4`, so the collapse moved no golden -- and
+   landing it separately kept a three-translation-unit refactor out of the diff that changes
+   acquisition geometry.
 
 3. **Overrides are mandatory.** `exploration.metric == remaining_precursor` with an empty `overrides`
    map is **rejected at config load**, at both levels. A metric that never keeps its pre-scans must
@@ -153,12 +153,16 @@ scope without it.
 
 **Two golden movements, of different kinds.** The margin correction in (2) changes `remaining_ratio`,
 which is computed on the metric-*independent* path and is column 13 of `scan_results.tsv` -- so it
-moves that stream for all **six** golden modes that run MS2 exploration (`exploration_hcd`,
-`exploration_etd`, `exploration_followup`, `exploration_ms3`, `exploration_ms3_followup`,
-`exploration_multiplexed`), regardless of their metric. The columns in (6) move `scan_commands.tsv`
-for all **22** modes. The first needs reading; the second is additive. They are delivered as separate
-pushes so the mechanical diff does not bury the numeric one. The binding and the rejections
-themselves move nothing -- no golden mode uses `remaining_precursor`.
+moves that stream for the golden modes that run MS2 exploration, regardless of their metric. Six were
+candidates (`exploration_hcd`, `exploration_etd`, `exploration_followup`, `exploration_ms3`,
+`exploration_ms3_followup`, `exploration_multiplexed`); **four** moved beyond tolerance and were
+recaptured -- `exploration_etd`, `exploration_ms3`, `exploration_ms3_followup`,
+`exploration_multiplexed` -- 33 cells, one column, at ms_level 2 only. The columns in (6) move
+`scan_commands.tsv` for all **22** modes. The first needed reading; the second is additive, so the
+two went out as separate pushes to keep the mechanical diff from burying the numeric one: decisions
+1-5 and that recapture landed first, and (6) lands with the 22-mode `scan_commands.tsv` recapture it
+forces. The binding and the rejections themselves move nothing -- no golden mode uses
+`remaining_precursor`.
 
 **Multiplexed remaining-precursor is no longer expressible.** Accepted deliberately. A metric that
 measures one charge state's depletion while co-isolating six others asks a question its own geometry

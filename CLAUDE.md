@@ -84,7 +84,7 @@ A behaviour change usually moves more than one set. Know which you touched:
 
 | Set | Location | How to recapture |
 |---|---|---|
-| Log goldens (largest surface) | `FlashIDA/test-data/golden/logs/<mode>/<stream>.golden.tsv` — 17 modes × 5 streams | Re-run `FLASHIdaLogGolden_test` with env `LOG_GOLDEN_CAPTURE=1`, or promote CI artifact `log-golden-capture` (`<mode>/<stream>.normalized` is byte-identical to a local capture) |
+| Log goldens (largest surface) | `FlashIDA/test-data/golden/logs/<mode>/<stream>.golden.tsv` — 22 modes × 5 streams | Re-run `FLASHIdaLogGolden_test` with env `LOG_GOLDEN_CAPTURE=1`, or promote CI artifact `log-golden-capture` (`<mode>/<stream>.normalized` is byte-identical to a local capture) |
 
 The five `<stream>` basenames are fixed **in the engine** (`IdaLogger`'s `k*Name` constants,
 mirrored by `LogGoldenComparer.FileNames`); only their location is configurable, via the single

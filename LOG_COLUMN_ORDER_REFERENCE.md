@@ -8,23 +8,29 @@ a compare-time shim reorders the fresh capture back to golden order **by header 
 so **no recapture** is required. Motivation: human readability of live acquisition logs.
 
 **Ground truth (CURRENT order)** extracted verbatim from `IdaLogger.cpp` header emission
-(lines 68–151). Column counts: Command 32 · Results 29 · Identification 32 · Pooled 19.
+(lines 73–176). Column counts: Command 34 · Results 29 · Identification 32 · Pooled 19.
 
 > **This document models a one-time permutation and is no longer the whole story.** ADR-0012
-> *added* a column (`faims_enabled`), so the "pure permutation" framing below holds for the 2026-07
-> reorder only. A schema **addition** is a different operation with a different cost: comparison is
-> by header name, so a reorder is free, but an add makes every golden's header width wrong and
-> `GoldenListCanonicalizer` throws rather than failing softly — every log-golden mode must be
-> recaptured in the same push.
+> *added* a column (`faims_enabled`) and ADR-0026 two more (`first_mass`, `last_mass`), so the
+> "pure permutation" framing below holds for the 2026-07 reorder only. A schema **addition** is a
+> different operation with a different cost: comparison is by header name, so a reorder is free,
+> but an add makes every golden's header width wrong and `GoldenListCanonicalizer` throws rather
+> than failing softly — every log-golden mode must be recaptured in the same push.
 
 ---
 
-## 1. Command Log (`scan_commands`) — 32 columns
+## 1. Command Log (`scan_commands`) — 34 columns
 
 **Verification: ✅ COMPLETE** for the reorder. All 31 columns of the 2026-07 permutation are
 present exactly once. `faims_enabled` was subsequently added at index 30 (ADR-0012), between
 `faims_cv` and `enqueue_ts` — the one position that adds a column without invalidating any index
 pinned by `FLASHIda_LoggingFields_test` (all of which are < 29) or the `headers.back()` assertion.
+`first_mass` and `last_mass` followed at indices 31 and 32 (ADR-0026 decision 6), in that same gap —
+now between `faims_enabled` and `enqueue_ts` — for the same reason: every index that test pins is
+still ≤ 30 (`faims_cv` 29, `faims_enabled` 30 — `FLASHIda_LoggingFields_test.cpp`), and `enqueue_ts`
+stays `headers.back()`. Like ADR-0012's, this is an **addition**, not a
+permutation, so it moves `scan_commands.tsv` in all 22 golden modes, which recapture in the same
+push.
 
 New (desired) order:
 
@@ -59,7 +65,9 @@ New (desired) order:
 29. scan_description
 30. faims_cv
 31. faims_enabled
-32. enqueue_ts
+32. first_mass
+33. last_mass
+34. enqueue_ts
 
 Current order (for reference): tracking_id, ms_level, scan_type, enqueue_ts, priority,
 faims_cv, mono_mass, charge, precursor_mz, isolation_width, collision_energy, activation,
