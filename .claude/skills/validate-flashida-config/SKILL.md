@@ -7,7 +7,7 @@ description: Validate a FLASHIda method.json before running it. Answers "will MS
 
 ```bash
 uv run --quiet python .claude/skills/validate-flashida-config/validate.py <config.json>
-uv run --quiet python .claude/skills/validate-flashida-config/validate.py --all   # all 34 committed
+uv run --quiet python .claude/skills/validate-flashida-config/validate.py --all   # all 39: the 38 in test-data/configs + src/Flash/etc/method.json
 ```
 
 No build, no DLLs, no instrument. Pure JSON analysis, ~200 ms. Exit 1 if any CLASS A error.
@@ -61,6 +61,8 @@ two of them lived under a level you were not configuring.
 | A14 | `ce_min < ce_max`, and `reaction_time_min < reaction_time_max` when an ETD-family activation is swept |
 | A15 | `conditional_ms2: true` ⇒ `tagging.follow_up_scan` names something |
 | A16 | `mode`, `rank_by`, `targeting`, `metric` are legal values |
+| A17 | `metric: "remaining_precursor"` with an absent or empty `overrides` map. Such a sweep scans only the ~2 Th window it reads and always throws its pre-scans away, so it must declare what they run at — the **static form of ADR-0020 gate #1** (ADR-0026 decision 3) |
+| A18 | `metric: "remaining_precursor"` paired with `"multiplexed"` **at the same level** — `precursor_charges` for the `precursor_selection` block, `fragment_charges` for the `characterization` one. A notch set is not one interval, and a bound pre-scan has only one. Two level-matched checks, not one "multiplexed anywhere" test: `separate` and the **cross-level** pair both stay legal (ADR-0026 decision 4) |
 
 ### Class B — the engine stays silent
 
@@ -102,8 +104,10 @@ The reshape's success measure is how much of Class B became Class A:
 - **The `MS2:` line is the dispatch roster, in dispatch order.** It is built from the reference
   array, never from map iteration — `nlohmann`'s `object_t` is a `std::map`, so walking
   `additional_ms2` would sort the names alphabetically and silently reorder dispatch.
-- **Zero Class A errors across all 34 committed configs** is the baseline. Any error there is either
-  a bug in this script or a stale reference — see below.
+- **Zero Class A errors across the 39 configs `--all` walks** is the baseline — the 38 in
+  `FlashIDA/test-data/configs/` plus the shipped `FlashIDA/src/Flash/etc/method.json`, which is in
+  the sweep precisely because it is the one config nobody diffs against a golden. Any error there is
+  either a bug in this script or a stale reference — see below.
 
 ## Maintenance
 

@@ -136,6 +136,18 @@ def explorations(cfg):
     return out
 
 
+def charge_mode(cfg, sect):
+    """The charge-acquisition key that PAIRS with @sect's exploration block, as (key, value).
+
+    Level-matched, never "multiplexed anywhere" -- precursor_selection.exploration pairs with
+    precursor_charges, characterization.exploration with fragment_charges, and the CROSS pair stays
+    legal (Config.cpp:941-945): stage-0 notches change WHICH precursors are fragmented, not where
+    the MS3 readout sits. Both keys default to "single", which is ChargeAcquisitionMode's default
+    AND the C# property initialiser -- the two agree here, unlike the fallbacks ToCppJson kills."""
+    key = "precursor_charges" if sect == "precursor_selection" else "fragment_charges"
+    return key, (cfg.get(sect) or {}).get(key, "single")
+
+
 def check_unknown_keys(cfg, ref, rep):
     """Recursive allowlist check. Two exemptions, for opposite reasons:
     exploration.overrides is a dynamic string->string map (keys AND values free);
@@ -315,6 +327,36 @@ def validate(path, ref):
         if metric == "fragment_count" and not seq:
             rep.error("A11", f"{sect}.exploration.metric 'fragment_count' requires a non-empty "
                              "characterization.protein_sequence")
+        # ADR-0026 decision 3 (Config.cpp:924-931). A remaining_precursor sweep scores a variant
+        # from the raw intensity inside [precursor_mz +/- isolation_width/2] and discards everything
+        # else the pre-scan returned, so those pre-scans are bound to that window and are ALWAYS
+        # thrown away -- the winner is re-acquired by a full-range production scan. A sweep that
+        # never keeps a scan must say what its scans run at. It is also the STATIC form of ADR-0020
+        # gate #1: an MS2 group with EMPTY overrides cascades by feeding initiateNextLevel the
+        # winning variant's deconvolved spectrum, and a window-only spectrum carries no fragments,
+        # so the cascade yields ZERO MS3 targets with no throw and no warning -- only
+        # `[MS3-PLAN] no_containing_fragment` and a user concluding their protein did not fragment.
+        if metric == "remaining_precursor" and not (expl.get("overrides") or {}):
+            rep.error("A17", f"{sect}.exploration.metric is \"remaining_precursor\" but "
+                             f"{sect}.exploration.overrides is empty. Such a sweep never keeps its "
+                             "pre-scans -- they are scanned over their isolation window only and the "
+                             "winner is re-acquired -- so it must declare the settings they run at. "
+                             "Add an overrides block, e.g. \"overrides\": {\"analyzer\": "
+                             "\"IonTrap\"} (ADR-0026 decision 3).")
+        # ADR-0026 decision 4 (Config.cpp:946-963). [first_mass, last_mass] is ONE interval and a
+        # notch set is not: charge states 10-16 of a ~12 kDa protein scatter their 2 Th windows over
+        # ~463 Th, so binding to the anchor alone would isolate seven charge states and read one,
+        # while spanning them all would cut the ~900x speed win to ~4x. Two level-matched checks
+        # rather than one "multiplexed anywhere" test -- see charge_mode() for which pairs are legal.
+        if metric == "remaining_precursor":
+            ckey, cmode = charge_mode(cfg, sect)
+            if cmode == "multiplexed":
+                rep.error("A18", f"{sect}.exploration.metric is \"remaining_precursor\" but "
+                                 f"{sect}.{ckey} is \"multiplexed\". A multiplexed scan reads "
+                                 "several non-contiguous isolation windows, which cannot be "
+                                 "expressed as the one scan range such a sweep's pre-scans are "
+                                 f"bound to. Set {ckey} to \"single\" or \"separate\", or pick a "
+                                 "different exploration metric (ADR-0026 decision 4).")
         if (expl.get("ce_step", 5) or 0) <= 0:
             rep.error("A12", f"{sect}.exploration.ce_step is {expl.get('ce_step')}; must be > 0. "
                              "A non-positive step never terminates the sweep loop -- it spins "

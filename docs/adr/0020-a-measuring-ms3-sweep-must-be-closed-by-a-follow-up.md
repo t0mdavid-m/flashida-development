@@ -71,6 +71,12 @@ Concretely:
 2. The post-winner production scan fires when **either** condition holds:
    - `overrides` is non-empty (unchanged — the pre-scans were degraded), at any level; **or**
    - the metric is measuring **and** the level is MS3 (new).
+
+   > **Amended by [ADR-0026](0026-a-remaining-precursor-sweep-scans-only-the-window-it-reads.md).**
+   > `remaining_precursor` now requires a non-empty `overrides` map at config load, so a
+   > remaining-precursor sweep always trips the first condition and never reaches the second.
+   > This gate remains correct and reachable, but in practice only `mass_count` exercises it.
+   > Do not cite its scope without ADR-0026.
 3. The follow-up returns on the **regular** MS3 path, where it is matched by the calibrated matcher
    against the live tracker winner (ADR-0002). `ms2_context_cache` is seeded for it, exactly as the
    overrides path already did — without that seed the scan is acquired and then silently

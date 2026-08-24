@@ -148,6 +148,22 @@ exploration group, NOT identification quality. Note the one place the two touch:
 a metric never *measures* identification quality, but at MS3 it does decide whether
 a pre-scan is identified at all (**Pre-scan**, reading vs measuring metrics).
 
+**Sequence tag count**:
+How many sequence tags FLASHTagger read off one MS2 spectrum — short residue strings
+inferred from the mass gaps between deconvolved peaks, **before any protein is
+consulted**. It measures the spectrum's fragment ladder, not a match: the count is taken
+the moment the tagger returns, so a rich spectrum scores non-zero even when nothing
+matches. Sentinels are load-bearing — `-1` means no tagger ran on this spectrum at all
+(every MS1 row, and every MS3, since MS3 scoring calibrates against a known ladder rather
+than re-tagging); `0` means it ran and read nothing, which for a real protein is a
+meaningful negative result about that spectrum.
+_Avoid_: conflating it with the **tag-targeting hit count** — how many tags matched a
+FASTA target database, which is a *gate* (it decides whether a conditional MS2 follow-up
+fires), reports zero when tags existed but matched no protein, and is computed at a
+different tolerance against a different protein source; reading `0` without checking the
+MS level; assuming a tag count implies an identification (tags are read before, and
+independently of, any proteoform).
+
 **MS2 parameter set**:
 The concrete tuple of fragmentation parameters under which one MS2 acquisition was
 run: collision energy, activation type, reaction time. The unit a Precursor's MS2
@@ -190,6 +206,37 @@ unassigned mass is frequently a real fragment of a proteoform *other* than the
 winner, or of the winner under an unmodelled modification); treating it as a defect
 of the identification.
 
+**Unobserved fragment**:
+A theoretical fragment ion of the winning proteoform carrying **no Fragment
+observation at any MS level** — the exact dual of **Unassigned mass**, and together
+with it a partition of the MS2 into measured-unexplained and predicted-unseen. Where
+an unassigned mass has an intensity and a measured isolation window but no ion type
+and no ion index, an unobserved fragment has an ion type and index but no intensity
+and no measured window: **matchable as evidence, addressable only through theory**.
+Its absence is a claim scoped to one m/z window over one scan range — "predicted, and
+not seen *within the MS2's own scan range*" — so a charge state whose m/z fell outside
+that range was never observable and its absence carries no information. Every MS3
+target the model selects today is drawn from the complement of this set (`planNextScans`
+requires `best_ms2_ms3_capable`), which is why the middle of a proteoform can be
+unreachable: the fragments that span it are all unobserved.
+_Avoid_: "missing peak" (pre-deconvolution, and a peak carries no ion identity);
+reading absence as proof the cleavage did not occur (dynamic range and charge
+partitioning both hide real fragments); conflating it with an **unwitnessed bond** — a
+bond can be witnessed by the complementary ion while this ion stays unobserved.
+
+**Complementary ion pair**:
+`b_k` and `y_(L−k)` — the two halves of **one** backbone cleavage of a proteoform of
+length `L`. Observing either half proves the cleavage occurred; *which* half is seen is
+decided by charge partitioning, not by whether the bond broke. An observed `y_(L−k)` is
+therefore direct evidence that `b_k` exists and merely lost the charge to the other
+side, which makes it the strongest available evidence about an **Unobserved fragment** —
+strictly stronger than the presence of same-series ions nearby. The same relation
+already appears one frame down, between an MS3 sub-ion and its complement within the
+parent fragment (`FragmentObservation::is_complement_flip`); this is that relation in
+the proteoform frame.
+_Avoid_: reading a complementary pair as two independent sightings (it is one cleavage
+seen twice); assuming the two halves carry comparable intensities.
+
 **Modification state** (a.k.a. resolving a sequence ambiguity):
 A modification of known mass whose location is known only to a residue *range*
 [start, end], narrowed toward a single residue by bracketing fragments that match
@@ -225,6 +272,21 @@ with the optional CE sweep centered on them.
 _Avoid_: thinking the best-MS2 parameters set the MS3 fragmentation chemistry —
 they set the MS2 fragmentation (`stage[0]`) that *feeds* the MS3 (`stage[1]`).
 More fragment ion = more MS3 precursor = strictly better.
+
+**Isolation window**:
+The m/z interval a fragmentation stage transmits — the ions that will be fragmented and whose
+products the scan reads out. It is **measured, never derived from theory**: centre and width
+come from the observed m/z extent of the selected species at the acquisition charge, widened
+by a fixed margin on each side so the envelope is transmitted whole rather than clipped at its
+edges. A scan opens one isolation window per **Notch** per stage.
+The window a scan was **commanded** to isolate and any window a measurement later sums over are
+the same interval. Where the two have drifted apart, the commanded one is authoritative — it is
+what decided which ions exist in the spectrum at all, so a measurement summing a narrower
+interval is discarding signal it paid to isolate.
+_Avoid_: "isolation width" as a synonym (the width is one of the window's two numbers; a width
+without a centre is not a window); confusing it with the **Scan range**, which is what the
+analyzer reads out rather than what the stage transmits; reconstructing a window from a charge
+and a theoretical mass.
 
 **Notch**:
 One of several isolation windows a single scan opens **in parallel within one
@@ -295,6 +357,12 @@ production scan it informs. Their presence is therefore also a statement about
 fidelity: with overrides, no pre-scan was acquired at production settings, so a
 **Follow-up MSn** is mandatory; without them, the pre-scans ran at production
 settings and the winner is production-grade — provided the metric read it.
+For a metric whose pre-scans are *pure measurement* — one that never reads them, and whose
+winner is therefore always re-acquired — overrides stop being optional. Such a sweep must
+declare its degradation, so that "a pre-scan is never the final measurement" is guaranteed by
+the config rather than by the author's habit of writing one. A sweep that both bounds its
+**Scan range** to the **Isolation window** and omits overrides is asserting two contradictory
+things about the same scans.
 _Avoid_: reading overrides as settings for the follow-up scan (the follow-up is
 built from the *un-overridden* config, plus the winning parameters); treating an
 empty overrides map as "nothing special" rather than as "pre-scans ran at
@@ -512,3 +580,20 @@ _Avoid_: "second MS2" (exploration variants are also second MS2s but are not fol
 conflating the `'F'` and `'C'` kinds, which have different triggers but identical mechanics;
 expecting the referenced block to also fire unconditionally — it is deliberately absent from the
 dispatch roster, and that absence is the whole mechanism.
+
+**Scan range** (a.k.a. scan bounds):
+The m/z interval the analyzer reads out, bounding the spectrum a scan returns. Orthogonal to the
+**Isolation window**: the window decides which ions are transmitted and fragmented, the range
+decides which of the resulting ions are recorded. Neither narrows the other, and neither changes
+how many ions were injected. Unset means "use the instrument method default".
+The asymmetry is what makes it safe to reason about: a range **wider** than the interval a
+measurement reads costs only time, because the surplus peaks fall outside the summed interval
+and contribute nothing; a range **narrower** than it silently truncates the measurement. So a
+range may be padded freely and clipped never.
+On a trapping analyzer that scans m/z sequentially, scan time is proportional to the range —
+which is the whole reason a measurement that reads a single **Isolation window** has cause to
+bound itself to that window.
+_Avoid_: "mass range" (these are m/z; the deconvolution mass bounds are a different quantity in
+different units); assuming a narrowed range narrows the isolation, reduces the injected
+population, or changes AGC; reading a range of zero as a real setting — for this parameter,
+unset genuinely means unset.
