@@ -1,10 +1,10 @@
 ---
-last_verified: 2026-06-27
+last_verified: 2026-08-25
 code_anchors:
   - FlashIDA/src/Flash.Tests/Mocks/ContinuityTestHarness.cs   # C# PushScanAndDrainFull (canonical driver)
   - OpenMS/src/tests/class_tests/openms/source/FLASHIda_TestHelpers.h   # C++ runInterleaved (canonical driver)
-  - OpenMS/src/tests/class_tests/openms/source/FLASHIda_TestHelpers.h:224   # decodeTrailingIonKey (C++ ion decoder)
-  - FlashIDA/src/Flash.Tests/FLASHIdaLogGolden_test.cs:133   # DecodeIonFromScanDescription (C# ion decoder)
+  - OpenMS/src/tests/class_tests/openms/source/FLASHIda_TestHelpers.h:237   # decodeTrailingIonKey (C++ ion decoder)
+  - FlashIDA/src/Flash.Tests/FLASHIdaLogGolden_test.cs:234   # DecodeIonFromScanDescription (C# ion decoder)
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp   # getNextScanCommand (pacing) + processScan MS1 gate
 ---
 
@@ -73,8 +73,16 @@ Loop, once per iteration:
 4. **Record** the command; repeat.
 
 **Termination:** `getNextScanCommand` returns ≠ 1, **or `idle >= 3`**, or a `max_iters` safety cap. The engine's
-idle cycle emits an AGC plus a priority-3 re-survey indefinitely once the real queue is empty, so three
+idle cycle emits a priority-3 re-survey indefinitely once the real queue is empty, so three
 consecutive idle ticks prove production has ceased.
+
+⚠️ **The idle cycle no longer emits an AGC prescan** (ADR-0031), and the interleaved predicate above is
+deliberately unaffected: its `is_agc` clause stays correct for *scheduled* prescans, and its third clause
+(`msn_level <= 1 && ms1_fed >= nMs1`) is what now catches the idle survey. The **staged** helpers are a
+different story — `ContinuityTestHarness.PushScan` and the two offline-harness loops in `FLASHIdaWrapper`
+had `is_agc` as their *only* bound and now break on `msn_level == 1 && priority == 3`. Do not "unify" the
+two predicates: an interleaved drive must treat a scheduled prescan as an idle tick, while a staged drain
+must not stop on one.
 
 ## Invariants
 
@@ -102,7 +110,7 @@ C# golden suite always drives the full cycle).
 
 ## C++ convenience: `AcqResult.all_cmds` cross-level order (no C# twin)
 
-`AcqResult` also carries `all_cmds` — **every** dequeued command (workload **and** idle AGC/MS1 ticks) recorded
+`AcqResult` also carries `all_cmds` — **every** dequeued command (workload **and** idle-survey ticks) recorded
 in **raw dequeue order**, before the per-level `ms1_cmds`/`ms2_cmds`/`ms3_cmds` bucketing. The per-level buckets
 lose cross-level interleave; `all_cmds` lets a caller assert it — e.g. that a prio-0 CV-transition MS1 is drained
 **before** the prio-2 MS2s (`FLASHIdaFAIMS_test::cv_transition_ms1_before_ms2s`).

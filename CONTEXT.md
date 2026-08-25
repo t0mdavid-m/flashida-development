@@ -577,6 +577,28 @@ handshake scan, not merely having sent it: scans arriving before custom control 
 belong to the instrument's own method and must be ignored.
 _Avoid_: connected (connection strictly precedes it); acquisition mode.
 
+## Language — kinds of scan
+
+**AGC prescan**:
+A short scan acquired solely to **measure ion flux**, so the instrument can set injection times
+for the scans that follow it. It carries no analysable data — it is discarded on return rather
+than deconvolved — and it is not part of any acquisition decision: nothing is selected from it
+and nothing is excluded by it. It is emitted on a **fixed interval**, never as filler for an idle
+instrument, so its cadence is a property of the method rather than of how busy the queue happens
+to be. Being a measurement of the population, not of a species, it belongs to a whole group of
+scans rather than to one.
+_Avoid_: "AGC scan" unqualified, which reads as a scan *of* the AGC; **AGC target**, which is a
+scan parameter (how much charge to fill to) and not a kind of scan at all; "idle AGC", which named
+the filler role this no longer has.
+
+**Idle survey**:
+The survey MS1 emitted because **nothing else was waiting** — the acquisition equivalent of a
+default, so the instrument is never left without a command. It is an ordinary survey in every
+respect except why it exists, and it yields to any real work: it is the lowest-ranked thing the
+engine can ask for.
+_Avoid_: "idle cycle", which used to name a *pair* of scans and so quietly changes meaning; "AGC
+scan", which it never was.
+
 ## Language — scan configuration
 
 **Scan config**:

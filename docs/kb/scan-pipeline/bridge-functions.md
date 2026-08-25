@@ -1,7 +1,7 @@
 ---
 title: Bridge Functions — the C++↔C# ABI
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp, FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs
-last_verified: 2026-04-20
+last_verified: 2026-04-20   # NOTE: the ABI section below is stale vs ADR-0019 (reserved_ is [152], not [692]; the static_asserts are at ScanCommand.h:102/:220). The GetNextScanCommand line was corrected 2026-08-25 for ADR-0031; the rest is unverified.
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h:49     # CreateFLASHIda decl
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h:52     # DisposeFLASHIda decl
@@ -40,8 +40,8 @@ All five implementations are in `FLASHIdaBridgeFunctions.cpp:39-90`. They are th
 
 Per this packet's scope, the heavy internals of `ProcessScan` and `GetNextScanCommand` live in [`../acquisition-loop/engine-entry-points.md`](../acquisition-loop/engine-entry-points.md). For this packet:
 
-- **`ProcessScan` → `FLASHIda::processScan` (`FLASHIda.cpp:700`).** Deconvolves the input spectrum, runs precursor selection and optional exploration, enqueues resulting commands via the queue's `build*` helpers. Body walkthrough: see acquisition-loop packet.
-- **`GetNextScanCommand` → `FLASHIda::getNextScanCommand` (`FLASHIda.cpp:1091`).** Opportunistically injects an AGC or cycle-time MS1, cleans up expired pending commands, dequeues the highest-priority remaining command. Body walkthrough: see acquisition-loop packet.
+- **`ProcessScan` → `FLASHIda::processScan` (`FLASHIda.cpp:80`).** Deconvolves the input spectrum, runs precursor selection and optional exploration, enqueues resulting commands via the queue's `build*` helpers. Body walkthrough: see acquisition-loop packet.
+- **`GetNextScanCommand` → `FLASHIda::getNextScanCommand` (`FLASHIda.cpp:675`).** Emits a scheduled AGC prescan if `agc_interval_seconds` has elapsed, opportunistically injects a cycle-time MS1, cleans up expired pending commands, dequeues the highest-priority remaining command — and, if that comes back empty, mints an **idle survey** MS1 at priority 3 and returns it. It never returns 0 for an empty queue, and the idle path emits **no** prescan (ADR-0031): bound every drain loop on `msn_level == 1 && priority == 3`, never on `is_agc`. Body walkthrough: see acquisition-loop packet.
 
 ## ABI sync — the byte-layout contract
 

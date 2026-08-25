@@ -1,356 +1,240 @@
-# `method.json` options — every setting and its possible values
-
-Derived from `FlashIDA/test-data/configs/method_eclipse_cytc_ambiguity.json`, and covering the whole
-schema that config draws on — including the keys it leaves out.
-
-**Bold** in the *Values* column marks the value that config actually uses. Sub-rows without a key
-are further options for the key above them.
-
-Source of truth, in the order it is applied:
+# `method.json` options — every setting, its legal values, and its default
 
 | Stage | Owner |
 |---|---|
-| Which keys may be authored | `FlashIDA/src/Flash/MethodConfig.cs` + `IDA/MethodConfigSerializer.cs` (`[JsonKey]`) |
+| Which keys may be authored, and the effective defaults | `FlashIDA/src/Flash/MethodConfig.cs` + `IDA/MethodConfigSerializer.cs` (`[JsonKey]`) |
 | What crosses the bridge | `FlashIDA/src/Flash/MethodParameters.cs` → `ToCppJson()` |
 | Which values are legal | `OpenMS/.../TOPDOWN/FLASHIda/Config.cpp` → `Config::Config` + `Config::validate` |
 | What reaches the instrument | `FlashIDA/src/Flash/ScanFactory.cs` → `BuildFromCommand` |
 
-Four rules apply everywhere and are not repeated per key:
-
-- **Unknown keys are a hard error on both sides**, and keys are case-sensitive snake_case — a typo
-  fails the load rather than being ignored.
-- **`0` / `""` on an analyzer-side scan parameter means "leave it to the instrument method"**, not
-  "zero". The three source-region parameters are the exception (see `ms_settings`).
-- **Enum *values* are case-sensitive in the engine.** FlashIDA lowercases four of them on the way out
-  (`targeting`, `rank_by`, `characterization.mode`, `exploration.metric`), so `"Off"` survives a real
-  run — but the same file handed straight to C++ throws. Author them lowercase.
-- **A number is only a number.** `resolution: 120000` is passed through; nothing checks it against
-  what the Orbitrap can do.
-
----
-
 ## `global`
 
-| Key | Values | What it does |
-|---|---|---|
-| `method_name` | any string — **"Eclipse cytC - all proteoforms, ambiguity characterized"** | Free-text label that crosses the bridge and is read by nothing on either side. |
-| `method_description` | any string | Same — documentation only. |
-| `duration` | minutes, double — **120** | Arms the acquisition run timer in `Flash.cs` (`Duration × 60000` ms); the C++ engine never reads it. |
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `method_name` | string | any string | `""` | Free-text label that crosses the bridge and is read by nothing on either side. |
+| `method_description` | string | any string | `""` | Same — documentation only. |
+| `duration` | double | any double; the `Timer` ctor rejects ≤ 0 and > ~35791 | `90` | Minutes of wall clock before the instrument path stops acquisition; read only by C#. |
 
 ## `deconvolution`
 
-| Key | Values | What it does |
-|---|---|---|
-| `score_threshold` | 0.0–1.0 — **0.0** | QScore floor: the ranked candidate list is cut at the first mass scoring below it, so `0.0` means "never cut". |
-| `tqscore_threshold` | 0.0–1.0 — **0.0** | Cumulative-evidence ceiling: once a mass's accumulated `1 − ∏(1 − qscore)` exceeds it the mass stops being re-selected, and `0.0` makes that immediate. |
-| `min_charge` | integer — **4** | Lowest charge state the deconvolution engine will build an envelope from. |
-| `max_charge` | integer — **50** | Highest charge state it will build an envelope from. |
-| `min_mass` | Da — **500** | Lowest monoisotopic mass reported. |
-| `max_mass` | Da — **50000** | Highest monoisotopic mass reported. |
-| `tol` | array of **≥ 3** ppm values — **[10, 10, 10]** | Mass tolerance per MS level, indexed `tol[level−1]`; fewer than three entries is an unloadable config because levels 1–3 are always materialised. |
-
-## `flashtnt`
-
-Tuning for FLASHTagger and FLASHExtender — the only sanctioned channel into them.
-
-| Key | Values | What it does |
-|---|---|---|
-| `min_length` | integer — **3** | Shortest sequence tag the tagger will emit. |
-| `max_length` | integer — **8** | Longest sequence tag the tagger will emit. |
-| `allow_gap` | `true` / **`false`** | `true` lets a tag bridge a mass gap instead of requiring consecutive residues. |
-| `max_aa_in_gap` | integer — **2** | How many residues one gap may span; the tagger reads it only when `allow_gap` is `true`. |
-| `fixed_mod` | array of mod names — **[]** | Intended as the tagger's and extender's fixed modifications, but neither acts on it today — see below. |
-| `max_blind_mod_count` | integer — **2** | How many unspecified ("blind") modifications the extender may invent per proteoform. |
-| `max_mod_mass` | Da — **700** | Largest absolute mass a blind modification may take. |
-
-Every key here is a genuine FLASHTagger/FLASHExtender parameter. The two that were **not** —
-`max_ptm_count` and `max_flanking_mass_diff` — moved to `precursor_selection.tag_expansion`, because
-they drive a FLASHIda feature rather than FLASHTnT.
-
-`max_aa_in_gap` is dormant unless `allow_gap` is `true` — the tagger consults it nowhere else.
-
-`fixed_mod` is inert **whatever you set it to**. `FLASHTaggerAlgorithm` declares the parameter and
-never reads it; `FLASHExtenderAlgorithm` reads it into a local that is then unused. FLASHIda now
-passes it unconditionally, so it will start working the moment those algorithms do — but today it
-changes nothing. Both live in off-limits FLASHTnT code, so this is reported, not fixed.
-
-## `conditional_ms2` (root-level key)
-
-| Key | Values | What it does |
-|---|---|---|
-| `conditional_ms2` | `true` / **`false`** | `true` fires the `tagging.follow_up_scan` MS2 whenever a returning MS2 yields tags, and requires that key to name something or the load throws. |
-
-> A nested `tagging.conditional_ms2` is *accepted* by the C# loader but is silently overridden
-> whenever the root key is present — which it is in every committed config. Use the root key.
-
-## `faims`
-
-| Key | Values | What it does |
-|---|---|---|
-| `cv_values` | **`[]`** | FAIMS off, and actively commanded off rather than left to the instrument method. |
-| | one CV, e.g. `[-45]` | FAIMS on at a fixed compensation voltage, with no cycling. |
-| | two or more | FAIMS on and cycling through the listed voltages. |
-| `max_cv_skip` | integer — **0** | Caps the skip spacing an unproductive CV can accumulate (it doubles each time), so `0` means never skip. |
-| `cv_precursor_threshold` | integer — **15** | Precursor count strictly below which a CV counts as unproductive that cycle. |
-
-Both skip keys are inert unless `cv_values` has **two or more** entries — with a single CV there is
-nothing to skip to.
-
-## `scheduling`
-
-| Key | Values | What it does |
-|---|---|---|
-| `cycle_time.enabled` | `true` / **`false`** | `true` arms a watchdog that forces a survey MS1 when none has run recently. |
-| `cycle_time.value_ms` | ms — **60000** | How long the engine may go without an MS1 before that watchdog fires. |
-| `scan_timeout.enabled` | `true` / **`false`** | `true` lets the queue discard commands that have waited too long to be dispatched. |
-| `scan_timeout.value_ms` | ms — **30000** | How long a command may sit in the queue before it is dropped and logged as `[TRACK-EXPIRE]`. |
-| `agc_interval_seconds` | seconds — **30** | How often an AGC calibration scan is issued; converted to ms internally. |
-
-## `files`
-
-| Key | Values | What it does |
-|---|---|---|
-| `target_logs` | array of paths — **[]** | Previous-run logs supplying the mass lists that `in_depth` and `exclusion_masses` operate on. |
-| `fasta` | path — **`""`** | Loaded via `FASTAFile` for tag matching, and doubles as the `matched_protein` label in the identification logs when set. |
-| `inclusion_list` | path — **`""`** | TSV of target masses, parsed only when `targeting` is `inclusion`. |
-| `ptm_list` | path — **`""`** | TSV of PTMs to look for; empty means PTMs are discovered from the fragment ladder instead. |
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `score_threshold` | double | any double; qscore is in (0,1), so ≤ 0 admits everything and ≥ 1 rejects everything | `-1` † | Qscore floor a charge candidate must clear to be selectable. |
+| `tqscore_threshold` | double | any double; compared `>` against a qscore in (0,1), so `0.0` excludes after one acquisition and ≥ 1 never excludes | `0.9` | Ceiling on a mass's best-so-far qscore, above which it stops being re-selected for `rt_window`. |
+| `min_charge` | int | any int; the **sign sets ion polarity**, then both bounds are `abs()`'d and swapped if inverted | `4` | Lowest charge state MS1 deconvolution assigns, and its sign selects positive- or negative-ion mode. |
+| `max_charge` | int | any int | `50` | Highest charge state considered when assembling MS1 isotope envelopes. |
+| `min_mass` | double | any double (Da) | `500` | Lightest monoisotopic mass reported, so nothing below it can become a precursor. |
+| `max_mass` | double | any double (Da) | `50000` | Heaviest mass considered; it also sizes the precomputed averagine table. |
+| `tol` | array\<double> | **≥ 3 entries required**; ppm, indexed `tol[level−1]` | `[10, 10]` — **unloadable** | Per-MS-level ppm mass tolerance for deconvolution, matching and mass exclusion. |
 
 ## `precursor_selection` — *which species do we fragment?*
 
-| Key | Values | What it does |
-|---|---|---|
-| `rt_window` | seconds — **180** | How long a detected mass stays remembered for exclusion and targeting before it may be picked again. |
-| `targeting` | **`none`** | Plain DDA — no external mass list is consulted. |
-| | `inclusion` | Masses from `files.inclusion_list` are matched and prioritised. |
-| | `in_depth` | Masses already well covered in `files.target_logs` are *de-prioritised* on the first pass — a soft reorder that iteration 1 back-fills, so it only bites when the per-scan slot budget is contended. |
-| | `exclusion_masses` | Masses listed in `files.target_logs` are hard-skipped and never selected. |
-| `strict_inclusion` | `true` / **`false`** | `true` restricts acquisition to inclusion-list matches only; `false` lets unmatched masses fill the remaining slots. |
-| `tie_threshold` | score delta — **0.1** | QScore gap below which two candidates count as tied, letting inclusion-list priority decide the order — inert unless `targeting` is `inclusion` with targets loaded. |
-| `consider_all_charges` | `true` / **`false`** | `true` ranks the survey by QScore across every observed charge state rather than one representative charge per mass. |
-| `charge_based_exclusion` | `true` / **`false`** | `true` makes exclusion `(mass, charge)`-scoped so other charge states of the same mass stay selectable — a **fallback**, not a fan-out: still one acquisition per detection, but at the best charge not yet excluded, so a species is sampled at a different charge on each later survey (ADR‑0018). |
-| `precursor_charges` | **`single`** / `separate` / `multiplexed` | How many charge states of a selected precursor one MS2 acquires, and in how many scans. `single` = the representative charge. `separate` = one MS2 **per** charge state (N scans), each its own precursor with its own model. `multiplexed` = one MS2 co-isolating the whole SNR-positive set as notches (1 scan) — one precursor, one model, not chimeric, since every notch is the same neutral mass. **`max_precursors` counts species in all three**, so a species' whole envelope costs one slot whichever way it is acquired. Orthogonal to `charge_based_exclusion`, which keys *exclusion* rather than *geometry*. |
-| `rank_by` | **`qscore`** | Ranks MS1 candidates by deconvolution quality score. |
-| | `intensity` | Ranks them by raw intensity. |
-| | `none` | Disables MS1 selection entirely — the run acquires surveys and nothing else. |
-| `max_precursors` | integer — **5** | Maximum MS2 precursors selected from one survey. |
-| `min_precursor_charge` | integer, `0` = off — *(omitted, so 0)* | Charge floor below which a precursor is not selected. |
-| `additional_scans` | array of `additional_ms2` names — *(omitted, so empty)* | Extra MS2 configs fired for every selected precursor, in the order listed, after `ms_settings.ms2`. |
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `rt_window` | double | any double | `180` | How long a fragmented mass stays dynamically excluded before it may be picked again. |
+| `targeting` | string | `none` \| `inclusion` \| `in_depth` \| `exclusion_masses` | `"none"` | Selects plain DDA, inclusion-list priority, soft de-prioritisation of already-seen masses, or hard mass exclusion. |
+| `strict_inclusion` | bool | `true` / `false` | `false` | Under inclusion targeting, forbids the non-target fallback pass so only listed masses are fragmented. |
+| `tie_threshold` | double | any double; compared `abs(qscore_a − qscore_b) < t` | `0.1` | Qscore gap under which two candidates count as tied, letting the inclusion list's priority column break the tie. |
+| `consider_all_charges` | bool | `true` / `false` | `false` | Ranks and isolates a species at its best-scoring charge instead of the deconvolver's representative charge. |
+| `precursor_charges` | string | `single` \| `separate` \| `multiplexed` (**not** lowercased on emit) | `"single"` | How much of a species' charge envelope one MS2 covers: anchor charge, one scan per charge, or all co-isolated as notches. |
+| `rank_by` | string | `qscore` \| `intensity` \| `none` | `"qscore"` | Orders MS1 candidates by deconvolution quality or raw intensity; `none` switches MS1 selection off entirely. |
+| `max_precursors` | int | any int; `0` selects nothing, negative throws `std::length_error` mid-survey | `10` | Per-MS1 budget of distinct **species** fragmented. |
+| `min_precursor_charge` | int | any int; `≤ 0` disables the filter | `0` | Drops candidate charge states below this from MS2 selection. |
+| `additional_scans` | array\<string> | keys of `ms_settings.additional_ms2`; duplicates, unknown names and double-duty names all throw | `[]` | Extra MS2 configs acquired for every selected precursor, after `ms_settings.ms2`, in array order. |
 
-### `precursor_selection.tag_expansion` — the FASTA target-expansion knobs
+### `precursor_selection.tag_expansion`
 
-This feature observes a returning MS2, tags it, matches it against a **protein database**, enumerates
-PTM variants of the precursor mass, and adds those as new MS1 targets. It is gated entirely on
-`files.fasta`: `characterization.protein_sequence` does **not** enable it, because the database
-vector has exactly one filler, `FASTAFile().load(files.fasta, …)`. With no FASTA, both keys below are
-dormant.
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `max_ptm_count` | int | any int | `3` | Caps how many PTMs may be stacked when enumerating modified target masses. |
+| `max_flanking_mass_diff` | double | any double (Da) | `50000` | Widest flanking-mass mismatch tolerated when a real-time tag is matched to a FASTA protein. |
 
-| Key | Values | What it does |
-|---|---|---|
-| `max_ptm_count` | integer — *(omitted, so 3)* | Caps the PTMs in one enumerated target mass; also needs `files.ptm_list`, without which nothing is enumerated at all. |
-| `max_flanking_mass_diff` | Da — *(omitted, so 50000)* | Largest unexplained flanking mass a tag may sit next to when matched against a database protein. |
+## `exploration` — the CE / reaction-time sweep
 
-On the `characterization.protein_sequence` path neither applies. That path still bounds flanking
-mass, but with a different quantity: the extender computes `max_mod_mass × max_blind_mod_count + 1`,
-so widen it via those two keys rather than this one.
-
-### `precursor_selection.exploration` — the MS2 CE/reaction-time sweep
-
-Requires the level to dispatch exactly one scan config, so it is mutually exclusive with a populated
-`additional_scans`.
-
-| Key | Values | What it does |
-|---|---|---|
-| `metric` | `none` | No sweep — one MS2 per precursor at the configured collision energy. |
-| | `mass_count` | Picks the variant yielding the most deconvolved masses. |
-| | `remaining_precursor` | Picks the variant leaving the least unfragmented precursor, targeting `remaining_precursor_target`. |
-| | **`fragment_count`** | Picks the variant matching the most fragment ions against `characterization.protein_sequence`, which it therefore requires. |
-| `ce_min` | NCE — **15** | Lowest collision energy in the sweep. |
-| `ce_max` | NCE — **50** | Highest collision energy in the sweep; must exceed `ce_min` for a CE-coupled activation. |
-| `ce_step` | NCE, **must be > 0** — **1** | Sweep increment; a non-positive value is rejected because it would spin forever inside `processScan`. |
-| `activations` | array — **["HCD"]** | Activation types to sweep across; empty falls back to the base scan config's own activation. |
-| `overrides` | string→**string** map — *(omitted)* | Per-field scan-config overrides applied to every variant; values must be JSON strings, and unknown keys are dropped silently. |
-| `remaining_precursor_target` | ratio — *(omitted, 0.1)* | The remaining-precursor fraction `remaining_precursor` aims at. |
-| `reaction_time_min` | ms — *(omitted, 0)* | Lowest ion-ion reaction time in an ETD-family sweep. |
-| `reaction_time_max` | ms — *(omitted, 0)* | Highest reaction time; must exceed the minimum when an ETD-family activation is swept. |
-| `reaction_time_step` | ms, **> 0** — *(omitted, 1)* | Reaction-time increment, rejected at ≤ 0 for the same non-termination reason as `ce_step`. |
-| `tolerance_ppm` | ppm, `0` = inherit — *(omitted, 0)* | Mass tolerance used when scoring variants; `0` falls back to `deconvolution.tol` for that level. |
-
-> **`overrides` carries a second, undocumented effect: its emptiness changes the acquisition
-> topology.** With the map empty the sweep winner descends straight into MS3 characterization; with
-> *any* entry present the engine instead re-acquires one production MS2 at the winning energy first,
-> and MS3 follows a scan later. Adding a cosmetic override such as `{"resolution": "60000"}` silently
-> takes the other branch, with no error and no log line.
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `metric` | string | `none` \| `mass_count` \| `remaining_precursor` \| `fragment_count` | `"none"` | Which quantity the sweep maximises when picking the winning CE / reaction time. |
+| `ce_min` | double | any double; `ce_max > ce_min` required for a CE-coupled activation | `20` | Lowest normalized collision energy tried. |
+| `ce_max` | double | any double; inclusive endpoint (`≤ ce_max + 1e-9`) | `40` | Upper bound of the CE sweep. |
+| `ce_step` | double | **must be > 0** whenever `metric != "none"` | `5` | Spacing between swept CE values, and therefore the variant count. |
+| `reaction_time_min` | double | any double (ms); `max > min` required for an ETD-family sweep | `0` | Shortest ion-ion reaction time tried. |
+| `reaction_time_max` | double | any double (ms); inclusive endpoint | `0` | Upper bound of the reaction-time sweep. |
+| `reaction_time_step` | double | **must be > 0** when a reaction-time range is set | `1` | Spacing between swept reaction times. |
+| `activations` | array\<string> | no allowlist; only `HCD`/`CID`/`EThcD` (sweep CE) and `ETD`/`EThcD` (sweep RT) are load-bearing | `null` | Fragmentation types the sweep tries, each contributing its own variants. |
+| `overrides` | map\<string,string> | keys = the 17 scan keys; unknown keys **silently ignored**; `tolerance_ppm` throws; values must be JSON **strings** | `null` | Field-level edits applied to the base scan config before variants are built, and — by being non-empty at all — the switch that re-acquires the winner as a production scan. |
+| `remaining_precursor_target` | double | any double; scored `1 − abs(ratio − target)` floored at 0 | `0.1` | The surviving-precursor fraction the `remaining_precursor` metric aims at. |
+| `tolerance_ppm` | double | any double; `≤ 0` inherits `deconvolution.tol[level−1]` | `0` | Mass tolerance used to score sweep variants. |
 
 ## `characterization` — *whether and how do we pin the proteoform down?*
 
-| Key | Values | What it does |
-|---|---|---|
-| `mode` | `off` | No MS3 at all, whatever else is configured. |
-| | **`ambiguity`** | Runs MS3 on fragments that bracket an unresolved PTM site. |
-| | `coverage` | Runs MS3 on fragments that extend sequence coverage. |
-| `protein_sequence` | amino-acid string — **cytochrome C** | The sequence MS3 fragments are matched against; required, and non-empty, whenever `mode` is not `off`. |
-| `max_targets` | integer — **3** | The MS3 budget per identified precursor; `0` loads fine and silently disables MS3 while leaving `mode` looking on. |
-| `min_fragment_charge` | integer, `0` = off — *(omitted, so 0)* | Charge floor an MS2 fragment must clear to become an MS3 target. |
-| `fragment_charges` | **`single`** / `separate` / `multiplexed` | How many charge states of a target fragment one MS3 acquires, and in how many scans. `single` = the fragment's best-MS2 charge. `separate` = one MS3 **per** observed charge (N scans). `multiplexed` = one MS3 co-isolating them as notches (1 scan). **`max_targets` counts fragments in all three** — `separate` and `multiplexed` both acquire one fragment's whole envelope for one slot and differ only in scan count, so the budget always buys the same number of cleavage sites. Replaces the bool `ms3_all_charges` (`false`→`single`, `true`→`separate`); the old key is a migration error. |
-| `exploration` | same keys as above — *(omitted)* | An independent CE/reaction-time sweep for MS3, so MS2 and MS3 can sweep different ranges. |
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `mode` | string | `off` \| `ambiguity` \| `coverage` \| `exhaustive` | `"off"` | The whole MS3 gate, and the choice of what MS3 chases: PTM-site-containing fragments, uncovered cleavage sites, or — under `exhaustive` (ADR-0023) — **every deconvolved mass of the winner MS2 scan**, mapped or not. |
+| `protein_sequence` | string | any string; bare one-letter sequence, no header, **alphabet unvalidated** | `""` | The protein every MS2 identification and MS3 target choice is matched against. |
+| `max_targets` | int | any int; `≤ 0` disables MS3 planning | `3` | Per-identified-precursor budget of distinct **fragments** given MS3. Under `exhaustive` it counts distinct **masses**, and it bounds *targets*, never commands — a CE sweep or `fragment_charges: separate` multiplies commands on top of it. |
+| `min_fragment_charge` | int | any int; `≤ 0` disables the filter | `0` | Discards MS3 targets whose MS2 fragment charge falls below this. |
+| `min_target_mass` | double | any double (Da); `0` = off | `0` | **`exhaustive` only** — deconvolved masses below this are not MS3 targets. Not inheritable from `deconvolution.min_mass`/`min_charge`: those floors do not reach MSn output, so a config with `min_mass: 500` still yields 248 Da MS2 species. Read but inert under the other three modes. |
+| `fragment_charges` | string | `single` \| `separate` \| `multiplexed` (**not** lowercased on emit) | `"single"` | How much of a target fragment's charge envelope one MS3 covers. |
+| `exploration` | object | the 11-key block above | `null` | An independent CE / reaction-time sweep for MS3. |
 
-`ms_settings.ms3` must exist whenever `mode` is not `off` — the MS3 builder reads `scans[0]`
-unguarded. It is permitted but inert when `mode` is `off`, so switching MS3 off stays a one-word edit.
+## `flashtnt`
 
-## `ms_settings` — instrument parameters, and nothing that decides *whether* a scan happens
-
-The same 17-key vocabulary applies to every scan object, except that `ms1` **rejects** the five
-stage-borne keys (`activation`, `collision_energy`, `reaction_time`, `reagent_max_it`,
-`reagent_agc_target`) — a survey command carries no isolation stage, so they could never reach it.
-
-| Key | Values | ms1 / ms2 / ms3 here | What it does |
-|---|---|---|---|
-| `analyzer` | `Orbitrap`, `IonTrap` | **Orbitrap** / **Orbitrap** / **Orbitrap** | Which mass analyzer records the scan; not validated by FLASHIda, so a misspelling reaches the instrument. |
-| `first_mass` | m/z | **500** / **100** / **200** | Low end of the recorded m/z range. |
-| `last_mass` | m/z | **2000** / **2000** / **2000** | High end of the recorded m/z range. |
-| `resolution` | integer | **120000** / **120000** / **240000** | Orbitrap resolving power. |
-| `agc_target` | integer | **800000** / **500000** / **50000000** | Ion count the automatic gain control fills to. |
-| `max_it` | ms | **246** / **100** / **500** | Ceiling on injection time when the AGC target is not reached. |
-| `microscans` | integer | **1** / **4** / **8** | How many micro-scans are averaged into one recorded spectrum. |
-| `data_type` | `Centroid`, `Profile` | **Centroid** / **Centroid** / **Centroid** | Whether peaks arrive centroided or as profiles; also unvalidated. |
-| `scan_rate` | `Normal`, `Turbo`, `Rapid`, `Enhanced`, `Zoom` | omitted everywhere | Ion-trap scan rate, meaningful only on `IonTrap`; analyzer-side, so it never inherits. |
-| `activation` | `HCD`, `CID` | — / **HCD** / **CID** | Fragmentation method, and each carries its own required companion parameter. |
-| | `ETD`, `EThcD` | | ETD-family, and the load throws unless `reaction_time > 0` travels with it. |
-| | others, e.g. `UVPD` | | Passed through uncoupled — no parameter is required and none is checked. |
-| `collision_energy` | NCE integer, **> 0 for HCD/CID/EThcD** | — / **30** / **25** | Normalized collision energy for the collision-based activations — but see the note on MS2 below. |
-| `reaction_time` | ms, **> 0 for ETD/EThcD** | omitted | Ion-ion reaction time. |
-| `reagent_max_it` | ms | omitted | Injection-time ceiling for the ETD reagent ions. |
-| `reagent_agc_target` | integer | omitted | AGC target for the ETD reagent ions. |
-| `rf_lens` | %, `0` = inherit survey | **30** / inherits 30 / inherits 30 | RF lens amplitude — a source-region parameter, so an MSn scan that leaves it at `0` runs at the survey's value. |
-| `source_cid` | eV, `0` = inherit survey | **15** / inherits 15 / inherits 15 | In-source CID energy, inherited the same way. |
-| `source_cid_scaling` | factor, `0` = inherit survey | **0** / inherits 0 / inherits 0 | Scaling applied to source CID; `0` is its correct real value and is commanded, not omitted. |
-
-> **In this config `ms2.collision_energy: 30` never reaches the instrument.** MS2 exploration is
-> active, so every dispatched MS2 is a sweep variant carrying a CE from the 15–50 range; the authored
-> 30 survives only as the value that satisfies the "HCD needs `collision_energy > 0`" load gate. Set
-> `precursor_selection.exploration.metric` to `none` and it becomes the real MS2 energy again.
-> `ms3.collision_energy: 25` is unaffected — `characterization.exploration` is not configured here.
-
-### `ms_settings.additional_ms2`
-
-| Key | Values | What it does |
-|---|---|---|
-| *(map keys)* | `^[a-z][a-z0-9_]{0,31}$`, excluding `ms1 ms2 ms3 none off all` — *(omitted)* | Names extra MS2 scan configs, which fire only where a name is referenced; the pattern is enforced by C++ only, so a bad name passes the C# loader and throws at the bridge. |
-| *(map values)* | a full scan object | Same 17 keys as `ms2`, key-checked on both sides; a defined-but-unreferenced entry warns at load and is never acquired. |
-
-There is deliberately no `additional_ms3` — every level-3 consumer reads `scans[0]`, so a second MS3
-config could never be reached. A name used in both `additional_scans` and a `follow_up_scan` is
-rejected, because it would fire twice per precursor at two different priorities.
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `min_length` | int | **3–9**, enforced at tagger construction, not at load | `3` | Shortest de-novo sequence tag accepted. |
+| `max_length` | int | **3–30**, enforced at tagger construction, not at load | `8` | Longest tag the search will build, and the section's main real-time cost knob. |
+| `allow_gap` | bool | `true` / `false` | `false` | Lets a tag bridge one unexplained mass as a single gap unit, and gates `max_aa_in_gap`. |
+| `max_aa_in_gap` | int | **2 or 3 only**, enforced at tagger construction, not at load | `2` | How many consecutive residues one gap may stand for. |
+| `fixed_mod` | array\<string> | unvalidated; one modification per array element | `[]` | Nothing today — reaches both algorithm Params and neither reads it back. |
+| `max_blind_mod_count` | int | any int | `2` | How many unspecified mass shifts the extender may invent per proteoform, and it multiplies `max_mod_mass` in every flanking bound. |
+| `max_mod_mass` | double | any double (Da) | `700` | Largest absolute shift a single blind modification may carry. |
 
 ## `tagging`
 
-| Key | Values | What it does |
-|---|---|---|
-| `follow_up_scan` | an `additional_ms2` name — *(**`{}`** here, so none)* | Names the MS2 config acquired as the conditional (`C`) follow-up; required when `conditional_ms2` is `true`. |
-| `active` | `true`/`false` | Accepted by the loader, never emitted, read only by a log-formatting helper — it changes nothing. |
-| `conditional_ms2` | `true`/`false` | Accepted, but overridden by the root `conditional_ms2` whenever that is present. |
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `follow_up_scan` | string | `""` = none, else a key of `ms_settings.additional_ms2` | `""` | Names the MS2 config acquired as the conditional (`C`) follow-up when an MS2 yields tags. |
+| `active` | bool | `true` / `false` | `false` | **Nothing** — accepted, never emitted, read only by a log formatter; `false` does not disable tagging. |
+| `conditional_ms2` | bool | `true` / `false` | `false` | The nested spelling of the root key below; the root value wins whenever present. |
+
+## `conditional_ms2` (root-level key)
+
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `conditional_ms2` | bool | `true` / `false`, at the **root** of `method.json`; `true` requires `tagging.follow_up_scan` | `false` | Fires the `tagging.follow_up_scan` MS2 whenever a returning MS2 yields sequence tags. |
 
 ## `quantification`
 
-| Key | Values | What it does |
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `enabled` | bool | `true` / `false` | `false` | Gates whether returning MS2 spectra are reporter-ion tested and can earn an `F` follow-up. |
+| `reporter_mz_tol` | double | unchecked at load; enforced at first use as **0.0001–0.5 Th** | `0.0` † — **outside the legal range** | m/z half-window used to extract the reporter channels from a returning MS2. |
+| `fold_change_threshold` | double | any double; applied as `fc > t \|\| 1/fc > t`, so `t ≤ 1` passes everything | `0.0` † | Minimum reporter-channel fold change, in either direction, before a precursor earns a follow-up. |
+| `follow_up_scan` | string | `""` = none, else a key of `ms_settings.additional_ms2` | `""` | Names the MS2 config acquired as the quantification (`F`) follow-up. |
+| `only_one_condition` | bool | `true` / `false` | `false` | **Nothing** — accepted, never emitted, no read site anywhere. |
+
+## `faims`
+
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `cv_values` | array\<double> | any doubles — sign, magnitude and duplicates all unvalidated; only the **length** carries meaning | `[-50]` † — **FAIMS on** | The compensation voltages the run uses; its length alone decides whether FAIMS runs at all. |
+| `max_cv_skip` | int | any int; `≤ 0` disables skipping; inert with fewer than two CVs | `0` | Caps how many survey rounds a low-yielding CV is bypassed before being revisited. |
+| `cv_precursor_threshold` | int | any int; `≤ 0` disables adaptive skipping; inert with fewer than two CVs | `15` | MS2-command count below which a CV counts as unproductive that cycle. |
+
+| `cv_values` length | Behaviour |
+|---|---|
+| `[]` | FAIMS **off**, and actively commanded off (`FAIMS Voltages = "off"`) rather than left to the instrument method. |
+| one CV | FAIMS on at a fixed voltage, with no cycling; both skip keys are inert. |
+| two or more | FAIMS on and cycling; after each MS1 an extra survey is pushed at the next CV. |
+
+## `ms_settings` — instrument parameters, and nothing that decides *whether* a scan happens
+
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `analyzer` | string | unvalidated; instrument names `Orbitrap`, `IonTrap` | `""` | Which mass analyzer records the scan. |
+| `first_mass` | double | any double; `0` omits the key | `0` | Low end of the recorded m/z range. |
+| `last_mass` | double | any double; `0` omits the key | `0` | High end of the recorded m/z range. |
+| `resolution` | int | any int; `≤ 0` omits the key | `0` | Orbitrap resolving power. |
+| `agc_target` | int | any int; `≤ 0` omits the key | `0` | Ion population the automatic gain control fills to. |
+| `max_it` | double | any double (ms); `≤ 0` omits the key | `0` | Ceiling on injection time when the AGC target is not reached. |
+| `microscans` | int | any int; `≤ 0` omits the key | `0` | How many acquisitions are averaged into one recorded spectrum. |
+| `data_type` | string | unvalidated; instrument names `Centroid`, `Profile` | `""` | Whether peaks arrive centroided or as profiles. |
+| `scan_rate` | string | unvalidated; `Normal`, `Enhanced`, `Zoom`, `Rapid`, `Turbo`; analyzer-side, never inherited | `""` | Ion-trap scan speed, meaningful only on `IonTrap`. |
+| `activation` | string | **MSn only**; unvalidated and passed verbatim; only `HCD`/`CID`/`ETD`/`EThcD` are coupling-checked | `""` | Fragmentation method for this stage; the default `""` makes every command of that level be refused at build time. |
+| `collision_energy` | int | **MSn only**; any int, but **> 0 required** for `HCD`/`CID`/`EThcD` | `0` | Normalized collision energy for the stage. |
+| `reaction_time` | double | **MSn only**; any double (ms), but **> 0 required** for `ETD`/`EThcD` | `0` | Ion-ion reaction duration for ETD-family activation. |
+| `reagent_max_it` | double | **MSn only**; any double (ms); **no** activation coupling enforced | `0` | Fill-time ceiling for the ETD reagent anions. |
+| `reagent_agc_target` | int | **MSn only**; any int; **no** activation coupling enforced | `0` | Target reagent-anion population for ETD. |
+| `rf_lens` | double | any double; `0` = **inherit the survey's value**; sent unconditionally | `0` | Source RF-lens amplitude, shared by the whole cycle. |
+| `source_cid` | double | any double; `0` = **inherit the survey's value**; sent unconditionally | `0` | In-source CID energy applied before the analyzer, shared by the whole cycle. |
+| `source_cid_scaling` | double | any double; `0` = **inherit the survey's value**; sent unconditionally | `0` | Mass-dependent scaling of in-source CID, shared by the whole cycle. |
+
+| Scan object | Keys accepted | Notes |
 |---|---|---|
-| `enabled` | `true` / **`false`** | `true` runs isobaric reporter-ion quantification on returning MS2 scans, and needs `follow_up_scan` to name a config for it to act on. |
-| `reporter_mz_tol` | Da — **0.002** | Match window for reporter-ion m/z. |
-| `fold_change_threshold` | ratio — **1.4** | Fold change above which a target is considered differentially abundant. |
-| `follow_up_scan` | an `additional_ms2` name — *(omitted)* | Names the MS2 config acquired as the quantification (`F`) follow-up. |
-| `only_one_condition` | `true`/`false` | Accepted by the loader, never emitted, and read nowhere — it changes nothing. |
+| `ms1` | the 12 non-MSn keys | The five **MSn only** keys are rejected — a survey command carries no isolation stage. |
+| `ms2` | all 17 | Fired once per MS1-selected precursor; always first in the level-2 roster. |
+| `ms3` | all 17 | Required whenever `characterization.mode != "off"`; supplies stage 1 of the cascade. |
+| `additional_ms2` | map of name → all 17 | Named extra MS2 configs; there is deliberately no `additional_ms3`. |
 
-## `runtime` *(omitted by this config)*
+### `ms_settings.additional_ms2`
 
-| Key | Values | What it does |
-|---|---|---|
-| `log_dir` | folder, **`""`** | Folder that receives **every** log file. Empty means `.` — the process working directory. |
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| *(map keys)* | string | `^[a-z][a-z0-9_]{0,31}$`, excluding `ms1 ms2 ms3 none off all`; enforced by **C++ only** | `null` | Names an extra MS2 scan config, which fires only where the name is referenced. |
+| *(map values)* | object | the same 17 keys as `ms2`; validated by **C# only** | — | A full scan object; one referenced by nobody warns and is never acquired. |
 
-Each run gets its own subfolder inside `log_dir`, holding all seven files under fixed names:
+## `scheduling`
 
-```
-<log_dir>/sample_042_2026-08-09-14-33-02/    <- "<-r value>_<stamp>", or "<stamp>" with no -r
-    ida.log                     scan_commands.tsv        scan_results.tsv
-    identification.tsv          pooled_identification.tsv
-    FlashLog.log                IDALog.log
-```
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `cycle_time.enabled` | bool | `true` / `false` | `false` | Arms a watchdog that forces a survey MS1 when none has run recently. |
+| `cycle_time.value_ms` | double | any double | `60000` | Milliseconds without an MS1 before that watchdog queues one; suppressed during an exploration group. |
+| `scan_timeout.enabled` | bool | `true` / `false` | `false` | Lets the queue discard commands that have waited too long to be dispatched. |
+| `scan_timeout.value_ms` | double | any double | `30000` | Age in ms past which a queued command is dropped and logged `[TRACK-EXPIRE]`. |
+| `agc_interval_seconds` | double | any double | `1` | How often an AGC prescan preempts the whole priority ladder. **The only thing that emits one** (ADR-0031) — a drained queue emits an idle survey MS1, not a prescan. Was `30`, but that never governed the real cadence: the drained-queue path emitted a prescan as filler *and* reset this timer with it. Committed test configs pin this at `9999999` so golden capture cannot depend on wall clock. |
 
-There is no way to disable a stream and no way to place one somewhere else — the five per-stream
-path keys were deleted, and a config still carrying one is rejected with a migration error. The
-timestamp is minted once per process, so all seven files necessarily agree. If the folder cannot
-be created the run exits 1 before touching the instrument. See
-[ADR-0015](adr/0015-log-dir-is-resolved-host-side.md).
+## `files`
 
----
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `target_logs` | array\<string> | paths; an unreadable file is **silently skipped** | `[]` | Prior-run logs supplying the mass lists that `in_depth` and `exclusion_masses` operate on. |
+| `fasta` | string | path; non-empty must exist or engine construction fails | `""` | Turns on tag-based targeting by matching MS2 tags against these proteins. |
+| `inclusion_list` | string | path; TSV, ≥ 5 columns (mass, charge, rt_start, rt_end, priority); RT in **minutes**, masses **monoisotopic** | `""` | Target masses that inclusion mode acquires ahead of everything else. |
+| `ptm_list` | string | path; TSV, ≥ 3 columns (name, mass, max_count); throws at construction if unreadable | `""` | PTM rows that expand each FASTA-derived target mass into modified forms. |
+
+## `runtime`
+
+| Key | Type | Valid values | Default | What it does |
+|---|---|---|---|---|
+| `log_dir` | string | any string; absolute or relative to the **process** working directory | `""` | Base folder receiving this run's timestamped subfolder of five fixed-name log streams. |
+
+## Where the C++ fallback disagrees with the effective default
+
+| Key | Effective default (C#) | C++ fallback | Consequence |
+|---|---|---|---|
+| `deconvolution.score_threshold` | `-1` | `0.0` | None — both are ≤ 0, so neither gates. |
+| `quantification.reporter_mz_tol` | `0.0` | `0.002` | The C# default is outside the legal range and throws at first use; the C++ one works. |
+| `quantification.fold_change_threshold` | `0.0` | `1.4` | The C# default passes every spectrum; the C++ one filters. |
+| `faims.cv_values` | `[-50]` — FAIMS **on** | empty — FAIMS **off** | A fixture omitting `faims` runs without it; a `method.json` omitting it runs at −50 V. |
 
 ## Combinations the loader rejects
 
-Each was reproduced against this config; all of them are load-time errors, not runtime surprises.
-
 | Change | Result |
 |---|---|
-| `deconvolution.tol` with 2 entries | throws — levels 1–3 are always materialised |
+| `deconvolution.tol` with fewer than 3 entries | throws — levels 1–3 are always materialised |
 | `characterization.mode` not `off`, `protein_sequence` empty | throws |
-| `characterization.mode` not `off`, `ms_settings.ms3` absent | throws — the MS3 builder would read out of bounds |
-| `rank_by` not `none`, `ms_settings.ms2` absent | throws |
+| `characterization.mode` not `off`, `ms_settings.ms3` absent | throws — **C++ fixtures only**; from `method.json` it loads clean and dies at scan-build time |
+| `rank_by` not `none`, `ms_settings.ms2` absent | throws — **C++ fixtures only**; same silent failure from `method.json` |
 | `conditional_ms2: true`, `tagging.follow_up_scan` unset | throws |
-| `ce_step: 0`, or `reaction_time_step: 0` with a reaction-time range | throws — the sweep loop would never terminate |
+| `ce_step ≤ 0`, or `reaction_time_step ≤ 0` with a reaction-time range | throws — the sweep loop would never terminate |
 | `ce_min ≥ ce_max` with a CE-coupled activation | throws |
-| `activation: ETD` without `reaction_time` | throws |
-| `activation: HCD` with `collision_energy: 0` | throws |
+| `activation: ETD`/`EThcD` without `reaction_time > 0` | throws |
+| `activation: HCD`/`CID`/`EThcD` with `collision_energy: 0` | throws |
 | exploration active at a level dispatching more than one scan config | throws |
+| a `follow_up_scan` name also listed in `additional_scans` | throws — it would fire twice at two priorities |
+| a `follow_up_scan` or `additional_scans` name absent from `additional_ms2` | throws, listing the defined names |
+| an `additional_ms2` key outside `^[a-z][a-z0-9_]{0,31}$` or reserved | throws — **C++ only**, so it passes the C# loader |
+| `exploration.overrides` containing `tolerance_ppm` | throws — it is a first-class key |
 | any unknown or PascalCase key | throws, naming the offender |
-| `selection_strategy`, top-level `ms3`, `ms2`/`ms3` as arrays, an inline `follow_up_scan` object | throws with a migration message |
+| `selection_strategy`, top-level `ms3`, `ms3_all_charges`, an inline `follow_up_scan` object | throws with a migration message |
 | `characterization.max_targets: 0` with `mode` on | **loads clean and silently runs no MS3** |
+| `ms_settings.ms2`/`ms3` as an **array** | **loads clean, silently discarded**, replaced by an all-default scan config |
+| `faims` section omitted | **loads clean, FAIMS runs at −50 V** |
+| `quantification.enabled: true` with no `follow_up_scan` | **loads clean and silently never acquires one** |
 
-To check a config before running it: `uv run python .claude/skills/validate-flashida-config/validate.py <config.json>`.
+## Keys that load but do nothing
 
----
-
-## How this was validated
-
-Every setting above was pushed along the whole path — *authored → C# loader → `ToCppJson` → bridge
-JSON → `Config.cpp` → an engine read site* — by three independent means. Nothing here is asserted
-from a doc comment.
-
-**1. The C# half was executed, not read.** `MethodConfig.cs`, `MethodParameters.cs` and
-`MethodConfigSerializer.cs` were compiled standalone on the .NET 8 SDK behind a
-`JavaScriptSerializer` shim, so the real loader and emitter could be run without net48 or the Thermo
-DLLs. The shim is not taken on trust: the harness regenerates
-`FlashIDA/test-data/config_schema_reference.json` through the real
-`GenerateReferenceConfigJson()` and reproduces the committed file **byte-for-byte**, and CI pins that
-file to the output of the genuine serializer.
-
-Every setting — the ones this config authors and the schema-legal ones it omits — was then mutated to
-a distinctive value and the emitted bridge JSON diffed against the baseline. All but three changed it
-at exactly the expected wire path; three never changed it at all.
-
-**2. Value legality was exercised** — every option of every enum, plus a deliberately bogus one, and
-seventeen edge cases — through `validate-flashida-config`, which reproduces `Config::validate()`.
-That is the source of the rejection table above.
-
-**3. Engine consumption was traced and then attacked.** A 16-agent workflow traced all 116 keys to a
-read site, and a second adversarial pass re-opened every cited `file:line` with instructions to
-refute. 103 verdicts came back, all confirmed, and the pass corrected several anchors and one
-overstated consequence along the way.
-
-The C++ half could not be *run*: the committed `FlashIDA/dll/OpenMS.dll` predates this schema and
-still demands the deleted `selection_strategy`, and this workspace cannot build either project. CI
-remains the only end-to-end execution gate.
-
-### What the sweep found
-
-| Setting | Finding |
+| Key | Status |
 |---|---|
-| `tagging.active` | Loads, is never emitted, and is read only by a log formatter — it does nothing. |
-| `quantification.only_one_condition` | Loads, is never emitted, and has no read site anywhere. |
-| `tagging.conditional_ms2` | Loads, but the root `conditional_ms2` overwrites it whenever present. |
+| `tagging.active` | Accepted, never emitted; read only by a log formatter. `false` does **not** disable tagging. |
+| `quantification.only_one_condition` | Accepted, never emitted, **zero read sites** — the C++ branch it would drive is unreachable. |
+| `tagging.conditional_ms2` | Accepted, but the root `conditional_ms2` overrides it whenever present. |
 | `global.method_name`, `global.method_description` | Cross the bridge; no C++ struct field, no read site. |
 | `flashtnt.fixed_mod` | Reaches both algorithms and is acted on by neither. |
-| `precursor_selection.tag_expansion.*` | Live keys, but read only by the `files.fasta` path — a `protein_sequence` does not enable them. |
-| `flashtnt.max_aa_in_gap` | Live key, dormant unless `allow_gap` is `true`. |
-| `ms_settings.ms2.collision_energy` | Displaced by the active CE sweep — see the note in `ms_settings`. |
-| `precursor_selection.exploration.overrides` | Emptiness silently selects the post-sweep acquisition branch. |
-
-Every other setting in this document resolves end to end: authored, emitted, parsed, and read at a
-site that changes what the instrument does or what is logged.
+| `precursor_selection.tie_threshold` | Inert unless `targeting: "inclusion"` **and** a TSV inclusion list actually loaded. |
+| `precursor_selection.strict_inclusion` | Inert unless `targeting: "inclusion"`. |
+| `precursor_selection.consider_all_charges` | Ignored when `rank_by` is `intensity`. |
+| `faims.max_cv_skip`, `faims.cv_precursor_threshold` | Inert with fewer than two CVs. |
+| `flashtnt.max_aa_in_gap` | Inert unless `allow_gap` is `true`. |
+| `precursor_selection.tag_expansion.*` | Read only on the `files.fasta` path; a `protein_sequence` does not enable them. |
+| `ms_settings.*.reagent_max_it`, `reagent_agc_target` | Not covered by activation coupling — an ETD scan with `0` loads clean and inherits the instrument method. |
