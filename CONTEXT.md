@@ -51,35 +51,55 @@ The charge states of one Precursor — or of one target fragment — that a sing
 isolates. Size one by default: the representative charge. Membership is a
 signal-to-noise judgement, a charge joining only if its own envelope rises above
 noise, because a charge contributing no signal still consumes part of the scan's
-ion budget. A set may be **co-isolated** — all members isolated together in one
-scan as separate **notches**, sharing one isolation event and one identity — or
+ion budget. When the Precursor matched an inclusion row that names its charges,
+that **authored charge set** narrows the candidates before that judgement runs; it
+can only subtract, never extend. A set may be **co-isolated** — all members
+isolated together in one scan as separate **notches**, sharing one isolation event and one identity — or
 acquired as one scan per member, which yields that many independent Precursors
 rather than one. The instrument caps the set's size.
 _Avoid_: "all charge states" unqualified (the set is SNR-gated and capped);
 treating co-isolation and one-scan-per-charge as interchangeable — the first is one
 Precursor, the second is several.
 
+**Authored charge set**:
+The charge states named on an inclusion row for one target mass. It **restricts**
+the acquisition charge set and never extends it — a named charge is acquired only
+if it also clears the gates every candidate faces, and naming a charge the survey
+never resolved acquires nothing, because an isolation window must be measured. A
+row naming no charge leaves the set unrestricted. Where several rows name the same
+mass, the sets of the rows active at this retention time are unioned.
+_Avoid_: reading it as a demand for those charges (it cannot add one); "requested
+charges"; conflating it with the **acquisition charge set**, which is what a scan
+actually isolates once the gates have run.
+
 **Anchor charge**:
 The member of an acquisition charge set that a scan's **identity and per-charge
-scores** are attributed to — the highest-SNR member. What a scan is *keyed* by is
-the anchor's (its tracking id, its scan description, the charge on its
-identification row); what the scan *isolates* is the whole set. A single-charge
+scores** are attributed to — the highest-SNR member. Under an **authored charge
+set** it is the highest-SNR *authored* member, chosen there even when that member
+does not clear the signal-to-noise gate, since a matched target's anchor is exempt
+from it. What a scan is *keyed* by is the anchor's (its tracking id, its scan
+description, the charge on its identification row); what the scan *isolates* is
+the whole set. A single-charge
 acquisition acquires the anchor and nothing else.
 _Avoid_: reading a scan's logged charge as the only charge it isolated; equating
 the anchor with the representative charge — the representative charge is a property
 of the deconvolved feature, the anchor is a property of the acquisition, and
-per-charge qscore or an exclusion fallback can make them differ.
+per-charge qscore, an authored charge set, or an exclusion fallback can make them
+differ.
 
 **Charge-keyed exclusion**:
 The variant of dynamic exclusion that keys on `(nominal mass, charge)` rather than
 on nominal mass alone, so a mass already fragmented at one charge stays eligible at
-another. Its effect is a **fallback**, not a fan-out: a Precursor is still acquired
-once per detection, but at the best charge not yet excluded, so a species seen
-across several surveys is sampled at a different charge each time. When a scan
+another. It is **scoped to Precursors carrying an authored charge set**; every
+other species is excluded on nominal mass alone. Its effect is a **fallback**, not
+a fan-out: a Precursor is still acquired once per detection, but at the best charge
+not yet excluded, so a species seen across several surveys is sampled at a
+different charge each time. When a scan
 co-isolates a charge set, **every member it isolated** is recorded as acquired —
 otherwise the next survey falls back onto a charge already fragmented.
 _Avoid_: expecting it to acquire several charges of one mass within a single survey
-(that is one-scan-per-charge acquisition, a separate choice).
+(that is one-scan-per-charge acquisition, a separate choice); expecting it of a
+species with no authored charge set.
 
 **Proteoform model** (`ProteoformModel`):
 The pooled, evolving best-known identification of a single Precursor: the winning

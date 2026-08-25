@@ -1,7 +1,7 @@
 ---
 title: Targeting Modes
 applies_to: OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp
-last_verified: 2026-04-19
+last_verified: 2026-08-25
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:143        # TargetingConfig::mode
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:187  # inclusion target list load
@@ -43,9 +43,23 @@ tie-break, no SNR waiver for explicit targets, and no tqscore-based suppression.
 
 Precursors are ranked against an explicit target list. Two list formats are supported:
 
-- **TSV file** (`inclusion_list_file`): parsed once at initialization (:144) into
-  `inclusion_targets_`. Each entry carries a mass, optional charge, RT window, and an integer
-  `priority` field.
+- **TSV file** (`inclusion_list_file`): parsed once at initialization into `inclusion_targets_`.
+  Five tab-separated columns: mass, charge, rt_start, rt_end, priority. RT is in **minutes** and is
+  converted to seconds on load; the mass must be **monoisotopic** (cytC is 12351.3, not the average
+  12358.3 — that mistake has been made and is load-bearing in a test fixture).
+
+  The charge column holds an **authored charge set** (ADR-0028): `-1` or empty leaves acquisition
+  unrestricted, a single integer names one charge, and `10;13;16` names three. A named set
+  RESTRICTS what is acquired and never extends it — a named charge still has to clear the SNR gate
+  to be co-isolated and to have been resolved at all to be isolated. The anchor becomes the
+  highest-SNR named charge. Rows naming the same mass and active at the same RT **union** their
+  sets, so one row `10;13;16` and three rows `10`/`13`/`16` are the same method, while rows with
+  different RT windows stay independent.
+
+  How many named charges one scan takes is `precursor_selection.precursor_charges`, unchanged:
+  `single` takes one per survey and walks the set across surveys on per-charge exclusion,
+  `separate` emits one MS2 per named charge, `multiplexed` co-isolates them as notches. The
+  `[CHARGE-SET]` stdout line reports which named charges were acquired and why the rest were not.
 - **Log/out files** (`target_log_files`): legacy format populated into `target_mass_rt_map_` and
   `target_mass_qscore_map_` (:100).
 
@@ -110,7 +124,7 @@ loop does not apply — mode 3 runs only the single `iteration = 1` pass.
 | `tie_threshold` | QScore delta within which `priority` breaks ties (Mode 1 TSV only). |
 | `rt_window` | Seconds; governs which RT-keyed list entries are active in Modes 2 and 3. |
 | `tqscore_threshold` | Cumulative exclusion threshold for Mode 2; mass is skipped if `1 - tqscore > threshold`. |
-| `inclusion_list_file` | Path to TSV target file (Mode 1). |
+| `inclusion_list_file` | Path to TSV target file (Mode 1). Its charge column takes an authored charge set — see above. |
 | `fasta_file` | FASTA database for tag-based target expansion — a non-empty `files.fasta` is the ONLY thing that enables it. (`tag_based_enabled` used to be listed here; it was declared, never assigned and never read, and has been deleted.) |
 
 > Related but distinct: the MS1-side tag-biased precursor selection controlled by the two keys above is different from the MS2-side tag confirmation + conditional follow-up scan, which is covered in [`../fragment-analysis/tag-follow-up.md`](../fragment-analysis/tag-follow-up.md).
@@ -122,6 +136,14 @@ loop does not apply — mode 3 runs only the single `iteration = 1` pass.
 - **SNR is waived for explicit targets.** When `inclusion_list_file` is used and a peak group
   matches a target mass, `snr_threshold` is zeroed out. Don't assume low-SNR targets are dropped
   before they reach the final selection step.
+
+  The waiver applies to the **anchor only**. Notch selection reads the un-zeroed configured value,
+  so under `separate`/`multiplexed` a named-but-weak charge is refused as a notch even though the
+  same charge would have been acquired had it been the anchor.
+
+- **An authored charge set cannot conjure a charge.** `peakGroupNotchCandidates` enumerates only
+  charges the deconvolution actually resolved, and isolation geometry must be measured, so naming a
+  charge the survey never saw acquires nothing. It is also not a way past `min_precursor_charge`.
 
 - **Mode 2's outer loop runs twice.** The `iteration = 0` pass suppresses excluded masses; the
   `iteration = 1` pass lifts exclusions. Code that modifies candidate state (e.g. score updates

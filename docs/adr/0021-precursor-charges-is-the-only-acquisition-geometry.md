@@ -56,6 +56,13 @@ would be unreachable from the normal path. `Config.cpp` carries one too, for han
 survey; now it is mass-excluded. This is the real cost and it is accepted: the flag was
 developer-only, off in every committed config, and its documented behaviour was not what it did.
 
+  > **Scoped 2026-08-25 by [ADR-0028](0028-an-authored-charge-set-restricts-acquisition-and-re-keys-exclusion.md).**
+  > "No replacement" now holds only for species that did not ask for one. An inclusion row naming a
+  > charge set gets `(nominal mass, charge)` exclusion keys back, so `single` walks that set across
+  > successive surveys. The decision above is untouched: geometry still comes from
+  > `precursor_charges` plus the authored restriction, never from an exclusion flag, so the defect
+  > this ADR removed does not return. Every species without an authored set stays mass-keyed.
+
 **Zero goldens moved for the deletion** — all 38 configs set the flag `false`, so removing it is
 value-preserving. The `separate_charges` golden moved for the *fix* (26 → 130 MS2 commands, 33 → 222
 identification rows), which landed alongside.

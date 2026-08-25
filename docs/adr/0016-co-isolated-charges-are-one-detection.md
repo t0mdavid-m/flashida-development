@@ -40,6 +40,11 @@ is size one by default — the representative charge. Membership is SNR-gated: a
 `PrecursorSelection.cpp:594` with `snr_threshold` defaulting to `1.0`. A charge below noise still
 consumes part of the scan's ion budget, so admitting it is a net loss.
 
+> **Amended 2026-08-25 by [ADR-0028](0028-an-authored-charge-set-restricts-acquisition-and-re-keys-exclusion.md).**
+> Membership is still SNR-gated, but an inclusion row may now name a subset of the charges first, in
+> which case the gate runs over that subset. "Differ only in scan count" therefore holds over the
+> AUTHORED subset for such species, not over the whole envelope.
+
 **The prohibition is narrowed, not lifted.** Pooling across *separate detections* at different
 charges stays forbidden. Co-isolating charges *within one detection* is sanctioned, and the two are
 distinguished in the glossary so the boundary is explicit rather than remembered.
