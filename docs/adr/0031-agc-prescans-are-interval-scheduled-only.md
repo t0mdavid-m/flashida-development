@@ -127,6 +127,37 @@ appearance across that mode's five streams, since `LogGoldenComparer` builds one
 case) and diff that against the fresh capture. Anything left over is a real behavioural delta and is
 what gets reviewed.
 
+Final classification of the 125 log-golden files: **96 clean · 24 differing only by trailing idle
+surveys · 5 residue · 0 missing**. All 24 tail cases carry **exactly 2** extra surveys, uniformly —
+the idle cycle now emits one survey per drain, so the harness reaches `idle >= 3` after a different
+number of tail commands. The 5 residue files are both understood, and both are **pre-existing
+fragilities this change exposed rather than caused**:
+
+- **`exploration_hcd` — the deconvolution list ORDER is build-nondeterministic.** An adjacent pair
+  in `deconv_masses` / `deconv_charges` / `deconv_intensities` swaps position with the entries
+  otherwise intact. Proven by comparing two of *our own* CI runs whose only code delta was the
+  tracking-id counter, which cannot reach FLASHDeconv: the same pair flips. `GoldenNumericComparer`
+  tolerates value drift but **not ordering**, so whichever order is captured, a later build can flip
+  it back. Expect intermittent failure here until the list gets a total order.
+- **`separate_charges` has never captured a complete acquisition.** Its drive is bound by
+  `PushScanAndDrainFull`'s `maxIters = 600`, and was before this change too. Its golden spent 32 of
+  those iterations on AGC commands; removing them frees that budget for ~32 more real commands, so
+  the file grew. Its content will keep shifting with anything that changes command density.
+
+Two further consequences worth knowing, both found the hard way:
+
+- **Tracking id 0 was a latent landmine, and the prescan was standing on it.** `buildMS2` writes a
+  parent only `if (parent_scan_id > 0)` and `FLASHIda.cpp` passes a literal `0` for a root MS2, so 0
+  is the "no parent" sentinel — while the allocator also issued it as a real id. The prescan was the
+  first command minted on every fresh engine and absorbed 0, which is why this never showed. Removing
+  it handed 0 to the first survey and stripped the parent from every MS2 of that survey. The
+  allocator now starts at 1 and wraps to 1; see the counter's declaration in `ScanCommandQueue.h`.
+- **An external oracle must not be keyed on a scan id.** `test-data/reference/ms3_leaf_expected.tsv`
+  anchored the MS3 flip-localization ground truth on a raw tracking id; both anchors shifted by one
+  and the check reported a localization regression when the proteoforms were byte-identical. It is
+  now keyed on (precursor mass, fragment ion) — the ion alone is insufficient, because an adjacent
+  isotopologue emits its own `b80`/`b70` leaves.
+
 ## Alternatives rejected
 
 - **A config flag to keep the old behaviour reachable.** Adds a schema key on both sides plus an
