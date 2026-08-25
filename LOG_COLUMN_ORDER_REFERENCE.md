@@ -8,7 +8,7 @@ a compare-time shim reorders the fresh capture back to golden order **by header 
 so **no recapture** is required. Motivation: human readability of live acquisition logs.
 
 **Ground truth (CURRENT order)** extracted verbatim from `IdaLogger.cpp` header emission
-(lines 73–176). Column counts: Command 34 · Results 29 · Identification 32 · Pooled 19.
+(lines 73–176). Column counts: Command 34 · Results 32 · Identification 34 · Pooled 19.
 
 > **This document models a one-time permutation and is no longer the whole story.** ADR-0012
 > *added* a column (`faims_enabled`) and ADR-0026 two more (`first_mass`, `last_mass`), so the
@@ -77,7 +77,7 @@ reagent_max_it, reagent_agc_target, scan_description, precursor_id, ms3_proteofo
 
 ---
 
-## 2. Results Log (`scan_results`) — 29 columns
+## 2. Results Log (`scan_results`) — 32 columns
 
 **Verification: ✅ COMPLETE** for the reorder. All columns of the 2026-07 permutation are present
 exactly once; the deconv block has since been restructured and extended — see the note below.
@@ -140,7 +140,7 @@ same call that fills `cmd.qscore` in `ScanCommandQueue`, so a selected mass's va
 
 ---
 
-## 3. Identification Log (`identification`) — 32 columns
+## 3. Identification Log (`identification`) — 34 columns
 
 **Verification: ✅ COMPLETE.** Full 32-column order — your curated 19, then the 13 detail
 columns appended in their current relative order (decision: "append after"). Pure permutation.

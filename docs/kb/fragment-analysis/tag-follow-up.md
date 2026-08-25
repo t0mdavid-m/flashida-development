@@ -30,7 +30,7 @@ Three conditions must all hold:
 
 1. **Config: `targeting.conditional_ms2_enabled` is true.** Gate flag; without it, the branch at `FLASHIda.cpp:914` never fires.
 2. **Config: `tagging.follow_up_scan` block populated** with at least `analyzer`, `activation`, `collision_energy`, and `resolution`. Parsed at `Config.cpp:140-148`.
-3. **Runtime: `tags_found` is true.** Set to `true` by `PrecursorSelection::processMS2ForTagBasedTargeting(precursor_mass, ms2_activation)` at `FLASHIda.cpp:897`; requires `targeting.protein_sequence` to be non-empty (tag matching has nothing to match against otherwise).
+3. **Runtime: `tags_found` is true.** Set to `true` by `PrecursorSelection::processMS2ForTagBasedTargeting(precursor_mass, ms2_activation)` at `FLASHIda.cpp:897`; requires a **FASTA target database** (`precursor_selection.fasta`) to be loaded — `processMS2ForTagBasedTargeting` returns 0 immediately when `target_protein_database_` is empty. It is NOT keyed on `characterization.protein_sequence`, which gates the separate identification path.
 
 `Config::validate()` catches the common misconfiguration: conditional MS2 enabled without a `follow_up_scan` block throws `std::invalid_argument` at construction time (see `../config-flow/config-flow.md` Stage 9).
 

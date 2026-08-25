@@ -153,10 +153,13 @@ How many sequence tags FLASHTagger read off one MS2 spectrum — short residue s
 inferred from the mass gaps between deconvolved peaks, **before any protein is
 consulted**. It measures the spectrum's fragment ladder, not a match: the count is taken
 the moment the tagger returns, so a rich spectrum scores non-zero even when nothing
-matches. Sentinels are load-bearing — `-1` means no tagger ran on this spectrum at all
-(every MS1 row, and every MS3, since MS3 scoring calibrates against a known ladder rather
-than re-tagging); `0` means it ran and read nothing, which for a real protein is a
-meaningful negative result about that spectrum.
+matches. Sentinels are load-bearing — `-1` means no tag count is reported for this row
+(every MS1 row, and every MS3 row); `0` means the tagger ran and read nothing, which for a
+real protein is a meaningful negative result about that spectrum.
+The MS3 `-1` is a **policy, not an absence of tagging**: MS3 exploration variants *are*
+tagged, but a tag count taken on an MS3 spectrum measures the sub-fragment ladder rather
+than the precursor's identifiability, which is not what the quantity means. Reading it as
+"nothing tagged at MS3" is the mistake this sentence exists to prevent.
 _Avoid_: conflating it with the **tag-targeting hit count** — how many tags matched a
 FASTA target database, which is a *gate* (it decides whether a conditional MS2 follow-up
 fires), reports zero when tags existed but matched no protein, and is computed at a

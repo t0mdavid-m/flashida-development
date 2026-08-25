@@ -444,13 +444,18 @@ def validate(path, ref):
                            "(ADR-0011), not 'off'. An explicit 0 is unrepresentable here.")
 
     if mode == "off":
-        dead = []
-        if isinstance(ms.get("ms3"), dict):
-            dead.append("ms_settings.ms3")
+        # protein_sequence is NOT dead weight under mode: off any more -- it is the identification
+        # gate. Exploration::initiateNextLevel used to bail whenever the mode was off, which took the
+        # whole identification path down with MS3 dispatch; it now bails only on an empty sequence,
+        # and re-asserts the dispatch conditions lower down. So "mode": "off" with a real sequence is
+        # a supported configuration meaning "identify, acquire no MS3", and reporting it as unread
+        # would send an author to delete the one key making their run produce identifications.
         if seq:
-            dead.append("characterization.protein_sequence")
-        if dead:
-            rep.note(f"mode is \"off\", so {', '.join(dead)} is carried but never read. Legal "
+            rep.note("mode is \"off\" but characterization.protein_sequence is set: this run WILL "
+                     "identify (sequence tags, fragment matches, identification.tsv rows) and will "
+                     "dispatch no MS3. Identification is gated by the sequence; dispatch by the mode.")
+        if isinstance(ms.get("ms3"), dict):
+            rep.note("mode is \"off\", so ms_settings.ms3 is carried but never read. Legal "
                      "(ADR-0013 keeps it optional rather than forbidden) -- just dead weight.")
 
     if mode == "exhaustive":
