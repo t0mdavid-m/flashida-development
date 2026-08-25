@@ -1,6 +1,11 @@
 # 0032. Only a commanded scan earns a command
 
-Status: Accepted (2026-08-25), implementation pending.
+Status: Accepted (2026-08-25), implemented.
+**Amended by [ADR-0033](0033-an-idle-instrument-acquires-its-own-method.md)** — the submission
+threshold below is now a configurable target depth (default 2), because depth 1 leaves the
+instrument's queue empty after every scan and a Tribrid fills that gap with its own method. The
+accounting in this ADR is unchanged; only the number it is compared against moved. Do not cite the
+threshold clause without 0033.
 Related: [ADR-0008](0008-scan-identity-channels-are-separate.md) — the instrument job number, which
 is the channel this decision reads. It is *not* the tracking id, and that distinction is the whole
 reason a correct predicate exists.
@@ -71,6 +76,10 @@ a derived count of outstanding commands rather than on the predicate alone:
 
 - an arrival whose `Access ID` is not `"0"` has spent one of our commands;
 - a command is submitted only while the outstanding count is at or below zero;
+  <!-- AMENDED by ADR-0033: the comparand is now scheduling.target_depth (default 2), and the drain
+       tops up to it in a bounded loop rather than submitting once. Measured cost of "at or below
+       zero" on hardware: 53% of the duty cycle to the instrument method's own scans. -->
+
 - the count is incremented **inside** the success path, after submission returns.
 
 **The handshake scan moves to its own PAGC group** (`AGCgroup: 2`). `IsAGC` stays `true`.
