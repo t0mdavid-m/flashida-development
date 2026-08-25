@@ -573,9 +573,22 @@ _Avoid_: magic scan (the historical name; it describes the constant, not the pur
 
 **Custom control mode**:
 The latched state in which FLASHIda drives acquisition. Latching requires the *echo* of the
-handshake scan, not merely having sent it: scans arriving before custom control engages
-belong to the instrument's own method and must be ignored.
-_Avoid_: connected (connection strictly precedes it); acquisition mode.
+handshake scan, not merely having sent it. It is **not exclusive**: the instrument goes on
+acquiring scans of its own while the latch is set, so belonging to custom control is a property
+of *each individual scan*, never of a period of time.
+_Avoid_: connected (connection strictly precedes it); acquisition mode; reading the latch as a
+window inside which every arriving scan is ours.
+
+**Outstanding command**:
+A scan command FLASHIda has submitted that the instrument has not yet executed. Their count is
+the acquisition's **depth**, and it is the difference between two things FLASHIda already knows:
+what it has sent, and what has come back. Depth above one is outside what the instrument
+guarantees — the vendor defines submitting a further command before the previous one has been
+dealt with as undefined, and it fails silently rather than erroring, so depth is a quantity that
+must be maintained deliberately and can never be inferred from the absence of complaint.
+_Avoid_: conflating it with the engine's own command queue, which is a different queue on the far
+side of the bridge and drains in the opposite direction — a command *leaves* the first to *enter*
+the second, so "the queue got deeper" is true of one and false of the other at the same moment.
 
 ## Language — kinds of scan
 
@@ -598,6 +611,14 @@ respect except why it exists, and it yields to any real work: it is the lowest-r
 engine can ask for.
 _Avoid_: "idle cycle", which used to name a *pair* of scans and so quietly changes meaning; "AGC
 scan", which it never was.
+
+**Uncommanded scan**:
+A scan the instrument acquired without FLASHIda having asked for it. It carries none of our
+instrument job numbers and no engine-minted tracking id, so it is not analysable and nothing may
+be concluded from it. Rare but not exceptional — a handful per run — and it arrives *during*
+custom control, not only before it.
+_Avoid_: "unsolicited", which suggests we could have declined it; "instrument-method scan", since
+the origin is not knowable from the scan itself — internal calibration produces one too.
 
 ## Language — scan configuration
 
