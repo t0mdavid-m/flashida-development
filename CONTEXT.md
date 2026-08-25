@@ -344,10 +344,14 @@ not a measurement).
 **Baseline variant**:
 A pre-scan that measures one activation's *un-fragmented* reference — the
 intact-precursor intensity its own siblings are ratioed against. It is that
-activation's ordinary variant with the **swept axis alone** set to zero: CE 0 for a
-CE-swept activation, reaction time 0 for an RT-swept one, both for EThcD. Every
+activation's ordinary variant with the **swept axis alone** turned off. Every
 other parameter is whatever its siblings carry, so an ETD baseline keeps the base
 scan config's collision energy rather than dropping to 0.
+**The two coupled axes turn off at different values**, and the asymmetry is the
+instrument's: a collision energy of 0 is commandable and simply does not fragment,
+but a reaction time of 0 is *rejected*, so "no reaction" means the instrument's
+minimum, 0.03 ms — short enough to leave the precursor intact. CE-swept → CE 0;
+RT-swept → RT 0.03; EThcD → both.
 It is **skipped in winner selection** and **excluded from the ProteoformTracker
 feed** (both on `is_baseline`), so it never wins and never reaches the pooled model.
 A baseline exists for **every** exploration metric, not only RemainingPrecursor
@@ -356,8 +360,10 @@ There is **one per swept activation**, at the head of that activation's block, n
 one per group — the ETD ion path measures a genuinely different reference from HCD's
 (ADR-0029). An activation that sweeps neither axis has no axis to zero, so it gets
 no baseline and competes normally. When a block's sweep already contains its own
-zero-point (`ce_min: 0`, `reaction_time_min: 0`), that variant **is** the baseline
-and no second scan is acquired.
+turn-off point (`ce_min: 0`, `reaction_time_min: 0.03`), that variant **is** the
+baseline and no second scan is acquired. The authored sweep grid is never floored —
+a `reaction_time_min` below the instrument minimum is rejected at config load
+instead, so the grid and the baseline can always coincide.
 _Avoid_: treating the baseline as a scorable variant (it never wins); assuming it
 exists only for RemainingPrecursor (that was the pre-`august_pre` behavior); assuming
 one per group; letting it feed the pooled model.

@@ -166,18 +166,28 @@ C++ tests read fixtures from `../../FlashIDA/test-data` relative to `OpenMS/buil
 - `docs/kb/` — the agent-facing knowledge base, imported above. Packet README first, then drill down. Entries carry `last_verified` + `code_anchors`; if the anchors don't resolve, the entry is stale — fix or remove it rather than relying on it.
 - `docs/adr/` — accepted architecture decisions, **twenty-nine files** spanning 0001–0030 (0006 is used twice; 0022 and 0024 are unused; 0017 is superseded by 0019, and 0018 by 0021): direct-infusion precursor scope, ProteoformTracker dispatch authority, two-stage MS3 parameter sourcing, characterization config reshape, MS3-target-is-a-containing-fragment, single bridge config schema, winner-anchored fragment pooling, strict config-schema rejection, separate scan identity channels, scan-config-determines-instrument-parameters, positional stage arrays, source-region-parameters-are-survey-scoped, FAIMS-enablement-is-explicit, characterization-mode-is-the-single-MS3-switch, two-decision-sections-and-named-scan-configs, log-dir-is-resolved-host-side, co-isolated-charges-are-one-detection, notches-occupy-spare-stage-slots, charge-keyed-exclusion-is-a-fallback, notches-get-their-own-array-and-a-per-stage-cap, a-measuring-MS3-sweep-must-be-closed-by-a-follow-up, precursor-charges-is-the-only-acquisition-geometry, exhaustive-characterization-targets-unassigned-masses, the-drain-acquires-no-analysis-lock, a-remaining-precursor-sweep-scans-only-the-window-it-reads, identification-is-gated-by-the-sequence-not-the-MS3-switch, an-authored-charge-set-restricts-acquisition-and-re-keys-exclusion, a-baseline-belongs-to-its-activation, activation-decides-whether-a-coupled-parameter-is-emitted. Read the relevant ADR before re-litigating one of these.
   ⚠️ **An exploration baseline is per swept ACTIVATION, not per group** (ADR-0029). It is that
-  activation's own variant with the swept axis alone zeroed — so an ETD baseline keeps
+  activation's own variant with the swept axis alone turned off — so an ETD baseline keeps
   `ms_settings.msN.collision_energy` — placed at the head of that activation's block, and *suppressed*
-  when the block's sweep already contains its zero-point (`ce_min: 0` / `reaction_time_min: 0`), which
-  is what stops the same command being acquired twice. An activation whose reference returns empty has
+  when the block's sweep already contains its turn-off point (`ce_min: 0` / `reaction_time_min: 0.03`),
+  which is what stops the same command being acquired twice.
+  ⚠️ **The two coupled axes do not turn off at the same value.** CE 0 is commandable and simply does
+  not fragment; **reaction time 0 is REJECTED by the instrument**, so "no reaction" is
+  `Config.h`'s `MIN_REACTION_TIME_MS` (0.03 ms). The authored sweep *grid* is never floored — instead
+  `Config::validate` throws on a `reaction_time_min` below it **when an ETD-family activation is
+  swept**, which is what keeps the grid and the baseline able to coincide. Gated on the activation, so
+  a CE-only sweep leaving `reaction_time_min` at its 0 default is untouched — that is every committed
+  config but `method_exploration_etd.json`. An activation whose reference returns empty has
   its variants **acquired anyway** and scored `-1.0` so they cannot win; nothing is cancelled, and its
   siblings are unaffected. The `-1.0` is not decorative: winner selection seeds `best_score = -1.0` and
   takes `score > best_score`, so a `0.0` there **wins** the group at zero.
   ⚠️ **`reaction_time = 0` means two different things and only the ACTIVATION separates them**
   (ADR-0030). `ScanFactory` emits the `ReactionTime` key when any stage is ETD-family, never on the
-  value — a value gate dropped the key for an ETD baseline, so the instrument silently substituted its
-  own method default (10 ms) while the engine logged 0. The reagent keys deliberately keep their `> 0`
-  gate. `Config::validate` no longer throws on an authored zero for either coupled axis. The ETD-family
+  value — a value gate dropped the key entirely, so the instrument silently substituted its own method
+  default (10 ms) while the engine logged 0. The reagent keys deliberately keep their `> 0` gate.
+  `Config::validate` no longer throws on an authored zero for either coupled axis — so an
+  `ms_settings` ETD block at `reaction_time: 0` loads and is refused *at the device*, on every scan of
+  the run. Accepted gap, deliberately narrower than the sweep guard above; do not read
+  `zero_on_a_coupled_axis_is_accepted` as an endorsement. The ETD-family
   set now has one definition per language; both are pinned as *exact sets*
   (`Config_SchemaProjection_test` ∥ `ScanFactoryTests`), because an over-broad predicate would start
   commanding a reaction time on scans that have none, invisibly.

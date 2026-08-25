@@ -57,10 +57,23 @@ the report was that the sweep was acquiring *more* scans than it needed.
 1. **One reference per swept activation**, at the head of that activation's own block.
    `buildVariants_` owns baseline placement; `initiate` prepends nothing.
 
-2. **A baseline is that activation's variant template with the swept axis alone set to zero.**
-   CE 0 for a CE-swept activation, reaction time 0 for an RT-swept one, both for EThcD. Every other
-   parameter is exactly what its siblings carry — so an ETD baseline keeps
+2. **A baseline is that activation's variant template with the swept axis alone turned off.**
+   Every other parameter is exactly what its siblings carry — so an ETD baseline keeps
    `base_config.collision_energy`, and does **not** drop it to 0.
+
+   **The two axes do not turn off at the same value, and the asymmetry is the instrument's.** A
+   collision energy of 0 is commandable and simply does not fragment; a reaction time of 0 is
+   **rejected outright**, so "no reaction" on that axis is `Config.h`'s `MIN_REACTION_TIME_MS`
+   (0.03 ms, ~300× shorter than a working ETD time). CE-swept → CE 0; RT-swept → RT 0.03;
+   EThcD → both. Using a single shared literal zero emitted an ETD baseline the instrument
+   refuses to acquire, which is the one thing a reference scan must not be.
+
+   Because the authored sweep **grid** is not floored, `Config::validate` rejects a
+   `reaction_time_min` below `MIN_REACTION_TIME_MS` when an ETD-family activation is swept. That is
+   what keeps decision 3 sound: without it, a grid starting at 0 would both place an unacquirable
+   scan in every sweep and stop the baseline coinciding with the grid's first point, resurrecting
+   the duplicate. Gated on the activation, so a CE-only sweep leaving `reaction_time_min` at its 0
+   default is unaffected.
 
 3. **If a block's sweep already contains its own zero-point, that variant *is* the baseline.** No
    second scan is synthesized; the existing one is flagged. The test compares the two *emitted
@@ -100,10 +113,13 @@ score zero, and at MS3 a measuring metric then firing a production scan at that 
 - **`ScanCommandQueue::cancelByScanIds` loses its only production caller** and is deliberately
   kept: it is an independently useful queue primitive with five dedicated sections in
   `ScanCommandQueue_Concurrent_test`.
-- **Nothing recaptures.** Every committed exploration config sweeps exactly one activation with a
-  non-zero floor, and in each the scan config's activation already equals the swept one and the
-  non-swept axis is already 0 — so the new rule synthesizes one baseline at index 0 with the same
-  activation and the same CE/RT. Byte-identical, `dda_etd` and `exploration_etd` included.
+- **Only `exploration_etd` recaptures, and only 12 cells.** Every committed exploration config
+  sweeps exactly one activation with a non-zero floor, and in each the scan config's activation
+  already equals the swept one and the non-swept axis is already 0 — so the new rule synthesizes one
+  baseline at index 0 with the same activation and CE. The one thing that moves is the ETD
+  reference's commanded reaction time, `0` → `0.03`, on 6 rows of `scan_commands.tsv` and 6 of
+  `scan_results.tsv`. No score, ratio or identification value moves: the reference is un-fragmented
+  at either value.
 - **`variant_index -1` may now appear more than once per group.** It is a marker, not an identity;
   variants are routed by tracking id, and the logged column distinguishes baselines by activation.
 - **The FIFO invariant survives** — each block's baseline is its first member, so it still dequeues

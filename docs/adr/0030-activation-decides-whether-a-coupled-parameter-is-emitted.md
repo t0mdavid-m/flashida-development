@@ -1,11 +1,47 @@
 # 0030. Activation decides whether a coupled parameter is emitted
 
 Status: Accepted (2026-08-25), implemented.
+**Corrected same day**: this ADR originally argued that `0` is a legitimate commanded reaction time
+for ETD. **It is not — the instrument rejects it**, and the floor is `0.03` ms
+(`Config.h`'s `MIN_REACTION_TIME_MS`). The decision below stands, but read the *Correction* section
+before the Context: the gate is still activation-based, and it still earns its keep, on different
+grounds than the ones first written down.
 Amends: [ADR-0009](0009-scan-config-fully-determines-instrument-parameters.md) — narrows its emit
 clause from "omit when unused" to "omit when the activation gives it no meaning".
 Related: [ADR-0010](0010-stage-arrays-are-positional.md),
 [ADR-0011](0011-source-region-parameters-are-survey-scoped.md),
 [ADR-0029](0029-a-baseline-belongs-to-its-activation.md).
+
+## Correction
+
+The premise below — "an ETD exploration baseline is precisely that: reaction time 0 is how you say
+*isolate this precursor and do not fragment it*" — is **false**. The instrument refuses a reaction
+time of 0 outright. Owner-confirmed against the hardware, which is the only place it could have been
+confirmed: the iAPI DLLs are encrypted, no test can exercise them, and this ADR shipped with the
+question explicitly recorded as unverified.
+
+Two things change, and one does not.
+
+- **What "no reaction" means.** `MIN_REACTION_TIME_MS = 0.03` is the floor, and it is what
+  Exploration's synthesized ETD/EThcD baseline now commands (ADR-0029 decision 2). The collision
+  energy axis is unaffected: CE 0 *is* commandable. So the two activation-coupled axes turn off at
+  different values, and that asymmetry is the instrument's rather than ours.
+- **Why the activation gate is worth having.** It was justified as "0 is a real value we mean to
+  send". Since we no longer send 0 for a swept ETD baseline, a value gate would in fact emit the
+  same key for every reachable exploration input. What survives is narrower and still real: the
+  authored path. An `ms_settings` ETD block at `reaction_time: 0` still loads (see the accepted gap
+  below), and under the old value gate its key vanished and the instrument silently substituted its
+  method default; under the activation gate the 0 reaches the device and is **rejected loudly**. The
+  gate converts a silent wrong answer into a visible failure — which was always the point, just not
+  the mechanism first written down.
+- **What does not change:** the decision itself. Emit on the activation, never on the value.
+
+The one path deliberately left exposed: an authored `ms_settings.<scan>` pairing ETD with a
+reaction time below the floor is neither floored nor rejected at load. It fails at the instrument,
+loudly, on every scan of the run. Only the *sweep* path is guarded — `reaction_time_min` is where a
+zero is the natural way to ask for "no reaction", so that is where a load-time throw pays for
+itself. Pinned by `Config_SchemaProjection_test::zero_on_a_coupled_axis_is_accepted`, whose comment
+names the gap so nobody reads the section as an endorsement.
 
 ## Context
 
@@ -81,20 +117,23 @@ Three things travel with that.
 
 ## Consequences
 
-- **An ETD scan at reaction time 0 is commanded as 0**, and the logged value equals the commanded
-  one. If the instrument rejects or clamps it, that now shows up — in an error, or as a visible
-  disagreement in `scan_results.tsv` — rather than as a silent substitution. Whether the iAPI
-  accepts `ReactionTime = 0` is unverified in code (the DLLs are encrypted and no test can exercise
-  them) and is to be confirmed on hardware; the change makes either outcome loud.
+- **Whatever reaction time an ETD scan carries is commanded verbatim**, and the logged value equals
+  the commanded one. In practice a swept ETD baseline carries `MIN_REACTION_TIME_MS`, not 0, because
+  the instrument rejects 0 — see *Correction*. The value of the gate is that a 0 arriving from the
+  authored path is now refused at the device instead of being replaced, unseen, by the instrument
+  method's own default.
 - **A pure HCD/CID scan is unaffected** — the key is still omitted, so ADR-0009's "a wholly unused
   parameter defers to the instrument method default" is preserved for every activation that has no
   ion-ion reaction.
 - **Positional integrity is unchanged**: one element per stage, so a two-stage HCD+ETD cascade
   emits `"0;5"` and the ETD stage's value stays bound to the ETD stage.
 - **An authored `ms_settings` scan config pairing ETD with `reaction_time: 0`, or HCD/CID with
-  `collision_energy: 0`, now loads.** It commands "do not fragment" for the whole run, which is
-  almost certainly a mistake — but it is a visible one, and the strict schema is no longer the
-  thing catching it.
+  `collision_energy: 0`, now loads.** The two are not equally harmless, and that is the accepted gap
+  in *Correction*: HCD at CE 0 fragments nothing but acquires, while ETD at reaction time 0 is
+  refused by the instrument on every scan of the run. Both are almost certainly mistakes; both are
+  now visible ones; neither is caught by the schema. The **sweep** equivalent *is* caught —
+  `reaction_time_min` below the floor throws at load, because a zero there is the natural way to
+  ask for "no reaction" and so is a mistake worth anticipating.
 - **This is a production-path-only change.** The five golden log streams are written by the C++
   `IdaLogger` and the engine's `reaction_time` value is unchanged, so no golden moves. The
   corollary is that nothing in CI exercised the defect: it lived in the one hop CI never checks.
