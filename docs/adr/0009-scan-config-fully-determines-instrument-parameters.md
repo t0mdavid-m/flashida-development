@@ -10,6 +10,12 @@ scan" rule below governs **analyzer-side** parameters. The three **source-region
 draws from rather than any one scan, and an MSn scan that states none of its own takes the survey's
 — resolved at C# emit time, so the invariant that a `ScanConfig` fully determines its scan still
 holds verbatim at every scan site.
+Amended by [ADR-0030](0030-activation-decides-whether-a-coupled-parameter-is-emitted.md), which
+narrows the **emit clause** for activation-coupled parameters: a key is omitted when the stage's
+activation gives it no meaning, not merely when its value is zero. `0` on an ETD stage is a real
+commanded reaction time (an exploration baseline), and value-gating it made the instrument
+substitute its own default while the engine logged 0. The "defer to the instrument method" rule
+below still governs every activation that has no ion-ion reaction.
 
 ## Context
 

@@ -342,17 +342,35 @@ completed sweep has produced evidence (a measuring metric produces a *parameter*
 not a measurement).
 
 **Baseline variant**:
-A special CE-0 / RT-0 pre-scan prepended (index 0) to an exploration group. It
-measures the *un-fragmented* reference (for RemainingPrecursor, the intact-precursor
-intensity the CE variants are ratioed against) and is **skipped in winner
-selection** (`is_baseline`). As of `august_pre` a baseline is prepended to **every**
-exploration metric, not only RemainingPrecursor (Phase-2 decision 2026-07-06) — so
-every exploration group now fires one extra pre-scan and emits one extra variant row.
-It is **excluded from the ProteoformTracker feed** (an `is_baseline` guard), so a
-CE-0 baseline never contributes to the pooled proteoform model.
+A pre-scan that measures one activation's *un-fragmented* reference — the
+intact-precursor intensity its own siblings are ratioed against. It is that
+activation's ordinary variant with the **swept axis alone** set to zero: CE 0 for a
+CE-swept activation, reaction time 0 for an RT-swept one, both for EThcD. Every
+other parameter is whatever its siblings carry, so an ETD baseline keeps the base
+scan config's collision energy rather than dropping to 0.
+It is **skipped in winner selection** and **excluded from the ProteoformTracker
+feed** (both on `is_baseline`), so it never wins and never reaches the pooled model.
+A baseline exists for **every** exploration metric, not only RemainingPrecursor
+(Phase-2 decision 2026-07-06).
+There is **one per swept activation**, at the head of that activation's block, not
+one per group — the ETD ion path measures a genuinely different reference from HCD's
+(ADR-0029). An activation that sweeps neither axis has no axis to zero, so it gets
+no baseline and competes normally. When a block's sweep already contains its own
+zero-point (`ce_min: 0`, `reaction_time_min: 0`), that variant **is** the baseline
+and no second scan is acquired.
 _Avoid_: treating the baseline as a scorable variant (it never wins); assuming it
-exists only for RemainingPrecursor (that was the pre-`august_pre` behavior); letting
-it feed the pooled model.
+exists only for RemainingPrecursor (that was the pre-`august_pre` behavior); assuming
+one per group; letting it feed the pooled model.
+
+**De-referenced activation**:
+An activation whose baseline returned with no signal in the isolation window. Its
+variants are **still acquired** — nothing is cancelled — but they score `-1.0`
+("not scored") and so can never win, because winner selection seeds its best score
+at `-1.0` and compares strictly greater. Sibling activations are unaffected and one
+of them supplies the winner. Only when *every* swept activation is de-referenced
+does the group finish with no winner.
+_Avoid_: reading the `-1.0` as a bad score rather than an absent one (a genuine
+zero-quality variant scores `0.0` and remains eligible); expecting a cancellation.
 
 **Follow-up MSn**:
 The production MSn scan emitted at the parameters chosen by a parameter-optimizing
