@@ -12,9 +12,10 @@ jobs:
   # committed-DLL toolchain). Three outputs from one compile:
   #   1. OpenMS.dll (+ OpenSwathAlgo/Qt6) -> artifact 'openms-fresh-dll',
   #      swapped into FlashIDA/dll/ by windows-tests (bridge/ABI drift).
-  #   2. FLASHDeconvWizard.exe + OpenMS_GUI.dll + the Qt GUI closure and the
-  #      windows platform plugin -> the SAME 'openms-fresh-dll' artifact, as a
-  #      bundle that runs as downloaded. Needs WITH_GUI=ON on the configure.
+  #   2. FLASHDeconvWizard.exe + FLASHDeconv.exe + OpenMS_GUI.dll + the Qt GUI
+  #      closure, the windows platform plugin and share/OpenMS -> the SAME
+  #      'openms-fresh-dll' artifact, laid out bin/ + share/ so it runs as
+  #      downloaded. Needs WITH_GUI=ON on the configure.
   #   3. The 25 FLASH C++ test exes (same Release build dir)
   #      -> artifact 'cpp-test-build', executed by cpp-tests via ctest.
   # Ported from OpenMS/.github/workflows/build_dlls.yml. Plain CMake, Release.
@@ -120,12 +121,16 @@ jobs:
         run: |
           cmake --build OpenMS/build --target OpenMS
 
-      # --- FLASHDeconvWizard (GUI) ---
-      # Built BEFORE the artifact is collected, because the exe ships inside it. WITH_GUI=ON (set
+      # --- FLASHDeconvWizard (GUI) + the tool it drives ---
+      # Built BEFORE the artifact is collected, because both exes ship inside it. WITH_GUI=ON (set
       # on the configure step above) pulls in the whole OpenMS_GUI library -- 151 extra TUs plus
       # AUTOUIC over 32 .ui files -- and requires Qt6 Gui/Widgets/Svg/OpenGLWidgets, which the
       # qtbase+qtsvg archives installed above provide.
-      - name: Build FLASHDeconvWizard
+      # FLASHDeconv is NOT optional: the wizard is a launcher. FLASHDeconvTabWidget.cpp:35 calls
+      # File::findSiblingTOPPExecutable("FLASHDeconv"), which resolves to
+      # getExecutablePath() + "FLASHDeconv.exe" and THROWS FileNotFound otherwise -- there is no
+      # PATH probe on Windows (File.cpp leaves it as a TODO).
+      - name: Build FLASHDeconvWizard and FLASHDeconv
         shell: bash
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -134,46 +139,64 @@ jobs:
           CCACHE_COMPILERCHECK: content
           CCACHE_SLOPPINESS: time_macros,include_file_ctime,include_file_mtime
         run: |
-          cmake --build OpenMS/build --target FLASHDeconvWizard
+          cmake --build OpenMS/build --target FLASHDeconvWizard FLASHDeconv
 
-      # --- Collect the artifact: fresh DLLs for the drift check + a RUNNABLE wizard ---
+      # --- Collect the artifact: fresh DLLs for the drift check + a RUNNABLE FLASHDeconv ---
       # Two payloads in one artifact, deliberately:
-      #   1. windows-tests copies four DLLs out of here BY NAME (OpenMS, OpenSwathAlgo, Qt6Core,
+      #   1. windows-tests copies four DLLs out of bin/ BY NAME (OpenMS, OpenSwathAlgo, Qt6Core,
       #      Qt6Network) over FlashIDA/dll/ for bridge/ABI drift detection. It does not glob, so
       #      nothing added below can leak into that copy.
-      #   2. FLASHDeconvWizard.exe plus everything it needs to LAUNCH. Shipping the exe alone
-      #      would produce a download that dies on start, which is worse than not shipping it.
-      # Every cp is fail-closed (bash -e): a Qt layout change must break the build, not silently
-      # ship a bundle that cannot run. If maintaining this list becomes a chore, the canonical
-      # replacement is `$QT_ROOT_DIR/bin/windeployqt.exe openms-fresh-dll/FLASHDeconvWizard.exe`,
+      #   2. FLASHDeconvWizard.exe + FLASHDeconv.exe and everything they need to RUN. Shipping an
+      #      exe without its dependencies is a download that dies on start, which is worse than
+      #      not shipping it.
+      #
+      # The bin/ + share/ split is NOT cosmetic -- it is the only layout OpenMS resolves at
+      # runtime. File::getOpenMSDataPath() probes OPENMS_DATA_PATH, then two compiled-in paths
+      # (both pointing at THIS runner's directories, absent on any other machine), then
+      # `getExecutablePath() + "../share/OpenMS"`. That last one is live on Windows and is the
+      # only one that can work in a portable bundle; miss it and every OpenMS tool prints
+      # "OpenMS FATAL ERROR! Cannot find shared data!" and exit(1)s. The directory is validated by
+      # the presence of CHEMISTRY/unimod.xml (File::isOpenMSDataPath_), so pruning examples/ --
+      # 136 MB of the 195 MB, referenced by no runtime code path -- is safe.
+      #
+      # Every cp is fail-closed (bash -e): a Qt or share/ layout change must break the build, not
+      # silently ship a bundle that cannot run. If maintaining the Qt list becomes a chore, the
+      # canonical replacement is `$QT_ROOT_DIR/bin/windeployqt.exe <bin>/FLASHDeconvWizard.exe`,
       # which resolves the transitive set and writes qt.conf itself.
-      - name: Collect fresh DLLs and the FLASHDeconvWizard bundle
+      - name: Collect fresh DLLs and the runnable FLASHDeconv bundle
         shell: bash
         run: |
-          mkdir -p openms-fresh-dll/platforms
+          BIN=openms-fresh-dll/bin
+          mkdir -p "$BIN/platforms" openms-fresh-dll/share
           # OpenMS.dll + OpenSwathAlgo.dll land in the build's bin/ output dir
           # (CMAKE_RUNTIME_OUTPUT_DIRECTORY = <build>/bin; Release => no 'd' postfix).
-          cp OpenMS/build/bin/OpenMS.dll openms-fresh-dll/
-          cp OpenMS/build/bin/OpenSwathAlgo.dll openms-fresh-dll/
+          cp OpenMS/build/bin/OpenMS.dll "$BIN"/
+          cp OpenMS/build/bin/OpenSwathAlgo.dll "$BIN"/
           # The wizard links OpenMS_GUI directly (target_link_libraries(${i} OpenMS_GUI)).
-          cp OpenMS/build/bin/OpenMS_GUI.dll openms-fresh-dll/
-          cp OpenMS/build/bin/FLASHDeconvWizard.exe openms-fresh-dll/
+          cp OpenMS/build/bin/OpenMS_GUI.dll "$BIN"/
+          cp OpenMS/build/bin/FLASHDeconvWizard.exe "$BIN"/
+          cp OpenMS/build/bin/FLASHDeconv.exe "$BIN"/      # the wizard's sibling-exe lookup
           # Qt6 runtime DLLs from the Qt install bin. Core+Network are what OpenMS.dll itself
           # needs and what windows-tests consumes; the rest are the GUI closure. OpenGL is NOT
           # optional -- Qt6OpenGLWidgets links it, and omitting it fails the load at startup.
           for q in Core Network Gui Widgets Svg OpenGL OpenGLWidgets; do
-            cp "$QT_ROOT_DIR/bin/Qt6$q.dll" openms-fresh-dll/
+            cp "$QT_ROOT_DIR/bin/Qt6$q.dll" "$BIN"/
           done
-          cp FlashIDA/dll/zlib.dll openms-fresh-dll/   # OpenMS.dll load-time dep
+          cp FlashIDA/dll/zlib.dll "$BIN"/   # OpenMS.dll load-time dep
           # Qt refuses to start a GUI app without a platform plugin ("could not load the Qt
           # platform plugin windows"). OpenMS's own GUI CMakeLists installs exactly this pair for
           # WIN32; qt.conf's Plugins path is resolved relative to the application directory.
-          cp "$QT_ROOT_DIR/plugins/platforms/qwindows.dll" openms-fresh-dll/platforms/
-          printf '[Paths]\nPlugins = .\n' > openms-fresh-dll/qt.conf
-          ls -laR openms-fresh-dll
+          cp "$QT_ROOT_DIR/plugins/platforms/qwindows.dll" "$BIN"/platforms/
+          printf '[Paths]\nPlugins = .\n' > "$BIN"/qt.conf
+          # share/OpenMS, minus examples/
+          cp -r OpenMS/share/OpenMS openms-fresh-dll/share/
+          rm -rf openms-fresh-dll/share/OpenMS/examples
+          test -f openms-fresh-dll/share/OpenMS/CHEMISTRY/unimod.xml   # isOpenMSDataPath_ marker
+          ls -la "$BIN" "$BIN"/platforms
+          du -sh openms-fresh-dll openms-fresh-dll/share
 
-      # Carries the four DLLs windows-tests swaps in, plus a self-contained FLASHDeconvWizard:
-      # download, unzip, run the exe in place.
+      # Carries the four DLLs windows-tests swaps in (under bin/), plus a self-contained
+      # FLASHDeconv: download, unzip, run bin\FLASHDeconvWizard.exe in place.
       - name: Upload fresh DLLs artifact
         uses: actions/upload-artifact@v4
         with:
@@ -289,10 +312,10 @@ jobs:
       - name: Swap fresh OpenMS DLLs into FlashIDA/dll
         shell: powershell
         run: |
-          Copy-Item openms-fresh-dll\OpenMS.dll       FlashIDA\dll\OpenMS.dll -Force
-          Copy-Item openms-fresh-dll\OpenSwathAlgo.dll FlashIDA\dll\OpenSwathAlgo.dll -Force
-          Copy-Item openms-fresh-dll\Qt6Core.dll      FlashIDA\dll\Qt6Core.dll -Force
-          Copy-Item openms-fresh-dll\Qt6Network.dll   FlashIDA\dll\Qt6Network.dll -Force
+          Copy-Item openms-fresh-dll\bin\OpenMS.dll       FlashIDA\dll\OpenMS.dll -Force
+          Copy-Item openms-fresh-dll\bin\OpenSwathAlgo.dll FlashIDA\dll\OpenSwathAlgo.dll -Force
+          Copy-Item openms-fresh-dll\bin\Qt6Core.dll      FlashIDA\dll\Qt6Core.dll -Force
+          Copy-Item openms-fresh-dll\bin\Qt6Network.dll   FlashIDA\dll\Qt6Network.dll -Force
           Write-Host "Swapped fresh OpenMS DLLs into FlashIDA\dll (zlib.dll left committed)."
 
       # --- Restore Thermo iAPI DLLs (proprietary, encrypted in repo) ---
