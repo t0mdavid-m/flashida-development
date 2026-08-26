@@ -548,8 +548,9 @@ array, never from the definition map); a name for the common case (`ms_settings.
 
 ## Language — instrument control
 
-A scan carries **two independent identity channels**. Conflating them is what produced the
-contact-closure startup defect, so the two are named separately and deliberately.
+A scan carries **three independent identity channels**. Conflating them is what produced the
+contact-closure startup defect and, separately, an acquisition log that its own consumer could
+never join — so the three are named separately and deliberately. Two are ours; the third is not.
 
 **Instrument job number**:
 The integer FLASHIda stamps on an outbound custom scan as `RunningNumber`, which the
@@ -565,6 +566,15 @@ The engine-minted base-94 identifier occupying the first three characters of
 looks up in `pending_scan_map_`; a scan whose tracking id the engine did not mint is
 rejected before deconvolution. Minted by `ScanCommandQueue::nextTrackingId`.
 _Avoid_: scan id, Access ID, instrument job number.
+
+**Instrument scan number**:
+The number the instrument itself assigns to a scan as it acquires it. Unlike the other two
+channels FLASHIda neither mints it nor asks for it — it exists only on the scan coming *back* —
+and it is the only one of the three that survives into the converted data file. That is what
+makes it the join between an acquisition and its later analysis, and why a log that claimed to
+carry it while carrying a tracking id was unusable rather than merely inaccurate.
+_Avoid_: scan id, Access ID, tracking id; and "scan index", which names a position within a file
+rather than something the instrument assigned.
 
 **Handshake scan**:
 The single scan whose echoed **instrument job number** proves the instrument has entered
