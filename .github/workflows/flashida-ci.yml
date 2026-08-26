@@ -152,6 +152,7 @@ jobs:
         run: |
           cmake --build OpenMS/build --target \
             DeconvolvedSpectrum_OptimizationMetadata_test \
+            FLASHDeconvFeatureFile_test \
             FLASHIdaQueueTracking_test \
             FLASHIda_ProcessScan_test \
             ScanCommandLayout_test \
@@ -554,4 +555,4 @@ jobs:
       - name: Run FLASH C++ unit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
-        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|ConfigSchemaParity|FLASHIda_LoggingFields|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeModes|ScanConfig_applyOverrides|Config_SchemaProjection|ProteoformTracker_CEOptimization|ProteoformTracker_Trajectory|ProteoformTracker_Localization|ProteoformTracker_WinnerContext|ProteoformTracker_NonWinnerRematch|ProteoformTracker_Exhaustive" --output-on-failure
+        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHDeconvFeatureFile|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|FLASHIda_LegacyConfig|ConfigSchemaParity|FLASHIda_LoggingFields|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeModes|ScanConfig_applyOverrides|Config_SchemaProjection|ProteoformTracker_CEOptimization|ProteoformTracker_Trajectory|ProteoformTracker_Localization|ProteoformTracker_WinnerContext|ProteoformTracker_NonWinnerRematch|ProteoformTracker_Exhaustive" --output-on-failure
