@@ -9,10 +9,13 @@ on:
 jobs:
   # ----------------------------------------------------------------
   # Build OpenMS ONCE on windows-2022 (MSVC + Qt 6.8.3, matches the
-  # committed-DLL toolchain). Two outputs from one compile:
+  # committed-DLL toolchain). Three outputs from one compile:
   #   1. OpenMS.dll (+ OpenSwathAlgo/Qt6) -> artifact 'openms-fresh-dll',
   #      swapped into FlashIDA/dll/ by windows-tests (bridge/ABI drift).
-  #   2. The 13 FLASH C++ test exes (same Release build dir)
+  #   2. FLASHDeconvWizard.exe + OpenMS_GUI.dll + the Qt GUI closure and the
+  #      windows platform plugin -> the SAME 'openms-fresh-dll' artifact, as a
+  #      bundle that runs as downloaded. Needs WITH_GUI=ON on the configure.
+  #   3. The 25 FLASH C++ test exes (same Release build dir)
   #      -> artifact 'cpp-test-build', executed by cpp-tests via ctest.
   # Ported from OpenMS/.github/workflows/build_dlls.yml. Plain CMake, Release.
   # ----------------------------------------------------------------
@@ -117,19 +120,60 @@ jobs:
         run: |
           cmake --build OpenMS/build --target OpenMS
 
-      - name: Collect fresh DLLs
+      # --- FLASHDeconvWizard (GUI) ---
+      # Built BEFORE the artifact is collected, because the exe ships inside it. WITH_GUI=ON (set
+      # on the configure step above) pulls in the whole OpenMS_GUI library -- 151 extra TUs plus
+      # AUTOUIC over 32 .ui files -- and requires Qt6 Gui/Widgets/Svg/OpenGLWidgets, which the
+      # qtbase+qtsvg archives installed above provide.
+      - name: Build FLASHDeconvWizard
+        shell: bash
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 400M
+          CCACHE_COMPILERCHECK: content
+          CCACHE_SLOPPINESS: time_macros,include_file_ctime,include_file_mtime
+        run: |
+          cmake --build OpenMS/build --target FLASHDeconvWizard
+
+      # --- Collect the artifact: fresh DLLs for the drift check + a RUNNABLE wizard ---
+      # Two payloads in one artifact, deliberately:
+      #   1. windows-tests copies four DLLs out of here BY NAME (OpenMS, OpenSwathAlgo, Qt6Core,
+      #      Qt6Network) over FlashIDA/dll/ for bridge/ABI drift detection. It does not glob, so
+      #      nothing added below can leak into that copy.
+      #   2. FLASHDeconvWizard.exe plus everything it needs to LAUNCH. Shipping the exe alone
+      #      would produce a download that dies on start, which is worse than not shipping it.
+      # Every cp is fail-closed (bash -e): a Qt layout change must break the build, not silently
+      # ship a bundle that cannot run. If maintaining this list becomes a chore, the canonical
+      # replacement is `$QT_ROOT_DIR/bin/windeployqt.exe openms-fresh-dll/FLASHDeconvWizard.exe`,
+      # which resolves the transitive set and writes qt.conf itself.
+      - name: Collect fresh DLLs and the FLASHDeconvWizard bundle
         shell: bash
         run: |
-          mkdir -p openms-fresh-dll
+          mkdir -p openms-fresh-dll/platforms
           # OpenMS.dll + OpenSwathAlgo.dll land in the build's bin/ output dir
           # (CMAKE_RUNTIME_OUTPUT_DIRECTORY = <build>/bin; Release => no 'd' postfix).
           cp OpenMS/build/bin/OpenMS.dll openms-fresh-dll/
           cp OpenMS/build/bin/OpenSwathAlgo.dll openms-fresh-dll/
-          # Qt6 runtime DLLs from the Qt install bin.
-          cp "$QT_ROOT_DIR/bin/Qt6Core.dll" openms-fresh-dll/
-          cp "$QT_ROOT_DIR/bin/Qt6Network.dll" openms-fresh-dll/
-          ls -la openms-fresh-dll
+          # The wizard links OpenMS_GUI directly (target_link_libraries(${i} OpenMS_GUI)).
+          cp OpenMS/build/bin/OpenMS_GUI.dll openms-fresh-dll/
+          cp OpenMS/build/bin/FLASHDeconvWizard.exe openms-fresh-dll/
+          # Qt6 runtime DLLs from the Qt install bin. Core+Network are what OpenMS.dll itself
+          # needs and what windows-tests consumes; the rest are the GUI closure. OpenGL is NOT
+          # optional -- Qt6OpenGLWidgets links it, and omitting it fails the load at startup.
+          for q in Core Network Gui Widgets Svg OpenGL OpenGLWidgets; do
+            cp "$QT_ROOT_DIR/bin/Qt6$q.dll" openms-fresh-dll/
+          done
+          cp FlashIDA/dll/zlib.dll openms-fresh-dll/   # OpenMS.dll load-time dep
+          # Qt refuses to start a GUI app without a platform plugin ("could not load the Qt
+          # platform plugin windows"). OpenMS's own GUI CMakeLists installs exactly this pair for
+          # WIN32; qt.conf's Plugins path is resolved relative to the application directory.
+          cp "$QT_ROOT_DIR/plugins/platforms/qwindows.dll" openms-fresh-dll/platforms/
+          printf '[Paths]\nPlugins = .\n' > openms-fresh-dll/qt.conf
+          ls -laR openms-fresh-dll
 
+      # Carries the four DLLs windows-tests swaps in, plus a self-contained FLASHDeconvWizard:
+      # download, unzip, run the exe in place.
       - name: Upload fresh DLLs artifact
         uses: actions/upload-artifact@v4
         with:
@@ -216,24 +260,6 @@ jobs:
         with:
           name: cpp-test-build
           path: cpp-test-build.tgz
-
-      # --- FLASHDeconvWizard (GUI) ---
-      # Compile proof only; the exe is not artifacted. Deliberately LAST in the job so the DLL and
-      # cpp-test-build artifacts are already uploaded before the GUI link runs. Note that does not
-      # unblock the downstream jobs: both declare `needs: build`, so a failure here still skips
-      # them. WITH_GUI=ON (set on the configure step above) pulls in the whole OpenMS_GUI library
-      # -- 151 extra TUs plus AUTOUIC over 32 .ui files -- and requires Qt6 Gui/Widgets/Svg/
-      # OpenGLWidgets, which the qtbase+qtsvg archives installed above provide.
-      - name: Build FLASHDeconvWizard
-        shell: bash
-        env:
-          CCACHE_DIR: ${{ github.workspace }}/.ccache
-          CCACHE_BASEDIR: ${{ github.workspace }}
-          CCACHE_MAXSIZE: 400M
-          CCACHE_COMPILERCHECK: content
-          CCACHE_SLOPPINESS: time_macros,include_file_ctime,include_file_mtime
-        run: |
-          cmake --build OpenMS/build --target FLASHDeconvWizard
 
   # ----------------------------------------------------------------
   # C# unit tests + regression + bridge verification — windows-2022.
