@@ -98,7 +98,7 @@ jobs:
         run: |
           cmake -S OpenMS -B OpenMS/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DWITH_GUI=OFF \
+            -DWITH_GUI=ON \
             -DPYOPENMS=OFF \
             -DBOOST_USE_STATIC=ON \
             -DOPENMS_CONTRIB_LIBS="${{ github.workspace }}/OpenMS/contrib" \
@@ -215,6 +215,24 @@ jobs:
         with:
           name: cpp-test-build
           path: cpp-test-build.tgz
+
+      # --- FLASHDeconvWizard (GUI) ---
+      # Compile proof only; the exe is not artifacted. Deliberately LAST in the job so the DLL and
+      # cpp-test-build artifacts are already uploaded before the GUI link runs. Note that does not
+      # unblock the downstream jobs: both declare `needs: build`, so a failure here still skips
+      # them. WITH_GUI=ON (set on the configure step above) pulls in the whole OpenMS_GUI library
+      # -- 151 extra TUs plus AUTOUIC over 32 .ui files -- and requires Qt6 Gui/Widgets/Svg/
+      # OpenGLWidgets, which the qtbase+qtsvg archives installed above provide.
+      - name: Build FLASHDeconvWizard
+        shell: bash
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 400M
+          CCACHE_COMPILERCHECK: content
+          CCACHE_SLOPPINESS: time_macros,include_file_ctime,include_file_mtime
+        run: |
+          cmake --build OpenMS/build --target FLASHDeconvWizard
 
   # ----------------------------------------------------------------
   # C# unit tests + regression + bridge verification — windows-2022.
