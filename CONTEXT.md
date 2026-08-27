@@ -15,10 +15,14 @@ is detected **once** at MS1 and acquired at one **acquisition charge set** — b
 default a single **representative charge** (highest-SNR `getRepAbsCharge`, one m/z
 isolation window). That one detection schedules the whole downstream cascade — its
 MS2 (plus any CE-sweep exploration variants over that *same* charge set) and the
-MS3 scans that increase coverage — and the mass is put on **dynamic exclusion
-immediately** so it is never re-detected as a *new* Precursor, including for
-inclusion targets. So one Precursor's evidence comes from **one charge set**, never
-from separate detections of the same mass at different charges.
+MS3 scans that increase coverage — and the mass enters **acquisition memory**
+at once, so it is not re-detected as a *new* Precursor unless a later survey
+resolves it **better** than the survey that acquired it did; once it has been
+acquired well enough, not even that reopens it. Both halves apply to inclusion
+targets too. So one Precursor's evidence comes from **one charge set**, never
+from separate detections of the same mass at different charges. One detection is
+not one PeakGroup: an inclusion target's envelope can arrive **split** across
+several, and those are one detection (see **Split envelope**).
 _Avoid_: pooling MS2 from **separate detections** at different charge states (an
 artifact of deferred exclusion — the same molecule re-selected at charges 8/10/15 —
 which produced physically-impossible MS3 charge pairings; charges *co-isolated
@@ -72,6 +76,29 @@ _Avoid_: reading it as a demand for those charges (it cannot add one); "requeste
 charges"; conflating it with the **acquisition charge set**, which is what a scan
 actually isolates once the gates have run.
 
+**Split envelope**:
+One Precursor's charge states arriving from the deconvolution as **several
+PeakGroups**, each carrying part of the envelope, so no one of them can supply the
+whole **intended charge set**. It is specific to inclusion targets: the collapse
+that merges near-identical features down to the strongest one is deliberately
+skipped for targeted ones, so only targets survive it in numbers. Two PeakGroups
+within the mass tolerance **are one Precursor** — a split envelope is
+indistinguishable from two co-eluting species that close in mass, and both are
+treated as one.
+_Avoid_: "duplicate peak groups" (the later ones carry charges the first does not);
+reading a Precursor's charge states off any single PeakGroup.
+
+**Intended charge set**:
+What one Precursor should be acquired at within a single survey, and therefore what
+"acquired in full" is measured against: the **authored charge set** when the row
+names charges, the whole signal-bearing envelope when the acquisition mode asks for
+several charges, and the **anchor charge** alone when it does not. A PeakGroup of an
+already-acquired Precursor earns a scan only by completing it, never by scoring
+well.
+_Avoid_: conflating it with the **acquisition charge set**, which is what one scan
+isolates — completing one intended set may take several scans, and under a **split
+envelope** several PeakGroups.
+
 **Anchor charge**:
 The member of an acquisition charge set that a scan's **identity and per-charge
 scores** are attributed to — the highest-SNR member. Under an **authored charge
@@ -100,6 +127,49 @@ otherwise the next survey falls back onto a charge already fragmented.
 _Avoid_: expecting it to acquire several charges of one mass within a single survey
 (that is one-scan-per-charge acquisition, a separate choice); expecting it of a
 species with no authored charge set.
+
+**Qscore bar**:
+The best score a Precursor has been acquired at, and the only reason a later survey
+may acquire it again: a survey that resolves it better reopens it, a survey that
+resolves it worse does not, and the bar only ever rises. It is a **cross-survey**
+rule alone — within one survey what earns a PeakGroup a scan is what it adds to the
+**intended charge set**, never its score against a sibling's.
+_Avoid_: reading it as an exclusion (it gates selection, but a species barred
+outright is a different record — see **Acquisition memory**); comparing two
+PeakGroups of one Precursor against it.
+
+**Acquisition memory**:
+What a run has already done to a species, keyed by *nominal mass*, together with
+the rule for when that stops mattering. Several such records coexist, each
+answering one question and carrying its own expiry: whether a mass is barred from
+selection, whether an m/z is, the best score a mass has been acquired at, which of
+its charges are spent, and which fragment masses a Precursor has already had
+dispatched. Only some of them bar anything — **a record that a species was acquired
+is not the same as a rule that it may not be acquired again**, and the two are
+easily confused because they are written at the same moment.
+_Avoid_: "the exclusion list", which names one of these records as though it were
+all of them, and mis-describes the two that merely record; treating the qscore
+ledger or the MS3 dispatch record as exclusions.
+
+**Acquisition effect**:
+The set of writes one species' selection makes to acquisition memory in a single
+survey, together with the scans that selection produced. It is the unit that can be
+undone, and it belongs to the **species**, not to any one scan: a species is
+fragmented at mass level once, however many scans that acquisition takes.
+_Avoid_: treating it as per-scan — one selection can produce several scans (one per
+co-isolated charge, one per named MS2 configuration, one per exploration variant),
+and they share a single effect.
+
+**Retaining / releasing an effect**:
+The two ways an acquisition effect ends. It is **retained** when any scan built from
+it comes back: the acquisition happened, so the memory stands and can never be
+undone. It is **released** when every scan built from it was dropped before reaching
+the instrument: nothing was acquired, so the species is given back and becomes
+selectable again. A scan that was sent but never returned does neither — its effect
+simply ages out.
+_Avoid_: "commit/abort", which imports transaction vocabulary for something that is
+not a transaction; reading a release as a failure — a species released is a species
+rescued, not an error recorded.
 
 **Proteoform model** (`ProteoformModel`):
 The pooled, evolving best-known identification of a single Precursor: the winning
