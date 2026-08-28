@@ -1,5 +1,7 @@
 # `characterization.mode: exhaustive` — Implementation Plan
 
+> **Superseded (2026-08-27):** the CI-only build rule in this document no longer holds — building and testing now happen in the two local Docker containers (`ci cpp` for C++/ctest, `ci cs` for the C# suite), with CI on push as the backstop. See `CLAUDE.md`, *Local verification (two containers)*. Nothing else in this point-in-time record has been retro-edited.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a fourth `characterization.mode` value, `exhaustive`, whose MS3 target pool is every deconvolved mass of the winner MS2 scan — not only the masses that matched the winning proteoform.

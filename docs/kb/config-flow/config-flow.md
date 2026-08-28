@@ -1,7 +1,7 @@
 ---
 title: Config Flow — one bridge schema, C# to C++ engine
 applies_to: FlashIDA/src/Flash/MethodParameters.cs, FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp
-last_verified: 2026-08-07
+last_verified: 2026-08-07   # NOTE: the "Schema Drift Guard" wording was corrected 2026-08-27 — the guard is test-gated, so both local containers run it as well as CI; every other claim carries the 2026-08-07 verification.
 code_anchors:
   - FlashIDA/src/Flash/MethodParameters.cs:92   # Load
   - FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs:23   # Deserialize
@@ -170,7 +170,7 @@ behavior requires looking at state held by individual subsystems, not at config.
 ## Schema Drift Guard
 
 One schema wired on two sides (C# loader/emitter, C++ parser) can still lose a key on one
-side if a field is added to only one. A permanent, CI-gated guard makes that a test failure:
+side if a field is added to only one. A permanent, test-gated guard makes that a test failure:
 
 - `FlashIDA/test-data/config_schema_reference.json` — the complete bridge config, **generated**
   by `MethodParameters.GenerateReferenceConfigJson()` (never hand-edited).

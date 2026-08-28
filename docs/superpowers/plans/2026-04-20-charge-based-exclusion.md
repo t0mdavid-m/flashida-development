@@ -1,5 +1,7 @@
 # Charge-Based Exclusion Implementation Plan
 
+> **Superseded (2026-08-27):** the CI-only build rule in this document no longer holds — building and testing now happen in the two local Docker containers (`ci cpp` for C++/ctest, `ci cs` for the C# suite), with CI on push as the backstop. See `CLAUDE.md`, *Local verification (two containers)*. Nothing else in this point-in-time record has been retro-edited.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an optional developer flag `charge_based_exclusion` that treats each `(mass, charge)` as an independent acquisition target with its own qscore accumulator and its own exclusion decision. When the flag is on, within a single MS1 scan the engine expands every peak group to one candidate per observed charge; a per-`(mass, charge)` accumulator / exclusion set replaces the mass-keyed machinery for candidate skipping, and the mass itself is never globally excluded. When the flag is off, behavior is byte-for-byte unchanged.

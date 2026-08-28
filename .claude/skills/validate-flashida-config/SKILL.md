@@ -119,10 +119,13 @@ hand-edited.
 stale reference makes every config using a newly added key look broken — that is exactly what
 happened when the reshape added `characterization.exploration`,
 `precursor_selection.additional_scans` and `precursor_selection.exploration.overrides`: six
-committed configs went red against a reference that predated them. A local build cannot regenerate
-it (no restored packages, no net48 reference assemblies, encrypted Thermo DLLs), so CI does it: the
-`Capture config schema reference` step runs the test with `REGEN_CONFIG_REFERENCE=1` **after** the
-unfiltered suite and uploads artifact `config-schema-reference-capture`. Promote that file.
+committed configs went red against a reference that predated them. The Windows container regenerates
+it directly (`REGEN_CONFIG_REFERENCE=1`, opt-in, default OFF); CI's `Capture config schema reference`
+step and its `config-schema-reference-capture` artifact remain the fallback — promote that file.
+**The ordering is load-bearing:** the regeneration must run **after** the unfiltered suite, or the
+gate passes against its own output and the schema silently drifts. Note this file is **not** under
+`test-data/golden`, so the golden write guard does not see it — widening the change detector to
+cover it is deferred until the owner rules on whether the container may regenerate it at all.
 
 The behavioural checks are keyed to code anchors named in the messages; if one stops resolving, the
 check is stale and must be re-derived, not trusted.

@@ -1,7 +1,7 @@
 ---
 title: Bridge Functions — the C++↔C# ABI
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.cpp, FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs
-last_verified: 2026-04-20   # NOTE: the ABI section below is stale vs ADR-0019 (reserved_ is [152], not [692]; the static_asserts are at ScanCommand.h:102/:220). The GetNextScanCommand line was corrected 2026-08-25 for ADR-0031; the rest is unverified.
+last_verified: 2026-04-20   # NOTE: the ABI section below is stale vs ADR-0019 (reserved_ is [152], not [692]; the static_asserts are at ScanCommand.h:102/:220). The GetNextScanCommand line was corrected 2026-08-25 for ADR-0031; step 3 of "Adding a new field" was corrected 2026-08-27 (the rebuild is local-container-first, no longer CI-only); the rest is unverified.
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h:49     # CreateFLASHIda decl
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIdaBridgeFunctions.h:52     # DisposeFLASHIda decl
@@ -68,7 +68,7 @@ This is the critical section. Breaking the contract produces **silent memory cor
 
 1. Add the field to the C++ `ScanCommand` struct in the appropriate group.
 2. Shrink `reserved_[692]` by the field's size — the `static_assert(sizeof == 2048)` at `:107` will fail the build if the arithmetic is wrong.
-3. Rebuild `OpenMS.dll` (CI does this; see parent `CLAUDE.md`).
+3. Rebuild `OpenMS.dll` — the Windows container (`ci dll`), or CI; see parent `CLAUDE.md`.
 4. Add the mirror field to the C# `ScanCommand` struct at `FLASHIdaWrapper.cs:31` in the **same relative position** with the same byte size. Adjust `Reserved[]`'s `SizeConst` to match.
 5. If the new field should drive an instrument parameter, wire it through `ScanFactory.BuildFromCommand` (see [csharp-consumer.md](csharp-consumer.md)).
 6. The cross-repo DLL-export staging convention applies: new exports require two commits (guarded tests, then un-guarded). Struct-field additions don't need staging since they ride the existing export surface.
