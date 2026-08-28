@@ -1,81 +1,73 @@
 # 0037. A matched inclusion target is barred by its score, not by exclusion
 
-Status: Accepted (2026-08-27), **not yet implemented**.
+Status: **Withdrawn (2026-08-28)** — accepted 2026-08-27, implemented on a branch, never landed.
+Superseded by nothing: the behaviour it proposed is already reachable through
+`precursor_selection.tqscore_threshold`, and this ADR would have removed the ability to choose.
 Related: [ADR-0036](0036-a-split-envelope-is-one-precursor-acquired-in-parts.md) — the other half of
-"several masses can sit inside one row's tolerance". 0036 governs what happens **within** a survey,
-this one what happens **across** surveys. Independently reversible: either can be backed out without
-the other.
-Amends: the **Precursor** entry in `CONTEXT.md` — its clause "once it has been acquired well enough,
-not even that reopens it" stops being true for a species that matched an inclusion row.
+"several masses can sit inside one row's tolerance", which stands and is implemented.
 
-## Context
+## What it proposed
 
-The rule "re-acquire only if this survey resolves the species at least as well as the one that
-acquired it" is already implemented, in `mass_qscore_map_`, and already documented in the glossary.
-It is also unreachable.
+That a species matching an inclusion row stop reading the two `tqscore_exceeding_*` bars, so the
+qscore comparison in `mass_qscore_map_` — "re-acquire only if this survey resolves it at least as
+well" — would govern its re-acquisition instead of dynamic exclusion.
 
-Roughly a hundred lines earlier, the same loop hard-skips any species sitting in
-`tqscore_exceeding_mass_rt_map_` or `tqscore_exceeding_mz_rt_map_`. Those two are armed together
-whenever an acquisition's score exceeds `tqscore_threshold` — which production sets to **0.1**, against
-observed qscores of 0.48 to 0.98. So the first acquisition always arms them, and the score comparison
-downstream is never consulted again until the retention-time window expires.
+## Why it was withdrawn
 
-Measured on the flagship inclusion golden: the target is **resolved in 25 of 25 surveys** and
-**acquired once**, across a 63 s run sitting entirely inside a 180 s `rt_window`. Nothing expires;
-nothing reopens.
+**The ratchet is not new, and it is not unreachable.** It predates this workspace, arriving with the
+original soft-exclusion work (`a76426e076`, then `4457abeb4c change algorithm to max qscore`), and
+sits two statements above its own off-switch:
 
-`tqscore_threshold` cannot express the intended behaviour. It is a single global number, and keeping
-the score comparison reachable for a target scoring 0.98 requires setting it near 1.0 — which
-disables the bar for every non-target species in the run. One knob, two behaviours needed.
+```cpp
+// If mass has previously been acquired with higher qscore, skip
+if (score < mass_qscore_map_[nominal_mass]) { continue; }
+mass_qscore_map_[nominal_mass] = score;
 
-## Decision
+// Add to exclusion list if neccessary
+if (mass_qscore_map_[nominal_mass] > config_.targeting().tqscore_threshold)
+{
+  tqscore_exceeding_mass_rt_map_[nominal_mass] = rt;
+  tqscore_exceeding_mz_rt_map_[integer_mz]     = rt;
+}
+```
 
-**A species that matched an inclusion row is not subject to the two `tqscore_exceeding_*` bars. Its
-re-acquisition is governed by the qscore bar alone: a survey that resolves it better reopens it, a
-survey that resolves it worse does not, and the bar only ever rises.**
+Whether the ratchet or dynamic exclusion governs is decided entirely by `tqscore_threshold`. Set it
+above a species' qscore and the bars never arm, so the ratchet runs on every survey; set it below and
+exclusion retires the species for the `rt_window`. Every committed config sits below: production
+`method.json` at 0.1, seventeen test configs at 0.0, twenty-three at 0.9 against cytC scores of
+0.94–0.98. The original ADR read that as "unreachable". It is **out-ranked at the thresholds we
+happen to ship**, which is a different thing and is a configuration question, not an architecture one.
 
-- Matched targets do not **read** either bar. They still **arm** them, on the **first** acquisition
-  only — never refreshed by a re-acquisition.
-- Everything else keeps today's behaviour exactly. The maps hold what they hold today, so a
-  non-target species sharing the target's nominal bin or its integer-m/z bucket is suppressed for the
-  same window it is suppressed for now.
-- The bar is a **cross-survey** rule alone. Within a survey, what earns a PeakGroup a scan is
-  ADR-0036's intended-set rule, and the bar is the maximum over the survey.
+**So the ADR did not add a capability — it removed a choice**, hard-coding one side of the trade for
+every row an inclusion list matched, in every method file, with no way to opt out.
 
-## Consequences
+**And the yield did not justify it.** Implemented, it moved thirteen log goldens. The extra
+acquisitions came from qscore improvements of **+0.0015, +0.0042, +0.0002 and +0.0002** — the
+build-to-build jitter documented for this engine, buying an MS2 scan each time. Meanwhile the
+measurement that motivated the ADR stands and is still worth knowing: on the flagship inclusion
+golden the target is **resolved in 25 of 25 surveys and acquired once**, across a 63 s run inside a
+180 s `rt_window`. That is real, and `tqscore_threshold` is the knob that addresses it.
 
-**A re-acquisition is a new Precursor,** with its own `precursor_id`, its own proteoform model, its
-own exploration group and its own MS3 budget. Its MS2 evidence does not pool with the earlier
-acquisition's. Pooling was considered and rejected: under `single` the anchor is the representative
-charge, which can move from survey to survey, so pooling across re-acquisitions would pool MS2 across
-charges — the cross-charge pathology the **Precursor** glossary entry lists under _Avoid_, which once
-produced physically impossible MS3 charge pairings.
+**Scope was the giveaway.** Authored rows were exempt by construction — ADR-0028 re-keys their
+exclusion to `(nominal mass, charge)`, so they never read these bars. Every golden the ADR moved was
+an unrestricted `-1` row, and the two authored-charge modes were the only inclusion modes that did
+**not** move. A change motivated by charge-state completeness that fires exactly where charges are
+*not* named was aimed at the wrong defect.
 
-The cost is real and is accepted rather than hidden: several shallow models of one species instead of
-one deep one, and an MS3 cascade per model. `separate_charges` is the worked example already in the
-tree — ten models per nominal mass, 433 MS3 scans from 32 surveys, every one converging separately on
-the same coverage a single model reaches.
+## What replaces it
 
-**Exempting only the mass bar was rejected.** The m/z bar keys on the integer isolation centre of the
-**anchor**, which is stable whenever the anchor charge repeats — usually. Re-acquisition would then
-fire only when the representative charge happened to wander into a fresh bucket: intermittent,
-irreproducible from the method file, and indistinguishable from a bug in either direction.
+Nothing, deliberately. Unrestricted rows keep today's behaviour exactly. A method that wants the
+ratchet raises `tqscore_threshold` above the target's qscore, accepting that the knob is global.
 
-**Dropping the arming was rejected too**, and so was refreshing it. Dropping it frees the target's bin
-and window neighbours to compete for slots, changing which non-targets get fragmented as a side effect
-of a target being present. Refreshing it on every re-acquisition suppresses those neighbours for the
-target's whole elution — longer than today. Arming once is the only variant under which non-target
-acquisition is unchanged in both directions.
+## Known limitations of the existing knob, recorded so they are not rediscovered
 
-**Authored rows are untouched.** They neither read nor write these maps; they reopen on an unspent
-named charge and on nothing else. A survey that resolves a completed named set at 0.99 acquires
-nothing. Score governs unrestricted rows, completion governs authored ones, and the two never meet.
-
-**Seeding the bar from outside the run was rejected as a separable change.** `target_mass_qscore_map_`
-is already populated in inclusion mode and read only in the in-depth branch, so per-mass scores from
-`files.target_logs` are parsed and discarded today. Wiring that up, or adding a sixth column to the
-inclusion TSV, would let a method say "don't bother unless you beat 0.85" — worth having, and
-orthogonal to this decision.
-
-**Retention-time expiry still reopens everything,** for both kinds of row. This ADR changes what bars
-a target inside the window; it does not change the window.
+- **It is global.** `targeting().tqscore_threshold` is one value per run, so reaching the ratchet for
+  a target also disables mass-keyed dynamic exclusion for every other species. If per-row control is
+  ever needed, that is a new key with its own ADR — starting from "the knob is global", not from
+  "matching a row overrides the knob".
+- **`removeFromExclusionList` inflates the stored bar.** `mass_qscore_map_[n] /= 1 - qscore` multiplies
+  it by ~16.7 at qscore 0.94, after which no real score beats it and the ratchet refuses that species
+  permanently. Pre-existing, independent of this decision, and not investigated here.
+- **Seeding the bar from outside the run remains unbuilt.** `target_mass_qscore_map_` is populated in
+  inclusion mode and read only in the in-depth branch, so per-mass scores from `files.target_logs` are
+  parsed and discarded today.

@@ -265,18 +265,27 @@ Two line-ending facts, both load-bearing on Linux only. The root `.gitattributes
 ## Docs Map
 
 - `docs/kb/` — the agent-facing knowledge base, imported above. Packet README first, then drill down. Entries carry `last_verified` + `code_anchors`; if the anchors don't resolve, the entry is stale — fix or remove it rather than relying on it.
-- `docs/adr/` — accepted architecture decisions, **thirty-six files** spanning 0001–0037 (0006 is used twice; 0022 and 0024 are unused; 0017 is superseded by 0019, 0018 by 0021, 0032's submission threshold is amended by 0033, 0008's two-channel model is extended by 0035, and 0028's per-survey species guard plus 0016's one-scan clause are amended by 0036): direct-infusion precursor scope, ProteoformTracker dispatch authority, two-stage MS3 parameter sourcing, characterization config reshape, MS3-target-is-a-containing-fragment, single bridge config schema, winner-anchored fragment pooling, strict config-schema rejection, separate scan identity channels, scan-config-determines-instrument-parameters, positional stage arrays, source-region-parameters-are-survey-scoped, FAIMS-enablement-is-explicit, characterization-mode-is-the-single-MS3-switch, two-decision-sections-and-named-scan-configs, log-dir-is-resolved-host-side, co-isolated-charges-are-one-detection, notches-occupy-spare-stage-slots, charge-keyed-exclusion-is-a-fallback, notches-get-their-own-array-and-a-per-stage-cap, a-measuring-MS3-sweep-must-be-closed-by-a-follow-up, precursor-charges-is-the-only-acquisition-geometry, exhaustive-characterization-targets-unassigned-masses, the-drain-acquires-no-analysis-lock, a-remaining-precursor-sweep-scans-only-the-window-it-reads, identification-is-gated-by-the-sequence-not-the-MS3-switch, an-authored-charge-set-restricts-acquisition-and-re-keys-exclusion, a-baseline-belongs-to-its-activation, activation-decides-whether-a-coupled-parameter-is-emitted, agc-prescans-are-interval-scheduled-only, only-a-commanded-scan-earns-a-command, an-idle-instrument-acquires-its-own-method, flashdeconv-targets-the-toppic-1-8-feature-layout, ida-log-is-compatible-with-its-consumer-not-its-history, a-split-envelope-is-one-precursor-acquired-in-parts, a-matched-inclusion-target-is-barred-by-its-score. Read the relevant ADR before re-litigating one of these.
-  ⚠️ **0036 and 0037 are ACCEPTED BUT NOT YET IMPLEMENTED** (2026-08-27) — the only two in the set
-  that describe behaviour the code does not have. Both address inclusion mode's blind spot when
-  several deconvolved PeakGroups fall inside one row's `±2 × tolerance_ppm` window (0.247 Da at
-  10 ppm / 12 kDa — wider than the ~1 Da nominal-mass bin every acquisition-memory map keys on).
+- `docs/adr/` — accepted architecture decisions, **thirty-six files** spanning 0001–0037 (0006 is used twice; 0022 and 0024 are unused; 0017 is superseded by 0019, 0018 by 0021, 0032's submission threshold is amended by 0033, 0008's two-channel model is extended by 0035, 0028's per-survey species guard plus 0016's one-scan clause are amended by 0036, and **0037 is withdrawn**): direct-infusion precursor scope, ProteoformTracker dispatch authority, two-stage MS3 parameter sourcing, characterization config reshape, MS3-target-is-a-containing-fragment, single bridge config schema, winner-anchored fragment pooling, strict config-schema rejection, separate scan identity channels, scan-config-determines-instrument-parameters, positional stage arrays, source-region-parameters-are-survey-scoped, FAIMS-enablement-is-explicit, characterization-mode-is-the-single-MS3-switch, two-decision-sections-and-named-scan-configs, log-dir-is-resolved-host-side, co-isolated-charges-are-one-detection, notches-occupy-spare-stage-slots, charge-keyed-exclusion-is-a-fallback, notches-get-their-own-array-and-a-per-stage-cap, a-measuring-MS3-sweep-must-be-closed-by-a-follow-up, precursor-charges-is-the-only-acquisition-geometry, exhaustive-characterization-targets-unassigned-masses, the-drain-acquires-no-analysis-lock, a-remaining-precursor-sweep-scans-only-the-window-it-reads, identification-is-gated-by-the-sequence-not-the-MS3-switch, an-authored-charge-set-restricts-acquisition-and-re-keys-exclusion, a-baseline-belongs-to-its-activation, activation-decides-whether-a-coupled-parameter-is-emitted, agc-prescans-are-interval-scheduled-only, only-a-commanded-scan-earns-a-command, an-idle-instrument-acquires-its-own-method, flashdeconv-targets-the-toppic-1-8-feature-layout, ida-log-is-compatible-with-its-consumer-not-its-history, a-split-envelope-is-one-precursor-acquired-in-parts, a-matched-inclusion-target-is-barred-by-its-score. Read the relevant ADR before re-litigating one of these.
+  ⚠️ **0036 is ACCEPTED BUT NOT YET IMPLEMENTED; 0037 is WITHDRAWN** (amended 2026-08-28). Both
+  address inclusion mode's blind spot when several deconvolved PeakGroups fall inside one row's
+  `±2 × tolerance_ppm` window (0.247 Da at 10 ppm / 12 kDa — wider than the ~1 Da nominal-mass bin
+  every acquisition-memory map keys on); the collapse that would merge them is deliberately skipped
+  for targeted features, so **22 of 25 productive surveys** of `ms1_cytc.txt` carry 2–6 of them.
   **0036** governs *within* a survey: those PeakGroups are ONE Precursor, and its acquisition may be
   completed across them, so a target whose charge envelope arrives split no longer loses the charges
-  the first PeakGroup could not resolve. **0037** governs *across* surveys: a matched target stops
-  reading the two `tqscore_exceeding_*` bars, which is what makes the qscore ratchet already sitting
-  in `mass_qscore_map_` reachable at all. `CONTEXT.md`'s **Split envelope**, **Intended charge set**
-  and **Qscore bar** entries are written against these, so three glossary terms are likewise ahead of
-  the code.
+  the first PeakGroup could not resolve. It is scoped to rows that **name charges** — a `-1` row has
+  no intended charge set and behaves exactly as it does today, in every charge mode, which is what
+  makes "no golden moved" the acceptance test for the change.
+  **0037** proposed the *across*-survey half: a matched target would stop reading the two
+  `tqscore_exceeding_*` bars, making the qscore ratchet in `mass_qscore_map_` reachable. It was
+  withdrawn because that ratchet is **not unreachable** — it dates to the original soft-exclusion
+  work and is gated by `precursor_selection.tqscore_threshold`, two statements below it. Raise the
+  threshold above a species' qscore and the ratchet governs; every committed config simply sits
+  below (production 0.1, seventeen configs 0.0, twenty-three 0.9, against cytC's 0.94–0.98). The ADR
+  would have removed that choice rather than added a capability, and implemented it moved thirteen
+  log goldens on qscore improvements of +0.0002 to +0.0042 — build jitter buying an MS2 each time.
+  `CONTEXT.md`'s **Split envelope** and **Intended charge set** entries are written against 0036 and
+  so are ahead of the code; **Qscore bar** describes the existing knob and is current.
   ⚠️ **A scan carries THREE identity channels, not two** (ADR-0035, extending 0008). Alongside the
   instrument job number and the tracking id there is the **instrument scan number** — the one
   FLASHIda neither mints nor requests, and the only one that survives into the converted mzML, which
