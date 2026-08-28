@@ -1,16 +1,16 @@
 ---
 title: The two-axis iAPI scan-parameter grammar (';' stages, ',' notches)
 applies_to: FlashIDA/src/Flash/ScanFactory.cs, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp, OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h
-last_verified: 2026-08-10
+last_verified: 2026-08-28
 code_anchors:
-  - FlashIDA/src/Flash/ScanFactory.cs:30    # MSXTargets — declared, never assigned
+  - FlashIDA/src/Flash/ScanFactory.cs:36    # MSXTargets — declared, never assigned
   - FlashIDA/src/Flash/ScanFactory.cs:44    # PrecursorMass field (string[]: one pre-formatted group per stage)
-  - FlashIDA/src/Flash/ScanFactory.cs:133   # FillParameters — reflection, arrays joined with ';'
-  - FlashIDA/src/Flash/ScanFactory.cs:168   # NotchesForStage — stage k's fixed block
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:45   # MAX_ISOLATION_STAGES = 10 (';' axis)
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:56   # MAX_NOTCHES_PER_STAGE = 9 (',' axis)
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp:256   # per-stage ';' join loop
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp:279   # num_stages == 0 placeholder branch
+  - FlashIDA/src/Flash/ScanFactory.cs:233   # FillParameters — reflection, arrays joined with ';'
+  - FlashIDA/src/Flash/ScanFactory.cs:183   # NotchesForStage — stage k's fixed block
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:49   # MAX_ISOLATION_STAGES = 10 (';' axis)
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommand.h:60   # MAX_NOTCHES_PER_STAGE = 9 (',' axis)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp:339   # per-stage ';' join loop
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp:379   # num_stages == 0 placeholder branch
 ---
 
 # The two-axis iAPI scan-parameter grammar

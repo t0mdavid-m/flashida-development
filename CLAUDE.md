@@ -298,8 +298,10 @@ Two line-ending facts, both load-bearing on Linux only. The root `.gitattributes
   ⚠️ **The `ida.log` goldens cannot see a wrong `Mass=`.** `NormalizeIdaLog` masks `Scan# \d+` and
   the Access ID outright, and `Mass=` is compared at `RelTol 1e-3` — **±12.35 Da at 12 kDa**. The
   4-significant-digit port regression (`Mass=1.235e+04` against an `AllMass=` of `12351.3933`) passed
-  with nine times the headroom. Never cite an `ida.log` golden as coverage for a mass value or for
-  either identifier.
+  with nine times the headroom; it is fixed (ADR-0035 decision 5), and the only thing that would
+  catch its return is `FLASHIda_LoggingFields_test::ida_log_mass_matches_allmass_byte_for_byte`,
+  which asserts every `Mass=` token appears **verbatim** in its own entry's `AllMass=` list — no
+  golden can. Never cite an `ida.log` golden as coverage for a mass value or for either identifier.
   ⚠️ **0034 is the one ADR that is not about FLASHIda.** It pins FLASHDeconv's offline
   `*_ms2.feature` writer to TopPIC 1.8.x's 17-column layout — TopPIC parses that file positionally
   with no bounds check, so the previous 16-column form crashed it. It lives here because there is
