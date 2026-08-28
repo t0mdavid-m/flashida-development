@@ -90,14 +90,17 @@ reading a Precursor's charge states off any single PeakGroup.
 
 **Intended charge set**:
 What one Precursor should be acquired at within a single survey, and therefore what
-"acquired in full" is measured against: the **authored charge set** when the row
-names charges, the whole signal-bearing envelope when the acquisition mode asks for
-several charges, and the **anchor charge** alone when it does not. A PeakGroup of an
-already-acquired Precursor earns a scan only by completing it, never by scoring
-well.
+"acquired in full" is measured against: its **authored charge set**, narrowed to the
+members a given PeakGroup actually resolved. Only a Precursor whose inclusion row
+**names charges** has one — a row naming none has no opinion about charge, so
+nothing about it is ever incomplete and no PeakGroup of it is ever owed a scan. A
+PeakGroup of an already-acquired Precursor earns a scan only by completing the set,
+never by scoring well.
 _Avoid_: conflating it with the **acquisition charge set**, which is what one scan
 isolates — completing one intended set may take several scans, and under a **split
-envelope** several PeakGroups.
+envelope** several PeakGroups; assuming an acquisition mode that asks for several
+charges creates one (that decides how many charges a scan isolates, not which ones
+the Precursor is owed).
 
 **Anchor charge**:
 The member of an acquisition charge set that a scan's **identity and per-charge
@@ -129,14 +132,19 @@ _Avoid_: expecting it to acquire several charges of one mass within a single sur
 species with no authored charge set.
 
 **Qscore bar**:
-The best score a Precursor has been acquired at, and the only reason a later survey
-may acquire it again: a survey that resolves it better reopens it, a survey that
-resolves it worse does not, and the bar only ever rises. It is a **cross-survey**
+The best score a Precursor has been acquired at: a survey resolving it better
+reopens it, a survey resolving it worse does not, and the bar only ever rises.
+Whether it governs anything is a **configuration** question, because it is consulted
+only for a species dynamic exclusion has not already barred, and whether an
+acquisition bars a species is decided by a single score threshold shared by the
+whole run. Above that threshold the species is barred for the retention-time window
+and the bar is never reached; below it, the bar governs. It is a **cross-survey**
 rule alone — within one survey what earns a PeakGroup a scan is what it adds to the
 **intended charge set**, never its score against a sibling's.
 _Avoid_: reading it as an exclusion (it gates selection, but a species barred
 outright is a different record — see **Acquisition memory**); comparing two
-PeakGroups of one Precursor against it.
+PeakGroups of one Precursor against it; assuming it is reachable — at commonly
+configured thresholds it is not.
 
 **Acquisition memory**:
 What a run has already done to a species, keyed by *nominal mass*, together with
@@ -700,6 +708,29 @@ custom control, not only before it.
 _Avoid_: "unsolicited", which suggests we could have declined it; "instrument-method scan", since
 the origin is not knowable from the scan itself — internal calibration produces one too.
 
+**Quantification scan**:
+The MS2 acquired to **measure reporter ions**, not to sequence anything. Its fragmentation is chosen
+for one purpose — releasing the isobaric label's reporter group, which needs collisional activation
+— so its fragment ions are a by-product and nothing reads them. It is the scan a labelled run
+spends *first* on every selected precursor, and the only scan in the run that is measured. What it
+produces is a verdict about one species: the two conditions differ, or they do not.
+_Avoid_: calling the scan a quantification result *buys* the quantification scan — it is the scan
+that does the measuring, and the one it buys is an identification scan; assuming an MS2 is a
+quantification scan because a run is labelled, which is what makes the distinction from the
+identification scan worth having; expecting its reporter region to exist under an activation that
+cannot release the label.
+
+**Identification scan**:
+The MS2 acquired to **sequence a proteoform** — the ordinary MS2 of every mode, with the
+fragmentation the method chose for informative backbone cleavage. It is where tags are found,
+where a conditional MS2 is triggered, and where MS3 targets are picked; it means the same thing and
+carries the same marker in every mode. What changes between modes is only *when* it fires: normally
+once per selected precursor, and in a labelled run only for the precursors a quantification scan
+found differential.
+_Avoid_: treating "the default MS2" as a statement about dispatch — it names the scan's job, not
+its unconditionality; supposing an identification scan is skipped because a species was
+uninteresting, when it may simply not have been measured yet.
+
 ## Language — scan configuration
 
 **Scan config**:
@@ -740,16 +771,18 @@ _Avoid_: "ETD settings" (they also apply to EThcD); treating reaction time as a 
 scan parameter.
 
 **Follow-up scan**:
-A second MS2 of a precursor already fragmented, dispatched from the regular-MS2 path to apply
-a *different* fragmentation regime — quantification (`'F'`, when the precursor is
-differentially abundant) or conditional MS2 (`'C'`, when sequence tags were found). It inherits
-the precursor's identity, targeting, scoring and FAIMS CV from the triggering MS2; everything
-about the instrument comes from the scan config it **names** in `ms_settings.additional_ms2`.
-Depth is exactly one — a follow-up cannot trigger another.
-_Avoid_: "second MS2" (exploration variants are also second MS2s but are not follow-ups);
-conflating the `'F'` and `'C'` kinds, which have different triggers but identical mechanics;
-expecting the referenced block to also fire unconditionally — it is deliberately absent from the
-dispatch roster, and that absence is the whole mechanism.
+A second MS2 of a precursor already fragmented, dispatched from the regular-MS2 path because
+something **found in the returning scan** justified spending another — an identification scan
+(`'R'`, bought when the quantification screen came back differential) or a conditional MS2 (`'C'`,
+bought when sequence tags were found). The trigger is always a measurement of the scan that
+returned, never a property known when it was queued; a follow-up is what a result *buys*. It
+inherits the precursor's identity, targeting, scoring and FAIMS CV from the triggering MS2, and
+takes every instrument parameter from its own scan config. Depth is exactly one.
+_Avoid_: "second MS2" (exploration variants are also second MS2s but are not follow-ups); reading
+the key that names one as naming a *kind* of scan — `tagging.follow_up_scan` is the scan tagging
+causes, not "a tagging scan", and the same grammar governs everywhere; expecting a block that only
+backs a follow-up to also fire unconditionally — it is deliberately absent from the dispatch
+roster, and that absence is the whole mechanism.
 
 **Scan range** (a.k.a. scan bounds):
 The m/z interval the analyzer reads out, bounding the spectrum a scan returns. Orthogonal to the
