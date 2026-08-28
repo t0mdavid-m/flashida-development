@@ -61,6 +61,11 @@ SOURCE_REGION = ("rf_lens", "source_cid", "source_cid_scaling")
 # is a hole in the allowlist, which is the failure this file exists to prevent (ADR-0007).
 PENDING_REFERENCE_KEYS = {
     "characterization.min_target_mass",  # ADR-0023, exhaustive-mode pool floor
+    # ADR-0038. All four land in the regenerated reference; delete these four the moment it does.
+    "quantification.labelling",
+    "quantification.conditions",
+    "quantification.correction_matrix",
+    "ms_settings.ms2_quant",
 }
 
 SCAN_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -115,7 +120,15 @@ def roster(cfg, level):
     if level == 3:
         return [("ms_settings.ms3", ms.get("ms3"))] if isinstance(ms.get("ms3"), dict) else []
     out = []
-    if isinstance(ms.get("ms2"), dict):
+    # ADR-0038: with quantification on, the QUANTIFICATION scan takes the primary slot -- it is the
+    # screen, so it must be acquired to decide anything -- and ms_settings.ms2 becomes the
+    # identification scan a differential verdict BUYS, i.e. conditional and not on the roster.
+    # Reporting ms2 here would answer this tool's headline question ("what is actually dispatched?")
+    # with the one scan that is not.
+    quant_on = bool((cfg.get("quantification") or {}).get("enabled")) and isinstance(ms.get("ms2_quant"), dict)
+    if quant_on:
+        out.append(("ms_settings.ms2_quant", ms["ms2_quant"]))
+    elif isinstance(ms.get("ms2"), dict):
         out.append(("ms_settings.ms2", ms["ms2"]))
     add = ms.get("additional_ms2") or {}
     for n in (cfg.get("precursor_selection") or {}).get("additional_scans") or []:
@@ -219,12 +232,26 @@ def validate(path, ref):
                                          " There is no additional_ms3: every level-3 consumer "
                                          "reads scans[0]."))
             migrated = True
-    for sec in ("tagging", "quantification"):
-        fus = (cfg.get(sec) or {}).get("follow_up_scan")
-        if isinstance(fus, dict):
-            rep.error("A2", f"{sec}.follow_up_scan is no longer an inline scan object; it is the "
-                            f"NAME of an ms_settings.additional_ms2 entry, e.g. \"{sec}_follow_up\".")
-            migrated = True
+    # Tagging is the only remaining name-referenced follow-up (ADR-0038).
+    fus = (cfg.get("tagging") or {}).get("follow_up_scan")
+    if isinstance(fus, dict):
+        rep.error("A2", "tagging.follow_up_scan is no longer an inline scan object; it is the "
+                        "NAME of an ms_settings.additional_ms2 entry, e.g. \"tagging_follow_up\".")
+        migrated = True
+    # ADR-0038 retired both of quantification's old keys outright.
+    q_raw = cfg.get("quantification") or {}
+    if "follow_up_scan" in q_raw:
+        rep.error("A2", "quantification.follow_up_scan is retired (ADR-0038). It named the scan a "
+                        "differential verdict BOUGHT, which was never measured, while the scan that "
+                        "WAS measured could not release the reporter ion. Move that block to "
+                        "'ms_settings.ms2_quant' (the quantification scan, rostered per precursor "
+                        "and measured); 'ms_settings.ms2' is the identification scan it buys.")
+        migrated = True
+    if "only_one_condition" in q_raw:
+        rep.error("A2", "quantification.only_one_condition is retired (ADR-0038) and was never "
+                        "reachable. A wholly-absent condition now reports 'differential' "
+                        "unconditionally. Delete the key.")
+        migrated = True
     if migrated:
         # Every check below reads the new shape; running them on an old file just
         # produces a second, confusing wall of errors.
@@ -274,14 +301,42 @@ def validate(path, ref):
         if n not in add:
             rep.error("A4", f"precursor_selection.additional_scans references unknown MS2 scan "
                             f"config '{n}'. Known: {sorted(add) or '(none)'}")
+    # Only tagging still references additional_ms2 by name (ADR-0038): quantification's two scans
+    # are the bare ms_settings.ms2_quant and ms_settings.ms2 slots.
     follow_refs = {}
-    for sec in ("tagging", "quantification"):
-        fus = (cfg.get(sec) or {}).get("follow_up_scan")
-        if isinstance(fus, str) and fus:
-            follow_refs[sec] = fus
-            if fus not in add:
-                rep.error("A4", f"{sec}.follow_up_scan references unknown MS2 scan config "
-                                f"'{fus}'. Known: {sorted(add) or '(none)'}")
+    fus = (cfg.get("tagging") or {}).get("follow_up_scan")
+    if isinstance(fus, str) and fus:
+        follow_refs["tagging"] = fus
+        if fus not in add:
+            rep.error("A4", f"tagging.follow_up_scan references unknown MS2 scan config "
+                            f"'{fus}'. Known: {sorted(add) or '(none)'}")
+
+    # --- quantification structural rejections, mirroring Config::validate (ADR-0038) ---
+    q = cfg.get("quantification") or {}
+    if q.get("enabled"):
+        if not isinstance((cfg.get("ms_settings") or {}).get("ms2_quant"), dict):
+            rep.error("A16", "quantification.enabled is true but ms_settings.ms2_quant is not set. "
+                             "ms2_quant IS the quantification scan -- rostered once per precursor "
+                             "and the only scan measured. Without it nothing is measured and no "
+                             "identification scan is ever bought.")
+        conds = q.get("conditions")
+        if not isinstance(conds, list) or len(conds) != 2:
+            rep.error("A16", "quantification.conditions must name EXACTLY TWO conditions "
+                             f"(got {len(conds) if isinstance(conds, list) else 0}). fold_change is "
+                             "mean(conditions[0]) / mean(conditions[1]), a two-group ratio; the "
+                             "ARRAY ORDER is the direction.")
+        if isinstance((cfg.get("precursor_selection") or {}).get("exploration"), dict):
+            rep.error("A16", "quantification.enabled and precursor_selection.exploration are "
+                             "incompatible. Exploration replaces the level-2 roster with CE-sweep "
+                             "variants, so the quantification scan is never dispatched and nothing "
+                             "is ever measured.")
+        lab = q.get("labelling", "tmt6plex")
+        valid_lab = ("itraq4plex", "itraq8plex", "tmt6plex", "tmt10plex",
+                     "tmt11plex", "tmt16plex", "tmt18plex")
+        if lab not in valid_lab:
+            rep.error("A16", f"unknown quantification.labelling '{lab}'. Valid: "
+                             f"{', '.join(valid_lab)}. ('none' is not accepted -- "
+                             "quantification.enabled is the switch.)")
 
     if cfg.get("conditional_ms2") and "tagging" not in follow_refs:
         rep.error("A15", "conditional_ms2 is true but tagging.follow_up_scan is not set. Name an "
