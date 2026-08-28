@@ -1,6 +1,8 @@
 # 0038. The quantification scan is the screen, and identification is what it buys
 
-Status: Accepted (2026-08-28) — **NOT YET IMPLEMENTED**
+Status: Accepted and IMPLEMENTED (2026-08-28). The `scan_results.tsv` quant columns landed first,
+sentinel-valued, so the 25-golden recapture they force could be reviewed on its own; the role
+inversion, the schema and the behaviour followed in the next push.
 Related: [ADR-0014](0014-two-decision-sections-and-named-scan-configs.md) — the two-decision-section
 split and the "scan configs referenced by name" rule. This ADR keeps the split and takes the
 *other* branch on the reference: the quantification scan gets a bare `ms_settings` slot, the way
@@ -133,10 +135,19 @@ honest number to report. This makes `only_one_condition`'s intent unconditional 
 key is **deleted** rather than revived.
 
 **Isotope correction is applied by default,** via `IsobaricQuantifier` with the selected method's
-stock matrix. `quantification.correction_matrix` overrides it; an all-zeros matrix yields the
-identity and turns correction off (`IsobaricQuantitationMethod.cpp:57` skips `"0.0"`, `"-1"` and
-`"NA"`, leaving `self_contribution` at 100). `normalization` stays at its `false` default, so the
-quantifier corrects for label impurity and does nothing else.
+stock matrix. `quantification.correction_matrix` overrides it, and an all-zeros matrix turns
+correction off. `normalization` stays at its `false` default, so the quantifier corrects for label
+impurity and does nothing else.
+
+⚠ **"All-zeros turns it off" is implemented by FLASHIda, not delegated — and an earlier draft of
+this ADR was wrong about that.** `IsobaricQuantitationMethod.cpp:57` does skip `"0.0"`, `"-1"` and
+`"NA"`, so such a matrix genuinely builds to the identity — but `IsobaricIsotopeCorrector.cpp:85`
+then **throws** on an identity matrix ("*…leading to no correction. Please provide a valid
+isotope_correction matrix as it was provided with the sample kit!*"). Handing one through would
+therefore abort the measurement of **every scan**, not skip the correction. So `Quantification`
+detects the all-zero case itself and sets the quantifier's own `isotope_correction: false` instead.
+This is exactly why FLASHDeconv exposes correction as a boolean rather than through the matrix; the
+authored surface here stays a single knob, and the engine absorbs the difference.
 
 **Four columns on `scan_results.tsv`,** populated on `Q` rows only:
 
@@ -187,14 +198,24 @@ discovered, which is why it is a four-way enum rather than a boolean.
 
 ## Consequences
 
-### Every config moves, and one of them changes behaviour
+### Exactly ONE config migrates, and the activations were already right
 
-All 41 committed configs carry a `quantification` block, so all 41 migrate: `follow_up_scan` and
-`only_one_condition` out, `labelling` and `conditions` in. Only `method_quant.json` — the one config
-that sets `enabled: true` — changes behaviour, and it needs its two activations swapped into their
-new roles. `MethodConfigSerializer`'s `RetiredKeyHints` gains entries for `follow_up_scan` and for
-`only_one_condition`; it currently holds exactly one entry, and the `active` → `enabled` rename in
-FlashIDA `79caf4b` was landed without one.
+All 41 committed configs carry a `quantification` block, but only **`method_quant.json`** authors
+either retired key: `follow_up_scan` appears in that one config and `only_one_condition` in none.
+The other 40 carry `enabled`/`reporter_mz_tol`/`fold_change_threshold`, all of which the new
+allowlist still accepts, and `labelling` has a default while `conditions` is required only when
+`enabled` — so they load unchanged.
+
+And the migration is a **pure relocation**: `additional_ms2.quant_follow_up` (HCD, CE 30) becomes
+`ms_settings.ms2_quant`, `ms_settings.ms2` keeps its ETD, and no activation moves. The config's
+activations were never wrong *for the roles* — HCD is the right screen and ETD the right
+identification. What was wrong is which scan the engine measured. That is worth stating plainly
+because it narrows the defect: nothing about the authored method needed fixing, only the engine's
+idea of what it had been handed.
+
+`MethodConfigSerializer`'s `RetiredKeyHints` still gains entries for both keys — the point of a hint
+is the config that has not been migrated yet, not the ones in this repo — and for the `active` →
+`enabled` rename in FlashIDA `79caf4b`, which landed without one.
 
 ### Twenty-five goldens move for a change that concerns one mode
 
