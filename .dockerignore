@@ -1,0 +1,68 @@
+# Root .dockerignore for the FLASHIda parent repo.
+#
+# WHEN THIS FILE IS READ
+# ----------------------
+# Docker reads `<context>/.dockerignore`, so this file applies ONLY to a build
+# whose context is the repo root. The sanctioned builds use the per-OS subdir as
+# the context (`docker build docker/linux`, `docker build docker/windows` -- the
+# Dockerfile's `COPY entrypoint.sh` only resolves that way), and this
+# file is not consulted for those at all.
+#
+# It exists as belt-and-braces for the day someone types `docker build .` here.
+# That is not a hypothetical cost: the repo root is ~1.6 GB, `OpenMS/src` alone
+# is 842 MB, and NEITHER image bakes in any repo source -- the repo reaches the
+# containers through a bind mount, never through a COPY. So the correct context
+# from the root is "essentially nothing", and this file makes that the default
+# instead of a 1.6 GB accident that also happens to sweep up the decrypted
+# Thermo DLLs.
+#
+# SEMANTICS: the LAST matching pattern wins. The deny-all comes first, the
+# re-includes come after it, and the never-ship rules come after those so they
+# cannot be re-enabled by a re-include.
+
+# --- 1. Deny everything -------------------------------------------------------
+# `*` covers top-level entries; `**` covers every depth. Both, deliberately:
+# the classic builder and BuildKit have historically differed on which of the
+# two they honour, and neither is expensive to state.
+*
+**
+
+# --- 2. Re-include only the container support files ---------------------------
+# `!docker` re-includes the DIRECTORY so the walker descends into it at all;
+# `!docker/**` re-includes its contents. This is the whole allowlist: today the
+# Dockerfiles COPY only their entrypoint (`COPY entrypoint.sh /entrypoint.sh`),
+# and `docker/` also holds ci-lists.awk / ci-lists.sh, which a future COPY may
+# want. Nothing outside `docker/` is ever a legitimate COPY source.
+!docker
+!docker/**
+
+# --- 3. Never ship, under any pattern -----------------------------------------
+# Listed after the re-includes so they win even if one of these ever lands
+# inside `docker/`. Rules 1-2 already exclude the FlashIDA paths; these are
+# stated by name so the intent survives an edit to the allowlist above.
+#
+# Thermo iAPI DLLs are proprietary, are decrypted host-side into
+# FlashIDA/dependencies/ at run time, and must never enter an image layer.
+**/dependencies/*.dll
+**/dependencies/*.enc
+FlashIDA/dependencies
+
+# No secret may appear in a build context, a layer or a log line.
+**/*.pem
+**/*.pfx
+**/*.key
+**/.env
+**/.env.*
+**/secrets
+**/*.secret
+
+# Git metadata: 500+ MB of pack files and every credential a helper cached.
+.git
+.git/**
+**/.git
+**/.git/**
+
+# Host-only state that would bust the build cache on every edit.
+.claude
+.superpowers
+.golden-assessment

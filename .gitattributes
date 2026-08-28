@@ -1,0 +1,63 @@
+# Root .gitattributes for the FLASHIda parent repo.
+#
+# WHY THIS FILE EXISTS
+# -------------------
+# The repo is checked out on Windows with `core.autocrlf=true` (system gitconfig,
+# not repo-local), and until this file there was no root .gitattributes at all.
+# So every text file git checks out here gets CRLF in the working tree -- proven
+# today by `.claude/hooks/archive-implemented-specs.sh` (45 CRs) and by
+# `.github/workflows/flashida-ci.yml` (608 CRs).
+#
+# The shell scripts, awk programs and container support files added for the local
+# Docker CI are executed INSIDE Linux containers (and, for the hooks, under Git
+# Bash). A CRLF checkout of any of them fails at the shebang with
+#   /usr/bin/env: 'bash\r': No such file or directory
+# or mid-script with `$'\r': command not found`. Forcing eol=lf here makes that
+# impossible regardless of the developer's autocrlf setting.
+#
+# SCOPING -- READ BEFORE ADDING A RULE
+# -----------------------------------
+# There is deliberately NO `* text=auto` line. A repo-wide normalization rule
+# would restate the eol policy for all 106 tracked files at once and is the one
+# change here that could show the whole tree as modified. Every rule below is
+# scoped to a filename pattern that either (a) matches only files created by the
+# container work, or (b) matches an existing file whose index blob is ALREADY LF,
+# so the clean filter turns the worktree CRLF back into the identical blob and
+# `git status` stays clean. Case (b) is exactly the six `.claude/hooks/*.sh`
+# scripts; verified with `git ls-files --eol` (i/lf for all six).
+#
+# These rules do NOT reach into the submodules. `FlashIDA/` and `OpenMS/` are
+# separate repositories with their own .gitattributes -- FlashIDA's is
+# `* text eol=crlf` and OpenMS's is `* text=auto eol=lf` -- and a parent-repo
+# attributes file has no authority over either. In particular this file does not
+# and must not change what `FlashIDA/test-data/**` looks like on disk; the design
+# spec's CRLF-hazard note is explicit that normalizing those fixtures to LF would
+# change what CI and the Windows container see.
+
+# --- Shell, awk and container support files: LF everywhere, always -------------
+*.sh            text eol=lf
+*.bash          text eol=lf
+*.awk           text eol=lf
+Dockerfile      text eol=lf
+Dockerfile.*    text eol=lf
+*.Dockerfile    text eol=lf
+.dockerignore   text eol=lf
+
+# The `ci` dispatcher at the repo root is an extensionless bash script, so no
+# pattern above reaches it. Anchored with a leading slash: this matches the root
+# file named `ci` and nothing else. `ci.ps1` is listed too -- it is a thin shim
+# that Git Bash / pwsh both read happily as LF, and keeping the pair identical
+# avoids a mixed-ending pair of sibling files.
+/ci             text eol=lf
+/ci.ps1         text eol=lf
+
+# Everything under docker/ is container payload. `text=auto` (not bare `text`)
+# so that a binary asset dropped in there later is detected and left alone
+# instead of being corrupted by eol conversion.
+docker/**       text=auto eol=lf
+
+# This file and .gitignore-style control files are read by tools that tolerate
+# either ending; pinning the new one keeps it consistent with the scripts it
+# governs. `.gitignore` is deliberately NOT listed -- it is an existing tracked
+# file and leaving it unattributed keeps its on-disk form unchanged.
+.gitattributes  text eol=lf

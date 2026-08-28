@@ -1,0 +1,1693 @@
+#!/bin/sh
+# shellcheck shell=sh
+# shellcheck disable=SC3040,SC1007,SC2012,SC2329
+# =============================================================================
+#  ci - the single local command surface for FLASHIda's dockerised verification
+# =============================================================================
+#
+#  Spec: docs/superpowers/specs/2026-08-27-dockerized-local-ci-design.md
+#        section 10 (the command surface) and section 6 (the exit-code contract).
+#
+#  There is ONE dispatcher. ci.ps1 is a thin shim that calls this file, so no
+#  second command surface and no second parser exists.
+#
+#  ---------------------------------------------------------------------------
+#  THE VERDICT CONTRACT (spec section 6) - read this before changing anything
+#  ---------------------------------------------------------------------------
+#  * Every subcommand exits 0 ONLY if every gate it ran passed.
+#  * The LAST line of every run is exactly one of:
+#        PASS: <what was verified>
+#        FAIL: <first failing gate>
+#        PARTIAL: <what did not run> - NOT CI-EQUIVALENT
+#    A human who reads only that line is never misled. A skipped tier can never
+#    read as a pass: PARTIAL always exits non-zero.
+#  * There is no "|| true" on any gate in this file, and no flag disables the
+#    end-of-run tree assertions.
+#
+#  EXIT CODES (distinct, so a caller can tell the four apart)
+#      0   PASS         every gate that ran, passed, and nothing was skipped
+#      1   FAIL         a gate, a test or a tree assertion failed
+#      2   PARTIAL      something CI does was NOT run here (never CI-equivalent)
+#      3   INFRA        prerequisite/infrastructure failure - docker, an engine,
+#                       an image, the Thermo DLLs, a missing repo file.
+#                       Nothing was verified. "ci doctor" names every fix.
+#      64  USAGE        misuse: unknown subcommand, bad flag, missing argument
+#
+#  ---------------------------------------------------------------------------
+#  PORTABILITY (owner decision D5) - this file runs on any dev machine
+#  ---------------------------------------------------------------------------
+#  * The repo root is resolved from THIS SCRIPT'S OWN LOCATION. No absolute host
+#    path is baked in anywhere. Every mount is derived from that root.
+#  * No secret is ever written, echoed or passed on a command line.
+#    THERMO_DLL_PASSPHRASE is read by the host-side openssl command the operator
+#    runs; "ci" only ever reports whether the variable is SET.
+#  * Engines are addressed by their stable named pipes, never by
+#    "docker context use" - Docker Desktop re-points the generic docker_engine
+#    pipe when it switches. On a non-Windows host the default endpoint is used.
+#  * Every path handed to docker goes through host_path(), which uses cygpath on
+#    Git Bash. MSYS_NO_PATHCONV=1 is set for every docker call or MSYS rewrites
+#    container paths into drive letters.
+#
+#  ---------------------------------------------------------------------------
+#  CONTRACTS THIS FILE DEPENDS ON (files owned by the container work, not here)
+#  ---------------------------------------------------------------------------
+#  1. docker/ci-lists.sh - the only reader of the frozen workflow file. Verified
+#     against the committed script: subcommands targets | branches | ctest-regex
+#     | pins | selftest (aliases self-test, --self-test), exit 2 = fail-closed
+#     parse, exit 3 = reconciliation failure, exit 64 = usage. "ci lists" runs
+#     "selftest" INSIDE the Linux container, because on this host gawk, GNU sed
+#     and GNU grep all silently strip CR: a parser validated here reads 26
+#     targets and 0 under container mawk.
+#     The LINUX entrypoint runs that same self-test as its own step 1 and ends
+#     PARTIAL when it is skipped (FLCI_SELF_TEST=0), which is why "ci cpp" does
+#     not start a redundant second copy.
+#     The WINDOWS entrypoint deliberately does NOT: the self-test needs the
+#     Linux container, and Docker Desktop runs one engine at a time. That lane
+#     only CONSUMES "ci-lists.sh targets" and fails closed below its -MinTargets
+#     floor. So on "ci dll" / "ci cs" / "ci golden-diff" / "ci cpp --msvc" the
+#     mawk self-test does not run at all - run "ci lists" on the Linux engine
+#     after any edit to the workflow file or to the parser.
+#  2. Linux entrypoint: it IS the image's ENTRYPOINT (/entrypoint.sh, CMD help),
+#     so the dispatcher passes only a subcommand and options:
+#       all|configure|build|test|shell [--release|--debug] [--tier fast|full]
+#       [--slow-threshold SEC] [--jobs N] [--build-dir PATH] [target ...]
+#  3. Windows entrypoint, baked into the image (the bind-mount copy at
+#     C:\repo\docker\windows\entrypoint.ps1 is for entrypoint development):
+#       powershell -NoProfile -ExecutionPolicy Bypass
+#         -File C:\flci\entrypoint.ps1 -Command <dll|cs|golden-capture|cpp>
+#         [-Filter <where>] [-Target <string[]>]
+#     ("ci golden-diff" maps to -Command golden-capture; -Target is an ARRAY,
+#      which is why the cpp phase alone is invoked through -Command, not -File.)
+#  4. BOTH entrypoints implement the section 6 verdict contract: their LAST line
+#     is "PASS: ...", "FAIL: ..." or "PARTIAL: ... NOT CI-EQUIVALENT", and the
+#     exit code agrees with it. The dispatcher reads that line, cross-checks it
+#     against the exit code, and REFUSES to report a pass when the line is
+#     missing - the failure mode this design exists to prevent is a run that
+#     verified nothing and returned 0.
+#
+#  ---------------------------------------------------------------------------
+#  WHAT THIS TOOL MAY NOT DECIDE (spec section 1)
+#  ---------------------------------------------------------------------------
+#  The containers verify YOUR WORKING TREE, dirty. CI verifies a COMMIT from a
+#  clean recursive checkout. "Green containers" is never "green at this SHA".
+#  Linux is authoritative for "gcc compiles this" and never for a float or a
+#  golden. There is deliberately no "ci golden-promote" (promotion is a bare
+#  host-side cp) and no "--keep-dll".
+# =============================================================================
+
+set -eu
+# pipefail where the shell has it (bash, ksh, busybox ash); harmless where not.
+(set -o pipefail) 2>/dev/null && set -o pipefail || true
+
+# ---------------------------------------------------------------------------
+# Repo root, from this script's own location (D5). No absolute path is baked in.
+# ---------------------------------------------------------------------------
+flci_self=$0
+if [ -L "$flci_self" ]; then
+    flci_link=$(ls -ld -- "$flci_self" | sed 's/^.*-> //')
+    case $flci_link in
+        /*) flci_self=$flci_link ;;
+        *)  flci_self=$(dirname -- "$flci_self")/$flci_link ;;
+    esac
+fi
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$flci_self")" && pwd -P)
+
+# ---------------------------------------------------------------------------
+# Constants. Every one is overridable from the environment so a second session
+# (or a second machine) can run its own images and volumes side by side.
+# ---------------------------------------------------------------------------
+FLCI_TAG=${FLCI_TAG:-latest}
+LINUX_IMAGE=${FLCI_LINUX_IMAGE:-flashida-linux:$FLCI_TAG}
+WINDOWS_IMAGE=${FLCI_WINDOWS_IMAGE:-flashida-win:$FLCI_TAG}
+WIN_CONTAINER=${FLCI_WINDOWS_CONTAINER:-flashida-win}
+
+LINUX_PIPE=${FLCI_LINUX_DOCKER_HOST:-npipe:////./pipe/dockerDesktopLinuxEngine}
+WINDOWS_PIPE=${FLCI_WINDOWS_DOCKER_HOST:-npipe:////./pipe/dockerDesktopWindowsEngine}
+
+VOL_BUILD_REL=${FLCI_VOL_BUILD_REL:-flashida-build-linux-rel}
+VOL_BUILD_DBG=${FLCI_VOL_BUILD_DBG:-flashida-build-linux-dbg}
+VOL_CCACHE_LINUX=${FLCI_VOL_CCACHE_LINUX:-flashida-ccache-linux}
+VOL_CCACHE_MSVC=${FLCI_VOL_CCACHE_MSVC:-flashida-ccache-msvc}
+
+# Never "OpenMS/build" - that name is reserved for a CI-shaped tree (spec 6).
+BUILD_REL_REL=OpenMS/cmake-build-linux-release
+BUILD_DBG_REL=OpenMS/cmake-build-linux-debug
+BUILD_MSVC_REL=OpenMS/cmake-build-msvc-release
+BUILD_MSVC_DBG=OpenMS/cmake-build-msvc-debug
+
+LINUX_NETWORK=${FLCI_LINUX_NETWORK:-none}
+SLOW_THRESHOLD_DEFAULT=2
+
+WORKFLOW_REL=.github/workflows/flashida-ci.yml
+STATE_DIR=$REPO_ROOT/.container-out
+STATE_FILE=$STATE_DIR/ci-all-state.env
+
+# The five files regression-runner.ps1 and nunit drop at the repo root
+# (spec 6, tree pollution 2 and 3). Deleted only if THIS run created them.
+# TestResults.filtered.xml is the sixth: the entrypoint writes it for a filtered
+# run so the bridge-smoke gate cannot read it. The parent .gitignore lists the
+# other five by name.
+STRAY_FILES='TestResults.xml TestResults.filtered.xml RegenResults.xml test_inclusion_list.txt test_fasta.fasta test_target_log.log'
+
+# The five proprietary Thermo assemblies. Names, versions and public key tokens
+# are PARSED out of Flash.csproj at run time (parse, never copy - spec 5), so
+# this list can never drift from the project that consumes them.
+CSPROJ_REL=FlashIDA/src/Flash/Flash.csproj
+
+case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*) HOST_KIND=windows ;;
+    Linux)                HOST_KIND=linux ;;
+    Darwin)               HOST_KIND=darwin ;;
+    *)                    HOST_KIND=unknown ;;
+esac
+
+# ---------------------------------------------------------------------------
+# Output helpers. Everything is ASCII: this text is read in a Windows console
+# whose code page is not UTF-8.
+# ---------------------------------------------------------------------------
+say()  { printf '%s\n' "$*"; }
+info() { printf '  %s\n' "$*"; }
+hdr()  { printf '\n=== %s ===\n' "$*"; }
+
+FLCI_CMD=ci
+FLCI_VERDICT_DONE=0
+CLEAN_STRAYS=0          # 1 once a subcommand may create the five stray files
+RESTORE_DLL=0           # 1 once a subcommand may swap FlashIDA/dll
+STRAYS_BEFORE=''        # stray names that already existed when the run started
+GOLDEN_BASELINE=''      # git status of FlashIDA/test-data when the run started
+GOLDEN_BASELINE_TAKEN=0
+
+# ---------------------------------------------------------------------------
+# docker plumbing
+# ---------------------------------------------------------------------------
+have() { command -v "$1" >/dev/null 2>&1; }
+
+host_path() {
+    # Absolute host path in a form docker accepts on this platform.
+    if have cygpath; then cygpath -m -- "$1"; else printf '%s' "$1"; fi
+}
+
+# shellcheck disable=SC2086  # $endpoint is deliberately word-split (it is "-H x" or empty)
+docker_at() {
+    endpoint=$1; shift
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' docker $endpoint "$@"
+}
+
+linux_endpoint() {
+    if [ "$HOST_KIND" = windows ]; then printf '%s' "-H $LINUX_PIPE"; else printf '%s' ''; fi
+}
+
+windows_endpoint() {
+    printf '%s' "-H $WINDOWS_PIPE"
+}
+
+dkl() { docker_at "$(linux_endpoint)" "$@"; }
+dkw() { docker_at "$(windows_endpoint)" "$@"; }
+
+with_timeout() {
+    secs=$1; shift
+    if have timeout; then timeout "$secs" "$@"; else "$@"; fi
+}
+
+# shellcheck disable=SC2086  # $ep is deliberately word-split (it is "-H x" or empty)
+engine_os() {
+    # $1 = "linux" | "windows". Prints "<os> <version>"; non-zero if the engine
+    # is not reachable. No pipe here on purpose: the exit code must be docker's
+    # even on a shell without pipefail.
+    if [ "$1" = linux ]; then ep=$(linux_endpoint); else ep=$(windows_endpoint); fi
+    if have timeout; then
+        eo_out=$(MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' timeout 25 \
+            docker $ep version --format '{{.Server.Os}} {{.Server.Version}}' 2>/dev/null) || return 1
+    else
+        eo_out=$(MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
+            docker $ep version --format '{{.Server.Os}} {{.Server.Version}}' 2>/dev/null) || return 1
+    fi
+    printf '%s' "$eo_out" | tr -d '\r'
+}
+
+image_present() {
+    # $1 = linux|windows, $2 = image reference
+    if [ "$1" = linux ]; then
+        dkl image inspect "$2" >/dev/null 2>&1
+    else
+        dkw image inspect "$2" >/dev/null 2>&1
+    fi
+}
+
+volume_present() {
+    dkl volume inspect "$1" >/dev/null 2>&1
+}
+
+ps_run() {
+    # Run a PowerShell one-liner on the host. Returns non-zero if no PowerShell.
+    if have powershell.exe; then
+        with_timeout 40 powershell.exe -NoProfile -NonInteractive -Command "$1" 2>/dev/null | tr -d '\r'
+    elif have pwsh; then
+        with_timeout 40 pwsh -NoProfile -NonInteractive -Command "$1" 2>/dev/null | tr -d '\r'
+    else
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Remedies. Printed verbatim wherever the corresponding check fails, so the
+# operator never has to reconstruct a command from prose.
+# ---------------------------------------------------------------------------
+remedy_containers_feature() {
+    say '    FIX (one UAC prompt, then a MANDATORY REBOOT):'
+    say '      # from an ELEVATED PowerShell (Run as Administrator):'
+    say '      Enable-WindowsOptionalFeature -Online -FeatureName Containers -All -NoRestart'
+    say '      # or, self-elevating from a normal prompt:'
+    say "      Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-Command','Enable-WindowsOptionalFeature -Online -FeatureName Containers -All -NoRestart'"
+    say '      # THEN REBOOT. cexecsvc and the Windows docker daemon do not exist until you do.'
+    say '      # verify afterwards, unelevated:'
+    say "      (Get-CimInstance Win32_OptionalFeature -Filter \"Name='Containers'\").InstallState   # must be 1"
+    say '      Get-Service cexecsvc                                                       # must exist'
+}
+
+remedy_windows_engine() {
+    say '    FIX (pick one):'
+    say '      a) Docker Desktop runs ONE engine at a time unless the setting'
+    say '         SimultaneousWindowsAndLinuxContainers is enabled. Enable it in'
+    say '         %APPDATA%\Docker\settings-store.json and restart Docker Desktop;'
+    say '         both named pipes are then live at once.'
+    say '      b) Switch the daemon yourself, in YOUR OWN terminal:'
+    say '           & "$Env:ProgramFiles\Docker\Docker\DockerCli.exe" -SwitchDaemon'
+    say '         It takes 20-60 s, may prompt for elevation, and STOPS every running'
+    say '         container. "ci" never switches the daemon for you, by design.'
+    say '      NOTE: do not use "docker desktop engine use <os>" in tooling - it'
+    say '            explicitly stops the other daemon.'
+}
+
+remedy_thermo() {
+    say '    FIX (host side, the passphrase never reaches a file, a layer or a log):'
+    say '      export THERMO_DLL_PASSPHRASE=...        # do not commit it, do not echo it'
+    say '      openssl enc -aes-256-cbc -d -pbkdf2 \'
+    say '        -in FlashIDA/dependencies/thermo-dlls.zip.enc \'
+    say '        -out "$TMPDIR/thermo-dlls.zip" -pass env:THERMO_DLL_PASSPHRASE'
+    say '      unzip -o "$TMPDIR/thermo-dlls.zip" -d FlashIDA/dependencies/'
+    say '      rm "$TMPDIR/thermo-dlls.zip"'
+    say '      # The DLLs are HOST state: "ci clean" never touches them, and they are'
+    say '      # never baked into an image layer.'
+}
+
+# ---------------------------------------------------------------------------
+# End-of-run tree assertions. Unconditional, flagless, and the LAST foreground
+# action of every subcommand (spec 7 L4). Returns non-zero if the tree moved.
+# ---------------------------------------------------------------------------
+golden_baseline_take() {
+    if [ "$GOLDEN_BASELINE_TAKEN" -eq 1 ]; then return 0; fi
+    GOLDEN_BASELINE_TAKEN=1
+    if [ -d "$REPO_ROOT/FlashIDA/.git" ] || [ -f "$REPO_ROOT/FlashIDA/.git" ]; then
+        GOLDEN_BASELINE=$(git -C "$REPO_ROOT/FlashIDA" status --porcelain -uall -- test-data 2>/dev/null || true)
+    else
+        GOLDEN_BASELINE=''
+    fi
+    STRAYS_BEFORE=''
+    for f in $STRAY_FILES; do
+        if [ -e "$REPO_ROOT/$f" ]; then STRAYS_BEFORE="$STRAYS_BEFORE $f"; fi
+    done
+}
+
+cleanup_strays() {
+    # Delete only the stray root files THIS run created (spec 6, pollution 2/3).
+    [ "$CLEAN_STRAYS" -eq 1 ] || return 0
+    removed=''
+    for f in $STRAY_FILES; do
+        [ -e "$REPO_ROOT/$f" ] || continue
+        case " $STRAYS_BEFORE " in *" $f "*) continue ;; esac
+        rm -f "$REPO_ROOT/$f"
+        removed="$removed $f"
+    done
+    if [ -n "$removed" ]; then info "cleaned stray root files:$removed"; fi
+}
+
+restore_dll_dir() {
+    # FlashIDA/dll is TRACKED and the Windows leg swaps 4 of its 6 files.
+    # There is deliberately no opt-out (spec 6).
+    [ "$RESTORE_DLL" -eq 1 ] || return 0
+    if ! have git; then
+        say ''
+        say 'DLL RESTORE: COULD NOT RUN - git is unavailable, so the 4 swapped files in'
+        say '  FlashIDA/dll/ were NOT restored. Restore them by hand before committing:'
+        say '    git -C FlashIDA checkout -- dll'
+        return 1
+    fi
+    dirty=$(git -C "$REPO_ROOT/FlashIDA" status --porcelain -- dll 2>/dev/null || true)
+    if [ -n "$dirty" ]; then
+        info 'restoring FlashIDA/dll/ after the DLL swap (no --keep-dll exists, by design):'
+        printf '%s\n' "$dirty" | sed 's/^/      /'
+        git -C "$REPO_ROOT/FlashIDA" checkout -- dll
+    fi
+    dirty=$(git -C "$REPO_ROOT/FlashIDA" status --porcelain -- dll 2>/dev/null || true)
+    if [ -n "$dirty" ]; then
+        say 'ERROR: FlashIDA/dll/ is still dirty after the restore:'
+        printf '%s\n' "$dirty" | sed 's/^/      /'
+        return 1
+    fi
+    return 0
+}
+
+assert_goldens_untouched() {
+    # The only layer that survives a human running "ci" in their own terminal
+    # (PreToolUse hooks never see that). No flag disables it.
+    # "Could not check" is not "checked and clean". Only the Windows leg can
+    # write into test-data (the Linux lane mounts the repo :ro) and that leg
+    # sets RESTORE_DLL, so scope the refusal to runs where it actually ran -
+    # otherwise a git-less host would fail even "ci --help".
+    if ! have git || [ ! -e "$REPO_ROOT/FlashIDA/.git" ]; then
+        [ "$RESTORE_DLL" -eq 1 ] || return 0
+        say ''
+        say 'GOLDEN GATE: COULD NOT RUN - git is unavailable, or FlashIDA/.git is missing.'
+        say '  A container phase that is able to write goldens did run, so this tree is'
+        say '  UNVERIFIED, not clean. Check by hand before trusting or committing it:'
+        say '    git -C FlashIDA status --porcelain -uall -- test-data'
+        return 1
+    fi
+    now=$(git -C "$REPO_ROOT/FlashIDA" status --porcelain -uall -- test-data 2>/dev/null || true)
+    if [ "$now" = "$GOLDEN_BASELINE" ]; then return 0; fi
+
+    say ''
+    say 'GOLDEN GATE: FlashIDA/test-data changed during this run.'
+    say '  Nothing here may write into test-data: log goldens are staged as'
+    say '  bin/log-golden-output/<case>/*.normalized, regression TSVs into the'
+    say '  -OutputDir, continuity JSONs into bin/continuity-output/.'
+    # Only the entries that appeared DURING this run. A tree that was already
+    # dirty when the run started is the operator's business, not this run's, and
+    # must never be reverted here.
+    mkdir -p "$STATE_DIR"
+    ag_base=$STATE_DIR/.golden-baseline.$$
+    printf '%s\n' "$GOLDEN_BASELINE" > "$ag_base"
+    ag_new=$(printf '%s\n' "$now" | grep -Fxv -f "$ag_base" || true)
+    rm -f "$ag_base"
+    if [ -z "$ag_new" ]; then
+        say '  No entry is NEW, so the change is a REMOVAL: something under test-data that was'
+        say '  dirty when this run started is no longer dirty (reverted, deleted, or committed'
+        say '  by another session). Nothing was reverted here - inspect it yourself:'
+        say '    git -C FlashIDA status --porcelain -uall -- test-data'
+        return 1
+    fi
+    say '  entries that appeared DURING this run:'
+    printf '%s\n' "$ag_new" | sed 's/^/    /'
+
+    # git status --porcelain v1: two status columns, one space, then the path.
+    # Revert exactly those tracked paths; untracked additions are REPORTED and
+    # never deleted - removing a file the operator may want to look at is worse.
+    printf '%s\n' "$ag_new" | while IFS= read -r ag_line; do
+        [ -n "$ag_line" ] || continue
+        case $ag_line in
+            '??'*) continue ;;
+        esac
+        ag_path=$(printf '%s' "$ag_line" | cut -c4-)
+        [ -n "$ag_path" ] || continue
+        if git -C "$REPO_ROOT/FlashIDA" checkout -- "$ag_path" 2>/dev/null; then
+            say "    reverted: $ag_path"
+        else
+            say "    COULD NOT REVERT: $ag_path - do it yourself:"
+            say "      git -C FlashIDA checkout -- '$ag_path'"
+        fi
+    done
+    ag_untracked=$(printf '%s\n' "$ag_new" | sed -n 's/^?? //p' || true)
+    if [ -n "$ag_untracked" ]; then
+        say '  UNTRACKED files were created and were NOT deleted. Remove them yourself:'
+        printf '%s\n' "$ag_untracked" | sed 's|^|    rm FlashIDA/|'
+    fi
+    return 1
+}
+
+end_of_run_assertions() {
+    rc=0
+    cleanup_strays
+    restore_dll_dir || rc=1
+    assert_goldens_untouched || rc=1
+    return $rc
+}
+
+# ---------------------------------------------------------------------------
+# finish - the ONLY exit path. Runs the end-of-run assertions, then prints
+# exactly one verdict line, then exits with the contract's code.
+# ---------------------------------------------------------------------------
+finish() {
+    kind=$1; text=$2
+    if end_of_run_assertions; then :; else
+        kind=FAIL
+        text='the end-of-run tree assertion failed (see the GOLDEN GATE / dll block above)'
+    fi
+    case $kind in
+        PASS)    code=0 ;;
+        FAIL)    code=1 ;;
+        PARTIAL) code=2 ;;
+        INFRA)   code=3; kind=FAIL ;;
+        USAGE)   code=64; kind=FAIL ;;
+        *)       code=1; kind=FAIL ;;
+    esac
+    say ''
+    verdict_line "$kind" "$text"
+    FLCI_VERDICT_DONE=1
+    exit "$code"
+}
+
+verdict_line() {
+    case $1 in
+        PASS)    printf 'PASS: %s\n' "$2" ;;
+        FAIL)    printf 'FAIL: %s\n' "$2" ;;
+        PARTIAL) printf 'PARTIAL: %s - NOT CI-EQUIVALENT\n' "$2" ;;
+    esac
+}
+
+on_exit() {
+    ec=$?
+    if [ "$FLCI_VERDICT_DONE" -eq 0 ]; then
+        # No exit path skips the tree assertions - not an abort, not a signal.
+        cleanup_strays || true
+        restore_dll_dir || true
+        assert_goldens_untouched || true
+        printf '\nFAIL: "%s" aborted before it could report a verdict (exit %s) - nothing is verified\n' \
+            "$FLCI_CMD" "$ec"
+        if [ "$ec" -eq 0 ]; then ec=1; fi
+    fi
+    exit "$ec"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+usage() {
+    cat <<'USAGE'
+ci - local verification for FLASHIda (two containers; CI on push stays the backstop)
+
+  ci doctor [--compare-ci]     verify every host prerequisite; name the exact fix for each failure
+  ci lists                     parser self-test + reconciliation, under container mawk
+  ci cpp [name...]             Linux: build + run. No names = fast tier; names = just those targets
+  ci cpp --full                Linux: all parsed targets, ctest -j 6, OMP_NUM_THREADS=1
+  ci cpp --debug               Linux: separate Debug build dir
+  ci cpp --msvc <name...>      Windows: targeted C++ triage only (there is no --msvc --full)
+  ci dll                       Windows: build OpenMS.dll, swap 4 DLLs, assert provenance
+  ci cs [filter]               Windows: dll + restore + msbuild + UNFILTERED NUnit + 4 gates + regression
+                               a filter makes the run PARTIAL: the gates cannot run
+  ci golden-diff               Windows: full compare, cell-level diffs, read-only
+  ci all [--resume]            Linux first, Windows last; exits with the worse of the two
+  ci clean                     wipe build dirs, bin/, test-output/, restore FlashIDA/dll, delete strays
+
+  flags: --slow-threshold <sec>  fast-tier cutoff, from the previous run's measured
+                                 ctest timings (default 2)
+
+EXIT CODES   0 PASS | 1 FAIL | 2 PARTIAL (something did not run) | 3 INFRA (prereq) | 64 USAGE
+VERDICT      the last line is always PASS:, FAIL: or PARTIAL:. PARTIAL is never a pass.
+             Exit 0 is reserved for a COMPLETE leg: "ci cpp --full", "ci cs", "ci all",
+             "ci lists", "ci clean", a clean "ci golden-diff". The fast tier, a named
+             target set, "ci dll", "ci cpp --msvc" and "ci cs <filter>" all end PARTIAL
+             on success, because each of them skipped a gate CI runs.
+NOT HERE     no "ci golden-promote" (promotion is a bare host-side cp) and no "--keep-dll".
+NOTE         the containers verify your WORKING TREE, dirty. CI verifies a COMMIT.
+USAGE
+}
+
+# ===========================================================================
+#  doctor - verify every host prerequisite and name the exact fix for each
+#           failure. Required by D5: the one-time host prerequisites are a
+#           checklist, not tribal knowledge.
+# ===========================================================================
+DOC_FAIL=0
+DOC_WARN=0
+DOC_SKIP=0
+DOC_LINUX_FAIL=0
+DOC_WIN_FAIL=0
+DOC_LEG=common
+
+d_ok()   { printf '  [ OK ] %s\n' "$*"; }
+d_info() { printf '  [INFO] %s\n' "$*"; }
+d_warn() { printf '  [WARN] %s\n' "$*"; DOC_WARN=$((DOC_WARN + 1)); }
+d_skip() { printf '  [SKIP] %s\n' "$*"; DOC_SKIP=$((DOC_SKIP + 1)); }
+d_bad()  {
+    printf '  [FAIL] %s\n' "$*"
+    DOC_FAIL=$((DOC_FAIL + 1))
+    case $DOC_LEG in
+        linux)   DOC_LINUX_FAIL=$((DOC_LINUX_FAIL + 1)) ;;
+        windows) DOC_WIN_FAIL=$((DOC_WIN_FAIL + 1)) ;;
+        *)       DOC_LINUX_FAIL=$((DOC_LINUX_FAIL + 1)); DOC_WIN_FAIL=$((DOC_WIN_FAIL + 1)) ;;
+    esac
+}
+
+d_file() {
+    # $1 = repo-relative path, $2 = remedy sentence
+    if [ -f "$REPO_ROOT/$1" ]; then
+        d_ok "$1"
+    else
+        d_bad "$1 is MISSING"
+        info "  FIX: $2"
+    fi
+}
+
+free_gb() {
+    # integer GB free on the filesystem holding the repo. Locale-proof: no
+    # decimal separator is ever produced (this host is de-DE, where 2887,5 is
+    # not a number to [ -lt ]).
+    if [ "$HOST_KIND" = windows ] && have powershell.exe; then
+        fg=$(ps_run "[int64]((Get-PSDrive -Name (Split-Path -Qualifier '$(host_path "$REPO_ROOT")').TrimEnd(':')).Free/1GB)" 2>/dev/null || true)
+    else
+        fg=$(df -Pk "$REPO_ROOT" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1048576}' || true)
+    fi
+    case $fg in
+        ''|*[!0-9]*) printf '%s' '' ;;
+        *)           printf '%s' "$fg" ;;
+    esac
+}
+
+thermo_expected() {
+    # PARSE the five proprietary assemblies out of Flash.csproj - never copy the
+    # list. Emits: <dllfile>|<assembly>|<version>|<publicKeyToken>
+    [ -f "$REPO_ROOT/$CSPROJ_REL" ] || return 1
+    awk '
+        /<Reference Include=/ {
+            s = index($0, "Include=\"")
+            if (s > 0) {
+                rest = substr($0, s + 9)
+                e = index(rest, "\"")
+                pending = substr(rest, 1, e - 1)
+            } else {
+                pending = ""
+            }
+            next
+        }
+        /HintPath/ {
+            if (pending != "" && index($0, "dependencies") > 0) {
+                n = split(pending, a, ",")
+                name = a[1]; ver = ""; pkt = ""
+                for (i = 2; i <= n; i++) {
+                    gsub(/^[ \t]+/, "", a[i])
+                    if (index(a[i], "Version=") == 1)        ver = substr(a[i], 9)
+                    if (index(a[i], "PublicKeyToken=") == 1) pkt = substr(a[i], 16)
+                }
+                p = index($0, "dependencies")
+                f = substr($0, p + 13)
+                q = index(f, "<")
+                if (q > 0) f = substr(f, 1, q - 1)
+                printf "%s|%s|%s|%s\n", f, name, ver, pkt
+            }
+            pending = ""
+        }
+    ' "$REPO_ROOT/$CSPROJ_REL"
+}
+
+thermo_actual() {
+    # name|assembly|version|pkt for every decrypted DLL, via the same API the
+    # post-restore identity gate uses. Empty output if PowerShell is absent.
+    [ "$HOST_KIND" = windows ] || return 1
+    dep=$(host_path "$REPO_ROOT/FlashIDA/dependencies")
+    ps_run "Get-ChildItem -Path '$dep' -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object { try { \$n = [System.Reflection.AssemblyName]::GetAssemblyName(\$_.FullName); \$t = (\$n.GetPublicKeyToken() | ForEach-Object { \$_.ToString('x2') }) -join ''; '{0}|{1}|{2}|{3}' -f \$_.Name, \$n.Name, \$n.Version, \$t } catch { '{0}|UNREADABLE||' -f \$_.Name } }"
+}
+
+doctor_common() {
+    DOC_LEG=common
+    hdr 'workspace'
+    d_info "repo root (resolved from this script's own location): $REPO_ROOT"
+    d_file "$WORKFLOW_REL" 'you are not in the FLASHIda parent workspace - run ci from the repo root'
+    d_file "$CSPROJ_REL"   'the FlashIDA submodule is not checked out: git submodule update --init --recursive'
+    d_file docker/ci-lists.awk 'part of the docker landing - git pull, or land docker/ci-lists.awk'
+    d_file docker/ci-lists.sh  'part of the docker landing - git pull, or land docker/ci-lists.sh'
+    d_file docker/README.md    'part of the docker landing - git pull, or land docker/README.md'
+    d_file OpenMS/CMakeLists.txt 'the OpenMS submodule is not checked out: git submodule update --init --recursive'
+
+    # Line endings, measured on the BYTES the container will execute rather
+    # than through git. These files may still be untracked, and then
+    # `git ls-files --eol` reports no rows at all - a git-based check would
+    # pass vacuously on the exact tree that is broken. A CRLF checkout is
+    # invisible here and fatal inside the container ("bad interpreter: ^M").
+    crlf_bad=''
+    for f in ci docker/ci-lists.sh docker/ci-lists.awk docker/linux/entrypoint.sh; do
+        [ -f "$REPO_ROOT/$f" ] || continue
+        if [ "$(tr -dc '\r' < "$REPO_ROOT/$f" | wc -c | tr -d ' ')" != 0 ]; then
+            crlf_bad="$crlf_bad $f"
+        fi
+    done
+    if [ -n "$crlf_bad" ]; then
+        d_bad "CRLF in container-executed script(s):$crlf_bad"
+        info '  They die at the shebang inside the container. FIX (no local edits there):'
+        info '    rm -rf docker ci && git checkout -- docker ci'
+        info '  and make sure the root .gitattributes carries "docker/** text=auto eol=lf".'
+    else
+        d_ok 'container-executed scripts are LF on disk (ci, ci-lists.sh/.awk, linux entrypoint)'
+    fi
+
+    hdr 'host tooling'
+    if have docker; then
+        d_ok "docker CLI: $(docker --version 2>/dev/null | tr -d '\r')"
+    else
+        d_bad 'docker CLI not on PATH'
+        info '  FIX: install Docker Desktop (Windows) or docker-ce (Linux), then reopen the shell'
+    fi
+    if have git; then d_ok "git: $(git --version 2>/dev/null | tr -d '\r')"; else d_bad 'git not on PATH'; fi
+    if have awk; then d_ok "awk: present ($(command -v awk))"; else d_bad 'awk not on PATH'; fi
+    d_info "host: $HOST_KIND"
+    if [ "$HOST_KIND" = windows ]; then
+        hostloc=$(ps_run '(Get-Culture).Name' 2>/dev/null || true)
+        [ -n "$hostloc" ] || hostloc='unknown'
+        if [ "$hostloc" = 'en-US' ]; then
+            d_info "host locale: $hostloc (the image pins en-US regardless)"
+        else
+            d_info "host locale: $hostloc - the Windows IMAGE must pin and assert en-US;"
+            info '         MockMsScan parses fixtures with a culture-sensitive double.Parse,'
+            info '         and under de-DE double.Parse("674.6919") returns 6746919.'
+        fi
+    fi
+
+    hdr 'disk'
+    fgb=$(free_gb)
+    if [ -z "$fgb" ]; then
+        d_warn 'could not determine free disk space'
+    elif [ "$fgb" -lt 20 ]; then
+        d_bad "free space on the repo volume: ${fgb} GB - the Linux leg alone needs ~20 GB"
+    elif [ "$fgb" -lt 60 ]; then
+        d_warn "free space on the repo volume: ${fgb} GB - both legs steady-state need 40-60 GB"
+    else
+        d_ok "free space on the repo volume: ${fgb} GB"
+    fi
+
+    hdr 'git status across all three repos (a dirty tree is what the containers verify)'
+    for r in . FlashIDA OpenMS; do
+        if [ -e "$REPO_ROOT/$r/.git" ]; then
+            n=$(git -C "$REPO_ROOT/$r" status --porcelain 2>/dev/null | wc -l | tr -d " " || true)
+            h=$(git -C "$REPO_ROOT/$r" rev-parse --short HEAD 2>/dev/null || echo '?')
+            b=$(git -C "$REPO_ROOT/$r" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')
+            d_info "$r: $b @ $h, $n dirty path(s)"
+        else
+            d_bad "$r is not a git repo (submodule not initialised?)"
+        fi
+    done
+    gdirty=$(git -C "$REPO_ROOT/FlashIDA" status --porcelain -uall -- test-data 2>/dev/null || true)
+    if [ -n "$gdirty" ]; then
+        d_warn 'FlashIDA/test-data is ALREADY dirty - every run reports golden movement against this baseline'
+        printf '%s\n' "$gdirty" | sed 's/^/         /'
+        info '  FIX (only if the change is unwanted): git -C FlashIDA checkout -- test-data'
+    else
+        d_ok 'FlashIDA/test-data is clean'
+    fi
+    dlldirty=$(git -C "$REPO_ROOT/FlashIDA" status --porcelain -- dll 2>/dev/null || true)
+    if [ -n "$dlldirty" ]; then
+        d_warn 'FlashIDA/dll is dirty - a previous Windows run did not restore the 4 swapped DLLs'
+        info '  FIX: git -C FlashIDA checkout -- dll'
+    else
+        d_ok 'FlashIDA/dll is clean (the swap is restored)'
+    fi
+}
+
+doctor_linux() {
+    DOC_LEG=linux
+    hdr 'LINUX leg (compile / logic / crash gate - the fast inner loop)'
+    d_file docker/linux/Dockerfile   'part of the docker landing'
+    d_file docker/linux/entrypoint.sh 'part of the docker landing'
+    if ! have docker; then
+        d_skip 'engine checks skipped: no docker CLI'
+        return 0
+    fi
+    if leo=$(engine_os linux); then
+        set -- $leo
+        if [ "${1:-}" = linux ]; then
+            d_ok "linux engine reachable: server ${1:-?} ${2:-?} via ${FLCI_LINUX_DOCKER_HOST:-$LINUX_PIPE}"
+        else
+            d_bad "the linux pipe answered but reports OSType='${1:-?}' - that is not a Linux daemon"
+        fi
+        if image_present linux "$LINUX_IMAGE"; then
+            d_ok "image $LINUX_IMAGE present"
+        else
+            d_bad "image $LINUX_IMAGE is absent"
+            remedy_build_linux_image
+        fi
+        for v in "$VOL_BUILD_REL" "$VOL_CCACHE_LINUX"; do
+            if volume_present "$v"; then d_info "volume $v exists"; else d_info "volume $v not created yet (ci cpp creates it)"; fi
+        done
+        d_info 'docker footprint on this engine (pruning is YOUR call - tooling never prunes):'
+        dkl system df --format '{{.Type}}: {{.TotalCount}} items, {{.Size}} ({{.Reclaimable}} reclaimable)' 2>/dev/null |
+            tr -d '\r' | sed 's/^/         /' || d_warn 'could not read docker system df'
+    else
+        d_bad "the linux docker engine is NOT reachable at ${FLCI_LINUX_DOCKER_HOST:-$LINUX_PIPE}"
+        info '  FIX: start Docker Desktop (or the docker service), then re-run ci doctor.'
+        info '       If Docker Desktop is switched to the Windows engine, see the Windows leg below.'
+        d_skip 'image / volume / footprint checks skipped: the linux engine is down'
+    fi
+}
+
+doctor_windows() {
+    DOC_LEG=windows
+    hdr 'WINDOWS leg (OpenMS.dll, the C# suite, the four gates - the pre-push gate)'
+    d_file docker/windows/Dockerfile    'part of the docker landing'
+    d_file docker/windows/entrypoint.ps1 'part of the docker landing'
+
+    if [ "$HOST_KIND" != windows ]; then
+        d_bad "this host is '$HOST_KIND': the Windows leg cannot run here at all"
+        info '  FIX: run the Windows leg on a Windows host. The Linux leg is unaffected;'
+        info '       CI on push remains the only other path to an OpenMS.dll.'
+        return 0
+    fi
+
+    # --- the Containers optional feature (the gate nobody anticipated) ---
+    cstate=$(ps_run "(Get-CimInstance Win32_OptionalFeature -Filter \"Name='Containers'\").InstallState" 2>/dev/null || true)
+    case ${cstate:-} in
+        1) d_ok 'Windows optional feature "Containers": InstallState=1 (Enabled)' ;;
+        2) d_bad 'Windows optional feature "Containers": InstallState=2 (DISABLED) - no Windows container can start'
+           remedy_containers_feature ;;
+        3) d_bad 'Windows optional feature "Containers": InstallState=3 (Absent - payload removed)'
+           remedy_containers_feature ;;
+        '') d_warn 'could not query the "Containers" optional feature (no PowerShell?)' ;;
+        *) d_bad "Windows optional feature \"Containers\": InstallState=$cstate (not Enabled)"
+           remedy_containers_feature ;;
+    esac
+    csvc=$(ps_run "if (Get-Service cexecsvc -ErrorAction SilentlyContinue) {'present'} else {'absent'}" 2>/dev/null || true)
+    if [ "${csvc:-}" = present ]; then
+        d_ok 'service cexecsvc: present'
+    else
+        d_bad 'service cexecsvc: absent - the container execution service does not exist until the feature is enabled AND the machine has rebooted'
+    fi
+
+    # --- the Windows engine itself ---
+    if ! have docker; then
+        d_skip 'engine checks skipped: no docker CLI'
+        return 0
+    fi
+    if weo=$(engine_os windows); then
+        set -- $weo
+        if [ "${1:-}" = windows ]; then
+            d_ok "windows engine reachable: server ${1:-?} ${2:-?} via ${FLCI_WINDOWS_DOCKER_HOST:-$WINDOWS_PIPE}"
+        else
+            d_bad "the windows pipe answered but reports OSType='${1:-?}' - Docker Desktop is not running a Windows daemon"
+            remedy_windows_engine
+        fi
+        iso=$(dkw info --format '{{.Isolation}}' 2>/dev/null | tr -d '\r' || true)
+        d_info "default isolation: ${iso:-unknown} (process is opt-in on a client SKU: --isolation=process)"
+        if image_present windows "$WINDOWS_IMAGE"; then
+            d_ok "image $WINDOWS_IMAGE present"
+            # python is NOT optional: regression-runner.ps1 shells out to a bare "python"
+            out=$(dkw run --rm "$WINDOWS_IMAGE" cmd /c 'python --version' 2>/dev/null | tr -d '\r' | tail -1 || true)
+            if [ -n "$out" ]; then d_ok "in-image python: $out"; else d_bad 'in-image python: absent (regression-runner.ps1 shells out to a bare "python")'; fi
+            out=$(dkw run --rm "$WINDOWS_IMAGE" cmd /c 'if exist C:\contrib (echo present) else (echo MISSING)' 2>/dev/null | tr -d '\r' | tail -1 || true)
+            if [ "$out" = present ]; then d_ok 'in-image contrib tarball: extracted at C:\contrib'; else d_bad "in-image contrib tarball at C:\\contrib: ${out:-unreadable}"; fi
+            out=$(dkw run --rm "$WINDOWS_IMAGE" powershell -NoProfile -Command '(Get-Culture).Name' 2>/dev/null | tr -d '\r' | tail -1 || true)
+            if [ "$out" = 'en-US' ]; then
+                d_ok 'in-image locale: en-US'
+            else
+                d_bad "in-image locale: ${out:-unreadable} - MUST be en-US, or double.Parse(\"674.6919\") returns 6746919 and every m/z is off by 10^4"
+            fi
+        else
+            d_bad "image $WINDOWS_IMAGE is absent"
+            remedy_build_windows_image
+            d_skip 'in-image python / contrib / locale probes skipped: no image'
+        fi
+        st=$(dkw ps -a --filter "name=^${WIN_CONTAINER}\$" --format '{{.Status}}' 2>/dev/null | tr -d '\r' || true)
+        d_info "long-lived container $WIN_CONTAINER: ${st:-not created}"
+    else
+        d_bad "the windows docker engine is NOT reachable at ${FLCI_WINDOWS_DOCKER_HOST:-$WINDOWS_PIPE}"
+        remedy_windows_engine
+        d_skip 'isolation / image / in-image python, contrib and locale probes skipped: the windows engine is down'
+    fi
+
+    # --- the Thermo DLLs: HOST state, absent is a hard failure, never a skip ---
+    hdr 'Thermo iAPI DLLs (host state - ci clean never touches them)'
+    if [ -n "${THERMO_DLL_PASSPHRASE:-}" ]; then
+        d_info 'THERMO_DLL_PASSPHRASE: set in this environment (the value is never printed, logged or passed to a container)'
+    else
+        d_info 'THERMO_DLL_PASSPHRASE: not set (only needed for the one-time decrypt)'
+    fi
+    if ! exp=$(thermo_expected) || [ -z "$exp" ]; then
+        d_bad "could not parse the Thermo references out of $CSPROJ_REL"
+        return 0
+    fi
+    act=$(thermo_actual 2>/dev/null || true)
+    missing=0
+    nexp=0
+    for row in $exp; do
+        nexp=$((nexp + 1))
+        f=${row%%|*}
+        rest=${row#*|}
+        asm=${rest%%|*}
+        rest=${rest#*|}
+        ver=${rest%%|*}
+        pkt=${rest#*|}
+        if [ ! -f "$REPO_ROOT/FlashIDA/dependencies/$f" ]; then
+            d_bad "$f ABSENT (expected $asm $ver, token $pkt)"
+            missing=$((missing + 1))
+            continue
+        fi
+        got=$(printf '%s\n' "$act" | grep -i "^$f|" | head -1 || true)
+        if [ -z "$got" ]; then
+            d_ok "$f present (identity not read - no PowerShell)"
+            continue
+        fi
+        gasm=$(printf '%s' "$got" | cut -d'|' -f2)
+        gver=$(printf '%s' "$got" | cut -d'|' -f3)
+        gpkt=$(printf '%s' "$got" | cut -d'|' -f4)
+        if [ "$gasm" = "$asm" ] && [ "$gver" = "$ver" ] && [ "$gpkt" = "$pkt" ]; then
+            d_ok "$f present, identity matches Flash.csproj ($gasm $gver $gpkt)"
+        else
+            d_bad "$f IDENTITY DRIFT: csproj wants $asm $ver $pkt, the file is $gasm $gver $gpkt"
+            info '  Both csprojs carry <SpecificVersion>False</SpecificVersion> and App.config has no'
+            info '  binding redirect, so NOTHING else in the system can detect this.'
+        fi
+    done
+    if [ "$missing" -gt 0 ]; then
+        info "  $missing of $nexp proprietary DLLs are not decrypted - the C# build cannot run."
+        remedy_thermo
+    fi
+}
+
+doctor_compare_ci() {
+    hdr 'compare-ci (informational, never a gate)'
+    say '  CI configures the library WITH_GUI=ON; the container configures OFF. The DLL the'
+    say '  local ABI and golden results depend on therefore comes from a differently'
+    say '  configured library build. CI also links a different DLL every run by construction,'
+    say '  so the two sha256 values ALWAYS differ - this comparison exists to make a suspected'
+    say '  divergence checkable in one command, not to gate anything.'
+    if ! have gh; then
+        d_warn '--compare-ci could not run: the GitHub CLI (gh) is not on PATH'
+        info '  FIX: install gh and run: gh auth login'
+        return 0
+    fi
+    tmp=${TMPDIR:-/tmp}/flci-compare-ci.$$
+    mkdir -p "$tmp"
+    runid=$(gh run list --workflow flashida-ci.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
+    if [ -z "$runid" ]; then
+        d_warn '--compare-ci could not run: no successful flashida-ci.yml run was returned by gh'
+        rm -rf "$tmp"
+        return 0
+    fi
+    d_info "latest green CI run: $runid"
+    if gh run download "$runid" -n openms-fresh-dll -D "$tmp" >/dev/null 2>&1; then
+        remote=$(find "$tmp" -name 'OpenMS.dll' | head -1 || true)
+        if [ -n "$remote" ] && have sha256sum; then
+            d_info "CI      OpenMS.dll sha256: $(sha256sum "$remote" | cut -d' ' -f1)"
+        fi
+    else
+        d_warn "could not download artifact openms-fresh-dll from run $runid"
+    fi
+    localdll=$REPO_ROOT/$BUILD_MSVC_REL/bin/OpenMS.dll
+    if [ -f "$localdll" ] && have sha256sum; then
+        d_info "local   OpenMS.dll sha256: $(sha256sum "$localdll" | cut -d' ' -f1)"
+    else
+        d_info "local   OpenMS.dll: not built yet ($BUILD_MSVC_REL/bin/OpenMS.dll)"
+    fi
+    say '  CI configure line (from the frozen workflow):'
+    grep -n -A6 'cmake -S OpenMS' "$REPO_ROOT/$WORKFLOW_REL" 2>/dev/null | sed 's/^/    /' | head -12 || true
+    say '  container configure line (from docker/windows):'
+    if [ -f "$REPO_ROOT/docker/windows/entrypoint.ps1" ]; then
+        grep -n -A6 'cmake -S' "$REPO_ROOT/docker/windows/entrypoint.ps1" 2>/dev/null | sed 's/^/    /' | head -12 || true
+    else
+        say '    docker/windows/entrypoint.ps1 is not present yet'
+    fi
+    rm -rf "$tmp"
+}
+
+cmd_doctor() {
+    compare_ci=0
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --compare-ci) compare_ci=1; shift ;;
+            -*) finish USAGE "unknown flag for 'ci doctor': $1" ;;
+            *)  finish USAGE "'ci doctor' takes no positional arguments (got: $1)" ;;
+        esac
+    done
+    say 'ci doctor - host prerequisites for the two containers'
+    say '            every failure below prints the exact command that fixes it'
+    doctor_common
+    doctor_linux
+    doctor_windows
+    if [ "$compare_ci" -eq 1 ]; then doctor_compare_ci; fi
+
+    hdr 'summary'
+    say "  failures: $DOC_FAIL   warnings: $DOC_WARN   not-checked: $DOC_SKIP"
+    if [ "$DOC_LINUX_FAIL" -eq 0 ]; then say '  LINUX leg:   READY'; else say "  LINUX leg:   NOT READY ($DOC_LINUX_FAIL blocking check(s) above)"; fi
+    if [ "$DOC_WIN_FAIL" -eq 0 ]; then say '  WINDOWS leg: READY'; else say "  WINDOWS leg: NOT READY ($DOC_WIN_FAIL blocking check(s) above)"; fi
+    say ''
+    say '  Reminder: a green container is never "green at this SHA" - it verifies your'
+    say '  dirty working tree. CI on push stays the authority for MSVC, floats and goldens.'
+
+    ranmsg="prerequisite checks only (no build, no test, no container run)"
+    if [ "$DOC_FAIL" -gt 0 ]; then
+        if [ "$DOC_LINUX_FAIL" -eq 0 ]; then
+            finish INFRA "$DOC_FAIL prerequisite check(s) failed: LINUX leg READY, WINDOWS leg NOT READY - fixes are printed above; $ranmsg"
+        elif [ "$DOC_WIN_FAIL" -eq 0 ]; then
+            finish INFRA "$DOC_FAIL prerequisite check(s) failed: WINDOWS leg READY, LINUX leg NOT READY - fixes are printed above; $ranmsg"
+        else
+            finish INFRA "$DOC_FAIL prerequisite check(s) failed: NEITHER leg is ready - fixes are printed above; $ranmsg"
+        fi
+    fi
+    if [ "$DOC_SKIP" -gt 0 ]; then
+        finish PARTIAL "$DOC_SKIP prerequisite check(s) could not be evaluated (see [SKIP] above); both legs otherwise READY; $ranmsg"
+    fi
+    finish PASS "every host prerequisite for both legs is satisfied ($DOC_WARN warning(s)); $ranmsg"
+}
+
+# ===========================================================================
+#  shared run plumbing
+# ===========================================================================
+LOG_DIR=$STATE_DIR/logs
+
+new_logfile() {
+    mkdir -p "$LOG_DIR"
+    printf '%s/%s-%s.log' "$LOG_DIR" "$1" "$$"
+}
+
+flci_result_line() {
+    # The entrypoints' own verdict line (section 6 contract), last one wins.
+    # The Windows lane writes CRLF, so strip CR: the anchor still matches with a
+    # trailing CR, but the summary quoted into this dispatcher's verdict would
+    # carry it into the middle of a line (and into the ci-all state file).
+    grep -E '^(PASS|FAIL|PARTIAL):' "$1" 2>/dev/null | tr -d '\r' | tail -1 || true
+}
+
+validate_target_names() {
+    # Test target names only. Anything else is misuse - and this is also what
+    # makes the unquoted expansion of the target list safe.
+    for t in "$@"; do
+        case $t in
+            *[!A-Za-z0-9_.+-]*) finish USAGE "not a valid ctest target name: '$t'" ;;
+            '')                 finish USAGE 'empty target name' ;;
+        esac
+    done
+}
+
+require_docker() {
+    have docker || finish INFRA 'docker is not on PATH - nothing ran. Fix it, then: ci doctor'
+}
+
+require_linux_engine() {
+    require_docker
+    if eo=$(engine_os linux); then
+        case $eo in
+            linux\ *) return 0 ;;
+        esac
+        say "The pipe ${FLCI_LINUX_DOCKER_HOST:-$LINUX_PIPE} answered but reports '$eo'."
+    else
+        say "The LINUX docker engine is not reachable at ${FLCI_LINUX_DOCKER_HOST:-$LINUX_PIPE}."
+    fi
+    say '  Start Docker Desktop (or the docker service). If Docker Desktop is currently'
+    say '  switched to the Windows engine, see "ci doctor" for the two ways to get both.'
+    finish INFRA 'the linux docker engine is unavailable - no build, no ctest, nothing was verified'
+}
+
+remedy_build_linux_image() {
+    say "    FIX: docker $(linux_endpoint) build -f docker/linux/Dockerfile -t $LINUX_IMAGE docker/linux"
+}
+
+remedy_build_windows_image() {
+    # The three CI_* args have NO default: the Dockerfile fails closed without
+    # them, and their values are PARSED out of the frozen workflow, never typed.
+    say '    FIX (the three CI_* build args come from the parser, never from prose):'
+    say '      QTV=$(docker/ci-lists.sh pins | sed -n "s/^qt_version=//p")  || exit 1'
+    say '      QTA=$(docker/ci-lists.sh pins | sed -n "s/^qt_arch=//p")     || exit 1'
+    say '      QTR=$(docker/ci-lists.sh pins | sed -n "s/^qt_archives=//p") || exit 1'
+    say "      docker $(windows_endpoint) build -f docker/windows/Dockerfile -t $WINDOWS_IMAGE \\"
+    say '        --build-arg CI_QT_VERSION="$QTV" --build-arg CI_QT_ARCH="$QTA" \'
+    say '        --build-arg CI_QT_ARCHIVES="$QTR" docker/windows'
+}
+
+require_linux_image() {
+    if image_present linux "$LINUX_IMAGE"; then return 0; fi
+    say "Image $LINUX_IMAGE is not built on this engine."
+    remedy_build_linux_image
+    finish INFRA "the linux image $LINUX_IMAGE does not exist - nothing was verified"
+}
+
+# The Windows leg being unavailable is LOUD and non-zero. A user who is told to
+# switch engines and never does must get a failure, not a line of text.
+windows_unavailable_report() {
+    say ''
+    say '################################################################'
+    say '#  THE WINDOWS LEG DID NOT RUN                                 #'
+    say '################################################################'
+    say '  Not run, and therefore NOT verified:'
+    say '    - the OpenMS.dll build (MSVC 14.44 + Qt 6.8.3 + the pinned contrib tarball)'
+    say '    - the 4-DLL swap into FlashIDA/dll and the three-part ABI provenance gate'
+    say '    - nuget restore + msbuild (Debug | Any CPU)'
+    say '    - the UNFILTERED 181-test NUnit suite'
+    say '    - all four fail-closed gates (JSON capture, test-data dirs, bridge smoke, TRACK-CREATE)'
+    say '    - the 14-case regression runner'
+    say '  The Linux container cannot substitute for any of these: it cannot produce a DLL'
+    say '  and cannot execute the C# / P-Invoke round trip at all.'
+    say ''
+    remedy_windows_engine
+    say ''
+    remedy_containers_feature
+}
+
+require_windows_engine() {
+    require_docker
+    if eo=$(engine_os windows); then
+        case $eo in
+            windows\ *) return 0 ;;
+        esac
+        say "The pipe ${FLCI_WINDOWS_DOCKER_HOST:-$WINDOWS_PIPE} answered but reports '$eo'."
+    else
+        say "The WINDOWS docker engine is not reachable at ${FLCI_WINDOWS_DOCKER_HOST:-$WINDOWS_PIPE}."
+    fi
+    windows_unavailable_report
+    finish INFRA 'the windows docker engine is unavailable - the DLL build, the ABI provenance gate, the 181-test suite, all four gates and the regression run did NOT run'
+}
+
+require_windows_image() {
+    if image_present windows "$WINDOWS_IMAGE"; then return 0; fi
+    say "Image $WINDOWS_IMAGE is not built on this engine."
+    remedy_build_windows_image
+    finish INFRA "the windows image $WINDOWS_IMAGE does not exist - nothing was verified"
+}
+
+require_thermo_dlls() {
+    n=0
+    if exp=$(thermo_expected); then
+        # An EMPTY parse is a failure, never a pass. Without this the for-loop
+        # below iterates zero times, n stays 0, and the gate returns "all five
+        # DLLs are present" for a csproj whose <Reference>/<HintPath> shape
+        # moved - the exact fail-open this repo's conventions forbid.
+        [ -n "$exp" ] || finish INFRA "parsed ZERO Thermo <Reference> entries out of $CSPROJ_REL - the reference or HintPath shape moved, so this gate cannot tell whether the proprietary DLLs are present. Fix the parser (see 'ci doctor'); it will not pass on an empty parse."
+        for row in $exp; do
+            f=${row%%|*}
+            [ -f "$REPO_ROOT/FlashIDA/dependencies/$f" ] || n=$((n + 1))
+        done
+    else
+        finish INFRA "could not parse the Thermo references out of $CSPROJ_REL"
+    fi
+    if [ "$n" -eq 0 ]; then return 0; fi
+    say "$n proprietary Thermo assemblies are not decrypted in FlashIDA/dependencies/."
+    say '  The C# build cannot even compile without them.'
+    remedy_thermo
+    finish INFRA 'the Thermo iAPI DLLs are absent - the C# leg did not run (this is a failure, never a skip)'
+}
+
+# ---------------------------------------------------------------------------
+# The yml parser self-test (spec 5). It MUST run under container mawk, never on
+# the host: here gawk, GNU sed and GNU grep all silently strip CR, so a parser
+# validated on this host reads 26 targets and 0 under mawk - and a 0-target
+# parse builds nothing, then runs ctest against an empty build dir, and greens.
+#
+# The LINUX entrypoint runs this same self-test as its own step 1 and ends
+# PARTIAL when it is skipped, so "ci cpp" does not start a redundant copy. The
+# WINDOWS entrypoint deliberately does NOT (it needs the Linux engine), so on
+# "ci dll" / "ci cs" / "ci golden-diff" / "ci cpp --msvc" this gate runs ONLY if
+# you invoke it: "ci lists" is the explicit, standalone form.
+# The image's ENTRYPOINT is /entrypoint.sh, so this run overrides it.
+# ---------------------------------------------------------------------------
+run_lists_selftest() {
+    for f in docker/ci-lists.awk docker/ci-lists.sh; do
+        if [ ! -f "$REPO_ROOT/$f" ]; then
+            say "MISSING: $f - the yml parser is part of the docker landing."
+            return 1
+        fi
+    done
+    dkl run --rm --network "$LINUX_NETWORK" \
+        --entrypoint sh \
+        -v "$(host_path "$REPO_ROOT"):/work:ro" \
+        -w /work \
+        "$LINUX_IMAGE" /work/docker/ci-lists.sh selftest
+}
+
+# ---------------------------------------------------------------------------
+# container invocation
+# ---------------------------------------------------------------------------
+run_container_logged() {
+    # $1 = log file; rest = the command. Streams live AND records for parsing.
+    #
+    # The container's exit code travels through a FILE, not through the
+    # pipeline. "set -o pipefail" is not POSIX: on a host whose /bin/sh is dash
+    # (Debian, Ubuntu - and this file's shebang is #!/bin/sh) the probe at the
+    # top of this script silently does nothing, `cmd | tee` returns TEE's zero,
+    # and judge_container_run is handed rc=0 for a container that exited 7.
+    # That disarms the one check that catches a container printing "PASS:" and
+    # then failing. MEASURED: bash -> rc=7, dash -> rc=0.
+    # No rc file, or a non-numeric one, means the command never reported: FAIL.
+    rcl_log=$1; shift
+    rcl_rc_file=$rcl_log.rc
+    rm -f "$rcl_rc_file"
+    { rcl_inner=0; "$@" 2>&1 || rcl_inner=$?; printf '%s\n' "$rcl_inner" > "$rcl_rc_file"; } | tee "$rcl_log"
+    rcl_rc=$(cat "$rcl_rc_file" 2>/dev/null || true)
+    rm -f "$rcl_rc_file"
+    case $rcl_rc in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    return "$rcl_rc"
+}
+
+judge_container_run() {
+    # $1 = exit code, $2 = log file, $3 = phase label.
+    # stdout is ONLY the verdict word (it is captured); every diagnostic goes to
+    # stderr, which the operator still sees.
+    jc_rc=$1; jc_log=$2; jc_phase=$3
+    jc_line=$(flci_result_line "$jc_log")
+    if [ -z "$jc_line" ]; then
+        {
+            say ''
+            say "NO VERDICT LINE: the $jc_phase container exited $jc_rc without reporting one."
+            say '  A run that verified nothing must never be reported as a pass, so this is a FAIL.'
+            say "  Contract (section 6): the entrypoint's LAST line must be PASS:, FAIL: or PARTIAL:."
+            say "  Full container output: $jc_log"
+        } >&2
+        printf '%s' FAIL
+        return 0
+    fi
+    jc_verdict=${jc_line%%:*}
+    case $jc_verdict in
+        PASS)
+            if [ "$jc_rc" -ne 0 ]; then
+                {
+                    say ''
+                    say "CONTRADICTION: the $jc_phase entrypoint reported verdict=PASS but exited $jc_rc."
+                    say '  The exit code wins: a contradicted pass is a FAIL.'
+                } >&2
+                printf '%s' FAIL
+                return 0
+            fi
+            printf '%s' PASS ;;
+        FAIL)    printf '%s' FAIL ;;
+        PARTIAL) printf '%s' PARTIAL ;;
+        *)
+            {
+                say ''
+                say "UNPARSEABLE verdict line for $jc_phase: '$jc_line'"
+            } >&2
+            printf '%s' FAIL ;;
+    esac
+}
+
+result_summary() {
+    # What the entrypoint itself said, quoted into this dispatcher's verdict.
+    rs_line=$(flci_result_line "$1")
+    case $rs_line in
+        *:\ *) printf '%s' "${rs_line#*: }" ;;
+        '')    printf '%s' 'no verdict line from the container' ;;
+        *)     printf '%s' "$rs_line" ;;
+    esac
+}
+
+run_linux_cpp() {
+    # $1 build flag (--release|--debug), $2 build dir (repo-relative),
+    # $3 volume, $4 tier (fast|full), $5 slow threshold, $6.. = target names
+    rl_btype=$1; rl_dir=$2; rl_vol=$3; rl_tier=$4; rl_thr=$5; shift 5
+    rl_targets=$*
+
+    # With a :ro bind docker cannot auto-create the mountpoint (spec 3), and the
+    # entrypoint fails closed if the build dir does not exist.
+    mkdir -p "$REPO_ROOT/$rl_dir"
+
+    rl_log=$(new_logfile "cpp-$rl_tier")
+    say "linux container: $rl_btype, tier=$rl_tier, build dir /work/$rl_dir"
+    say '  (the entrypoint runs the ci-lists.sh self-test as its own step 1 and ends'
+    say '   PARTIAL if that gate is skipped)'
+    if [ -n "$rl_targets" ]; then say "targets: $rl_targets"; fi
+    rl_rc=0
+    # shellcheck disable=SC2086  # rl_targets is validated to be [A-Za-z0-9_.+-] words
+    run_container_logged "$rl_log" \
+        dkl run --rm \
+            --network "$LINUX_NETWORK" \
+            -v "$(host_path "$REPO_ROOT"):/work:ro" \
+            -v "$rl_vol:/work/$rl_dir" \
+            -v "$VOL_CCACHE_LINUX:/ccache" \
+            -e CCACHE_DIR=/ccache \
+            -e CCACHE_BASEDIR=/work \
+            -e CCACHE_MAXSIZE=30G \
+            -e OPENMS_DATA_PATH=/work/OpenMS/share/OpenMS \
+            -e OMP_NUM_THREADS=1 \
+            -w "/work/$rl_dir" \
+            "$LINUX_IMAGE" \
+            all \
+                "$rl_btype" \
+                --build-dir "/work/$rl_dir" \
+                --tier "$rl_tier" \
+                --slow-threshold "$rl_thr" \
+                ${rl_targets:+--} $rl_targets || rl_rc=$?
+    LAST_LOG=$rl_log
+    LAST_VERDICT=$(judge_container_run "$rl_rc" "$rl_log" linux)
+}
+
+# Windows container paths differ only cosmetically between what `host_path`
+# emits (C:/x/y) and what `docker inspect` reports (C:\x\y), and the drive
+# letter case is not stable either. Fold both before comparing.
+norm_winpath() {
+    printf '%s' "$1" | tr 'A-Z' 'a-z' | tr '\\' '/' | sed 's|/*$||'
+}
+
+ensure_win_container() {
+    # A container is addressed by NAME only. One left over from a DIFFERENT
+    # checkout keeps its own C:\repo bind, and one left over from before an
+    # image rebuild keeps the old image - so reusing either blind would
+    # verify a tree that is not this one and could report PASS for it.
+    # Nothing inside the container can detect that, so it is checked here.
+    # On ANY doubt the container is removed and recreated: it is a bare
+    # `ping -t localhost`, every piece of state lives in the bind mount or
+    # in the named ccache volume, so recreating costs seconds and loses
+    # nothing. Silently reusing the wrong one costs a false green.
+    st=$(dkw ps -a --filter "name=^${WIN_CONTAINER}\$" --format '{{.State}}' 2>/dev/null | tr -d '\r' || true)
+    if [ -n "$st" ]; then
+        ewc_want=$(host_path "$REPO_ROOT")
+        ewc_src=$(dkw inspect -f '{{range .Mounts}}{{if eq .Destination "C:\repo"}}{{.Source}}{{end}}{{end}}' "$WIN_CONTAINER" 2>/dev/null | tr -d '\r' || true)
+        ewc_img=$(dkw inspect -f '{{.Config.Image}}' "$WIN_CONTAINER" 2>/dev/null | tr -d '\r' || true)
+        if [ "$(norm_winpath "$ewc_src")" != "$(norm_winpath "$ewc_want")" ] ||
+           [ "$ewc_img" != "$WINDOWS_IMAGE" ]; then
+            say "the existing container $WIN_CONTAINER does not match this checkout or image:"
+            info "  its C:\repo bind : ${ewc_src:-<could not be determined>}"
+            info "  this checkout    : $ewc_want"
+            info "  its image        : ${ewc_img:-<could not be determined>} (want $WINDOWS_IMAGE)"
+            info '  removing and recreating it - reusing it would verify a different tree'
+            dkw rm -f "$WIN_CONTAINER" >/dev/null 2>&1 || true
+            st=''
+        fi
+    fi
+    if [ "$st" = running ]; then
+        info "reusing the long-lived container $WIN_CONTAINER (scratch and ccache survive between runs)"
+        return 0
+    fi
+    if [ -n "$st" ]; then
+        info "starting the existing container $WIN_CONTAINER (state: $st)"
+        dkw start "$WIN_CONTAINER" >/dev/null
+        return 0
+    fi
+    iso=${FLCI_WINDOWS_ISOLATION:-process}
+    info "creating $WIN_CONTAINER with --isolation=$iso"
+    if ! dkw run -d --name "$WIN_CONTAINER" --isolation="$iso" \
+            -v "$(host_path "$REPO_ROOT"):C:\\repo" \
+            -v "$VOL_CCACHE_MSVC:C:\\ccache" \
+            "$WINDOWS_IMAGE" ping -t localhost >/dev/null 2>&1; then
+        if [ "$iso" = process ]; then
+            say "isolation=process was refused; falling back to hyperv (costed fallback, spec M4)"
+            dkw run -d --name "$WIN_CONTAINER" --isolation=hyperv \
+                --memory "${FLCI_WINDOWS_MEMORY:-24g}" --cpus "${FLCI_WINDOWS_CPUS:-20}" \
+                -v "$(host_path "$REPO_ROOT"):C:\\repo" \
+                -v "$VOL_CCACHE_MSVC:C:\\ccache" \
+                "$WINDOWS_IMAGE" ping -t localhost >/dev/null
+        else
+            finish INFRA "could not start the windows container $WIN_CONTAINER"
+        fi
+    fi
+    got=$(dkw inspect -f '{{.HostConfig.Isolation}}' "$WIN_CONTAINER" 2>/dev/null | tr -d '\r' || true)
+    info "container isolation actually in effect: ${got:-unknown}"
+}
+
+win_phase_preamble() {
+    ensure_win_container
+    CLEAN_STRAYS=1
+    RESTORE_DLL=1
+    say "windows container: -Command $1"
+    say '  (the entrypoint parses the target list with "ci-lists.sh targets" and fails closed'
+    say '   below its floor, asserts the en-US locale, and restores FlashIDA\dll in its'
+    say '   finally block. It does NOT run the mawk parser self-test - that needs the Linux'
+    say '   container: run "ci lists" after editing the workflow file or the parser.)'
+}
+
+run_windows_phase() {
+    # $1 = the entrypoint's -Command value, rest = extra -Param value pairs.
+    # -File is used because it propagates the script's exit code EXACTLY
+    # (measured: -File returns 7 for `exit 7`; -Command collapses every
+    # non-zero to 1).
+    rw_phase=$1; shift
+    rw_log=$(new_logfile "win-$rw_phase")
+    win_phase_preamble "$rw_phase"
+    rw_rc=0
+    # The entrypoint baked into the image is the one that runs; the bind-mount
+    # copy at C:\repo\docker\windows\entrypoint.ps1 exists for developing it.
+    # Override with FLCI_WINDOWS_ENTRYPOINT to exec the bind copy instead.
+    run_container_logged "$rw_log" \
+        dkw exec -w 'C:\repo' "$WIN_CONTAINER" \
+            powershell -NoProfile -ExecutionPolicy Bypass \
+                -File "${FLCI_WINDOWS_ENTRYPOINT:-C:\\flci\\entrypoint.ps1}" \
+                -Command "$rw_phase" "$@" || rw_rc=$?
+    LAST_LOG=$rw_log
+    LAST_VERDICT=$(judge_container_run "$rw_rc" "$rw_log" windows)
+}
+
+run_windows_cpp() {
+    # $1 = validated, space-separated target names.
+    # This one phase CANNOT use -File: the entrypoint's -Target is [string[]],
+    # and under -File "A,B" binds as ONE element (measured), which its
+    # unknown-target check then rejects. -Command binds a real array. The cost
+    # is that -Command collapses a non-zero exit to 1 - harmless here, because
+    # the dispatcher only asks "was it zero", and reads PASS/FAIL/PARTIAL off
+    # the entrypoint's own verdict line.
+    rwc_targets=$1
+    rwc_log=$(new_logfile win-cpp)
+    win_phase_preamble cpp
+    rwc_list=$(printf '%s' "$rwc_targets" | sed "s/ /','/g")
+    rwc_cmd="& '${FLCI_WINDOWS_ENTRYPOINT:-C:\\flci\\entrypoint.ps1}' -Command cpp -Target '$rwc_list'"
+    rwc_rc=0
+    run_container_logged "$rwc_log" \
+        dkw exec -w 'C:\repo' "$WIN_CONTAINER" \
+            powershell -NoProfile -ExecutionPolicy Bypass -Command "$rwc_cmd" || rwc_rc=$?
+    LAST_LOG=$rwc_log
+    LAST_VERDICT=$(judge_container_run "$rwc_rc" "$rwc_log" windows)
+}
+
+# ===========================================================================
+#  subcommands
+# ===========================================================================
+cmd_lists() {
+    [ $# -eq 0 ] || finish USAGE "'ci lists' takes no arguments (got: $1)"
+    require_linux_engine
+    require_linux_image
+    hdr 'yml parser self-test (under container mawk)'
+    if run_lists_selftest; then
+        finish PASS 'the C++ target list and the ctest -R alternation parse out of .github/workflows/flashida-ci.yml under container mawk, and reconcile (nothing else ran)'
+    fi
+    finish FAIL 'the yml parser self-test failed - see the reason above (no build, no test ran)'
+}
+
+cmd_cpp() {
+    tier=fast
+    btype=--release
+    btype_label=Release
+    build_rel=$BUILD_REL_REL
+    vol=$VOL_BUILD_REL
+    thr=$SLOW_THRESHOLD_DEFAULT
+    msvc=0
+    full=0
+    targets=''
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --full)  full=1; shift ;;
+            --debug) btype=--debug; btype_label=Debug; build_rel=$BUILD_DBG_REL; vol=$VOL_BUILD_DBG; shift ;;
+            --msvc)  msvc=1; shift ;;
+            --slow-threshold)
+                [ $# -ge 2 ] || finish USAGE '--slow-threshold needs a value in seconds'
+                case $2 in *[!0-9]*|'') finish USAGE "--slow-threshold takes an integer number of seconds, got '$2'" ;; esac
+                thr=$2; shift 2 ;;
+            --) shift ;;
+            -*) finish USAGE "unknown flag for 'ci cpp': $1" ;;
+            *)  targets="$targets $1"; shift ;;
+        esac
+    done
+    # shellcheck disable=SC2086
+    set -- $targets
+    validate_target_names "$@"
+    targets=$*
+
+    if [ "$msvc" -eq 1 ]; then
+        [ "$full" -eq 0 ] || finish USAGE 'there is no "ci cpp --msvc --full": running all targets on MSVC locally duplicates the CI job that is authoritative for MSVC. Name the targets you want to triage.'
+        [ -n "$targets" ] || finish USAGE '"ci cpp --msvc" is targeted triage only - name at least one test target'
+        [ "$btype_label" = Release ] || finish USAGE '"ci cpp --msvc --debug" is not wired up; use CI or ci cpp --debug (linux) instead'
+        require_windows_engine
+        require_windows_image
+        run_windows_cpp "$targets"
+        summary=$(result_summary "$LAST_LOG")
+        case $LAST_VERDICT in
+            PASS)    finish PARTIAL "ran MSVC triage of [$targets] only - the other C++ targets, the C# suite, the four gates and the regression run did not run ($summary)" ;;
+            PARTIAL) finish PARTIAL "MSVC triage of [$targets] reported a partial result ($summary)" ;;
+            *)       finish FAIL "MSVC triage of [$targets] failed ($summary)" ;;
+        esac
+    fi
+
+    named=0
+    if [ -n "$targets" ]; then
+        [ "$full" -eq 0 ] || finish USAGE 'name targets OR pass --full, not both'
+        named=1
+        # A named set is never tiered by the entrypoint (mode "named"), and
+        # --tier full says so out loud in the container log.
+        tier=full
+    elif [ "$full" -eq 1 ]; then
+        tier=full
+    fi
+
+    require_linux_engine
+    require_linux_image
+    # shellcheck disable=SC2086
+    run_linux_cpp "$btype" "$build_rel" "$vol" "$tier" "$thr" $targets
+    summary=$(result_summary "$LAST_LOG")
+    case $LAST_VERDICT in
+        PASS)
+            if [ "$named" -eq 1 ]; then
+                finish PARTIAL "ran only [$targets] on gcc $btype_label - the rest of the ctest set, the C# suite, the four gates and the regression run did not run ($summary)"
+            fi
+            case $tier in
+                full) finish PASS "gcc $btype_label build + the full parsed ctest set ($summary). Not verified here: MSVC, any float value, any golden, and the whole C# side" ;;
+                *)    finish PARTIAL "ran the FAST tier only on gcc $btype_label - every test slower than ${thr}s was skipped, and so were the C# suite, the four gates and the regression run ($summary). Use 'ci cpp --full' before you push" ;;
+            esac ;;
+        PARTIAL) finish PARTIAL "the linux leg reported a partial result ($summary)" ;;
+        *)       finish FAIL "the linux leg failed ($summary)" ;;
+    esac
+}
+
+cmd_dll() {
+    [ $# -eq 0 ] || finish USAGE "'ci dll' takes no arguments (got: $1)"
+    require_windows_engine
+    require_windows_image
+    require_thermo_dlls
+    run_windows_phase dll
+    summary=$(result_summary "$LAST_LOG")
+    case $LAST_VERDICT in
+        PASS)    finish PARTIAL "built OpenMS.dll, swapped the 4 DLLs and asserted provenance ($summary) - the C# suite, the four gates and the regression run did not run" ;;
+        PARTIAL) finish PARTIAL "the DLL leg reported a partial result ($summary)" ;;
+        *)       finish FAIL "the DLL build or the provenance gate failed ($summary)" ;;
+    esac
+}
+
+cmd_cs() {
+    filter=''
+    if [ $# -gt 0 ]; then
+        case $1 in
+            -*) finish USAGE "'ci cs' takes an optional NUnit --where filter, not a flag: $1" ;;
+        esac
+        filter=$1; shift
+        [ $# -eq 0 ] || finish USAGE "'ci cs' takes at most one filter argument (quote it)"
+    fi
+    require_windows_engine
+    require_windows_image
+    require_thermo_dlls
+
+    if [ -n "$filter" ]; then
+        say 'FILTERED RUN: the four fail-closed gates cannot run against a filtered suite.'
+        say '  The entrypoint writes TestResults.filtered.xml, a path the bridge-smoke gate'
+        say '  deliberately cannot read, and the run is PARTIAL however green the tests are.'
+        run_windows_phase cs -Filter "$filter"
+        summary=$(result_summary "$LAST_LOG")
+        case $LAST_VERDICT in
+            FAIL) finish FAIL "the filtered C# run failed ($summary)" ;;
+            *)    finish PARTIAL "bridge-smoke and TRACK-CREATE gates did not run; the suite ran FILTERED ($filter), so the 181-test contract, the JSON-capture gate and the test-data-directory gate did not run either ($summary)" ;;
+        esac
+    fi
+
+    run_windows_phase cs
+    summary=$(result_summary "$LAST_LOG")
+    case $LAST_VERDICT in
+        PASS)
+            finish PASS "OpenMS.dll + the 4-DLL swap + the ABI provenance gate + the UNFILTERED NUnit suite + all four gates + the 14-case regression run ($summary). Not verified here: a clean recursive checkout, the cpp-test-build tarball round trip, cold-cache compilation, and the goldens themselves - CI owns those" ;;
+        PARTIAL) finish PARTIAL "the C# leg reported a partial result ($summary)" ;;
+        *)       finish FAIL "the C# leg failed ($summary)" ;;
+    esac
+}
+
+cmd_golden_diff() {
+    [ $# -eq 0 ] || finish USAGE "'ci golden-diff' takes no arguments (got: $1)"
+    require_windows_engine
+    require_windows_image
+    require_thermo_dlls
+    say 'golden-diff is READ-ONLY: nothing here may write into FlashIDA/test-data.'
+    say '  Log goldens are staged as bin/log-golden-output/<case>/*.normalized (the engine'
+    say '  writes them unconditionally, so LOG_GOLDEN_CAPTURE is never set), regression TSVs'
+    say '  into the -OutputDir, continuity JSONs into bin/continuity-output/.'
+    # The dispatcher subcommand is "golden-diff" (spec section 10); the entrypoint's
+    # phase for the same work is "golden-capture" - it stages, compares and prints
+    # the promotion lines, and never writes into the golden tree.
+    run_windows_phase golden-capture
+    summary=$(result_summary "$LAST_LOG")
+    say ''
+    say 'PROMOTION (deliberately NOT a ci subcommand - a wrapper is the one shape the golden'
+    say '  write guard does not gate): run the printed cp lines yourself, on the host, from'
+    say "  $REPO_ROOT"
+    say '  Container path C:\repo == the repo root above. Patch only the cells that moved -'
+    say '  a whole-file promotion also bakes in this run column order and this run float jitter.'
+    say '  A green CI run on the push carrying the golden is the acceptance test for every'
+    say '  local capture; prefer the CI phase4-golden-capture artifact for the regression TSVs.'
+    case $LAST_VERDICT in
+        PASS)    finish PASS "golden comparison completed with no movement ($summary) - read-only, nothing was promoted" ;;
+        PARTIAL) finish PARTIAL "the golden comparison reported a partial result ($summary)" ;;
+        *)       finish FAIL "goldens moved, or the comparison run failed ($summary) - review the cell-level diff above before promoting anything" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# ci all - Linux first, Windows LAST (it produces the artifacts a human reviews)
+# ---------------------------------------------------------------------------
+tree_fingerprint() {
+    for r in . FlashIDA OpenMS; do
+        [ -e "$REPO_ROOT/$r/.git" ] || continue
+        git -C "$REPO_ROOT/$r" rev-parse HEAD 2>/dev/null || true
+        git -C "$REPO_ROOT/$r" status --porcelain -uall 2>/dev/null || true
+    done
+}
+
+tree_fingerprint_hash() {
+    if have sha256sum; then tree_fingerprint | sha256sum | cut -d' ' -f1
+    else tree_fingerprint | cksum | cut -d' ' -f1
+    fi
+}
+
+cmd_all() {
+    resume=0
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --resume) resume=1; shift ;;
+            *) finish USAGE "unknown argument for 'ci all': $1" ;;
+        esac
+    done
+    fp=$(tree_fingerprint_hash)
+    linux_verdict=''
+    linux_summary=''
+
+    if [ "$resume" -eq 1 ]; then
+        if [ ! -f "$STATE_FILE" ]; then
+            finish INFRA "there is no phase state to resume ($STATE_FILE does not exist) - run 'ci all' first"
+        fi
+        # shellcheck disable=SC1090
+        . "$STATE_FILE"
+        if [ "${FLCI_ALL_FINGERPRINT:-}" != "$fp" ]; then
+            say 'The tree changed since the linux leg ran, so its result no longer describes this tree.'
+            say '  Re-running BOTH legs rather than reporting a stale pass.'
+            resume=0
+        else
+            linux_verdict=${FLCI_ALL_LINUX_VERDICT:-}
+            linux_summary=${FLCI_ALL_LINUX_SUMMARY:-}
+            say "resuming: the linux leg was $linux_verdict for exactly these bytes ($linux_summary)"
+            if [ "$linux_verdict" != PASS ]; then
+                finish FAIL "the linux leg was $linux_verdict in the run being resumed - fix it and run 'ci all' again"
+            fi
+        fi
+    fi
+
+    if [ "$resume" -eq 0 ]; then
+        hdr 'leg 1 of 2: LINUX (gcc, full ctest set)'
+        require_linux_engine
+        require_linux_image
+        run_linux_cpp --release "$BUILD_REL_REL" "$VOL_BUILD_REL" full "$SLOW_THRESHOLD_DEFAULT"
+        linux_verdict=$LAST_VERDICT
+        linux_summary=$(result_summary "$LAST_LOG")
+        mkdir -p "$STATE_DIR"
+        safe_summary=$(printf '%s' "$linux_summary" | tr -d "'")
+        {
+            printf 'FLCI_ALL_FINGERPRINT=%s\n' "$fp"
+            printf 'FLCI_ALL_LINUX_VERDICT=%s\n' "$linux_verdict"
+            printf "FLCI_ALL_LINUX_SUMMARY='%s'\n" "$safe_summary"
+        } > "$STATE_FILE"
+        if [ "$linux_verdict" != PASS ]; then
+            finish FAIL "the linux leg failed ($linux_summary) - the windows leg was not started"
+        fi
+        say "linux leg: PASS ($linux_summary)"
+    fi
+
+    hdr 'leg 2 of 2: WINDOWS (OpenMS.dll, the C# suite, the four gates, the regression run)'
+    if ! eo=$(engine_os windows) || case $eo in windows\ *) false ;; *) true ;; esac; then
+        windows_unavailable_report
+        say ''
+        say "  Phase state written to $STATE_FILE."
+        say '  Switch Docker Desktop to the Windows engine YOURSELF, then run:'
+        say '      ./ci all --resume'
+        say '  Until that resume completes, this run is NOT equivalent to a CI run.'
+        finish PARTIAL "linux leg PASS ($linux_summary); the Windows leg did not run - no DLL build, no ABI provenance gate, no 181-test suite, no gates, no regression"
+    fi
+    require_windows_image
+    require_thermo_dlls
+    run_windows_phase cs
+    win_verdict=$LAST_VERDICT
+    win_summary=$(result_summary "$LAST_LOG")
+
+    hdr 'ci all summary'
+    say "  linux  : $linux_verdict ($linux_summary)"
+    say "  windows: $win_verdict ($win_summary)"
+    rm -f "$STATE_FILE"
+    case $win_verdict in
+        PASS)    finish PASS "linux (gcc, full ctest set) and windows (OpenMS.dll + UNFILTERED NUnit + all four gates + regression) both passed. Still only CI verifies a clean recursive checkout, the cpp-test-build round trip, cold-cache compilation and the goldens" ;;
+        PARTIAL) finish PARTIAL "linux PASS; the windows leg reported a partial result ($win_summary)" ;;
+        *)       finish FAIL "the windows leg failed ($win_summary); the linux leg passed" ;;
+    esac
+}
+
+cmd_clean() {
+    [ $# -eq 0 ] || finish USAGE "'ci clean' takes no arguments (got: $1)"
+    hdr 'clean'
+    for d in "$BUILD_REL_REL" "$BUILD_DBG_REL" "$BUILD_MSVC_REL" "$BUILD_MSVC_DBG" FlashIDA/bin FlashIDA/test-output; do
+        if [ -d "$REPO_ROOT/$d" ]; then
+            rm -rf "${REPO_ROOT:?}/$d"
+            info "removed $d"
+        fi
+    done
+    for f in $STRAY_FILES; do
+        if [ -e "$REPO_ROOT/$f" ]; then rm -f "$REPO_ROOT/$f"; info "removed stray $f"; fi
+    done
+    if have git && [ -e "$REPO_ROOT/FlashIDA/.git" ]; then
+        RESTORE_DLL=1
+        info 'FlashIDA/dll will be restored by the end-of-run assertion below'
+    fi
+    vols_left=0
+    if have docker && eo=$(engine_os linux) && case $eo in linux\ *) true ;; *) false ;; esac; then
+        for v in "$VOL_BUILD_REL" "$VOL_BUILD_DBG"; do
+            if volume_present "$v"; then
+                if dkl volume rm "$v" >/dev/null 2>&1; then
+                    info "removed build volume $v"
+                else
+                    info "could not remove volume $v (a container is still using it?) - remove it yourself if you meant to"
+                    vols_left=$((vols_left + 1))
+                fi
+            fi
+        done
+        info "kept the ccache volumes ($VOL_CCACHE_LINUX, $VOL_CCACHE_MSVC) - wiping them costs a cold rebuild"
+    else
+        # The host build directory is only a MOUNTPOINT: the build tree itself
+        # lives in the named volume (spec section 3). Removing the mountpoint
+        # while the volume survives is not a clean, so the verdict must not say
+        # the build dirs are gone.
+        vols_left=2
+        info 'linux engine not reachable: the build VOLUMES were NOT removed, and they hold the'
+        info '  actual build trees - only their host mountpoints were deleted. Start the linux'
+        info '  engine and re-run "ci clean", or remove them yourself:'
+        info "    docker $(linux_endpoint) volume rm $VOL_BUILD_REL $VOL_BUILD_DBG"
+    fi
+    info 'images were NOT removed: pruning is your call alone, never the tooling (see ci doctor for the footprint)'
+    if [ -d "$REPO_ROOT/FlashIDA/dependencies" ]; then
+        # No `ls | wc -l` here: with pipefail an empty glob makes ls exit 2 and
+        # the whole run aborts.
+        ndll=0
+        for f in "$REPO_ROOT/FlashIDA/dependencies"/*.dll; do
+            [ -e "$f" ] || continue
+            ndll=$((ndll + 1))
+        done
+        info "FlashIDA/dependencies untouched by design (host state): $ndll decrypted DLL(s) still there"
+    fi
+    if [ "$vols_left" -gt 0 ]; then
+        finish PARTIAL "the host build dirs, bin/, test-output/ and the stray root files are gone and FlashIDA/dll is restored, but $vols_left linux build volume(s) still hold the actual build tree - the next build resumes on top of them"
+    fi
+    finish PASS 'build dirs, bin/, test-output/ and the stray root files are gone; FlashIDA/dll restored; dependencies and images untouched (nothing was built or tested)'
+}
+
+# ===========================================================================
+#  dispatch
+# ===========================================================================
+if [ $# -lt 1 ]; then
+    usage
+    golden_baseline_take
+    finish USAGE 'no subcommand given (nothing ran) - the list is above'
+fi
+
+FLCI_CMD="ci $1"
+sub=$1
+shift
+
+# Baseline for the end-of-run tree assertions: taken BEFORE anything runs, so a
+# tree that was already dirty is reported by doctor and never blamed on this run.
+golden_baseline_take
+
+case $sub in
+    doctor)       cmd_doctor "$@" ;;
+    lists)        cmd_lists "$@" ;;
+    cpp)          cmd_cpp "$@" ;;
+    dll)          cmd_dll "$@" ;;
+    cs)           cmd_cs "$@" ;;
+    golden-diff)  cmd_golden_diff "$@" ;;
+    all)          cmd_all "$@" ;;
+    clean)        cmd_clean "$@" ;;
+    -h|--help|help)
+        usage
+        finish PASS 'printed the usage text (nothing was built, run or verified)' ;;
+    golden-promote)
+        usage
+        say ''
+        say 'There is deliberately no "ci golden-promote". A wrapper is the one command shape the'
+        say 'golden write guard does not gate, and a whole-file promotion bakes in this run column'
+        say 'order and float jitter. Use "ci golden-diff" and run the cp lines it prints yourself.'
+        finish USAGE '"ci golden-promote" does not exist, by design - promotion is a bare host-side cp' ;;
+    *)
+        usage
+        finish USAGE "unknown subcommand '$sub' (nothing ran)" ;;
+esac

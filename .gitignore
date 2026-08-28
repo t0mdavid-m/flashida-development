@@ -1,3 +1,56 @@
 # Regression test output (generated, not committed)
 FlashIDA/test-output/
 CLAUDE.md
+
+# ---------------------------------------------------------------------------
+# Local Docker CI (docker/, ./ci) -- byproducts of running CI's own steps here.
+#
+# The runner deletes the strays below in its `finally`, so in a healthy run
+# these lines never fire. They are belt-and-braces for the run that is killed
+# half way: a dirty `git status` has to keep MEANING something, because the last
+# and only unbypassable layer of the golden-write control is an unconditional
+# `git status --porcelain` assertion. Five untracked files nobody ever cleans up
+# is exactly how an operator learns to scroll past that signal.
+# ---------------------------------------------------------------------------
+
+# nunit3-console --result=<name>, run with CWD = repo root
+# (.github/workflows/flashida-ci.yml:372 and :402 -- reproduced verbatim locally).
+# TestResults.filtered.xml is the container's: a filtered "ci cs <filter>" run
+# writes there deliberately, where the bridge-smoke gate cannot read it.
+/TestResults.xml
+/TestResults.filtered.xml
+/RegenResults.xml
+
+# FlashIDA/test-scripts/regression-runner.ps1:23-31 copies these three out of
+# test-data/configs into the CURRENT WORKING DIRECTORY, so the C++ engine can
+# resolve the bare filenames in a method config. CWD is the repo root.
+/test_inclusion_list.txt
+/test_fasta.fasta
+/test_target_log.log
+
+# Container run output: logs, golden-capture staging, doctor reports, parser
+# self-test output -- anything `ci` writes at the repo root.
+/.container-out/
+/flci-*.xml
+
+# ccache and other build caches, for the case where one is pointed at the tree
+# instead of at a Docker named volume (flashida-ccache-linux / -msvc).
+/.ccache/
+/ccache/
+
+# A mis-pointed `cmake -B` at the parent root. The sanctioned build trees are
+# OpenMS/cmake-build-{linux,msvc}-{release,debug}, already ignored inside the
+# OpenMS submodule; nothing should ever configure a build tree up here.
+/cmake-build-*/
+
+# `Flash.exe` creates ONE TIMESTAMPED RUN FOLDER PER INVOCATION in its process
+# CWD, and CWD for a container regression run is the repo root. runtime.log_dir
+# is empty in all 41 committed configs and LogPathResolver.Compose treats empty
+# as "." -- pinned by Flash.Tests.LogPathResolverTests
+# .Compose_EmptyLogDir_UsesCurrentDirectory -- so each of the 14 cases in
+# regression-runner.ps1 drops a yyyy-MM-dd-HH-mm-ss/ directory here holding the
+# five engine streams plus a copy of method.json. Fourteen untracked directories
+# per regression run is a larger dirty-status source than the five stray files
+# above, and matters for the same reason. Anchored and directory-only; the
+# trailing `*` catches the `_2` suffix Compose adds on a same-second collision.
+/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]*/
