@@ -77,10 +77,18 @@ reagent_max_it, reagent_agc_target, scan_description, precursor_id, ms3_proteofo
 
 ---
 
-## 2. Results Log (`scan_results`) — 32 columns
+## 2. Results Log (`scan_results`) — 36 columns
 
 **Verification: ✅ COMPLETE** for the reorder. All columns of the 2026-07 permutation are present
 exactly once; the deconv block has since been restructured and extended — see the note below.
+
+⚠️ **The numbered list below is the 2026-07 permutation and is NOT the live header.** It has 29
+entries; the live stream has 36. Two blocks were appended after it was drafted: the
+identification-YIELD trio (`tag_count`, `fragment_count`, `tic_coverage`, after `remaining_ratio`)
+and ADR-0038's quant block (`quant_channels`, `quant_condition_means`, `quant_fold_change`,
+`quant_verdict`, appended after `dequeue_ts`). Read the live header from
+`IdaLogger.cpp`, or the schema lock in `FLASHIda_LoggingFields_test`'s `schema_column_counts`,
+which is the authoritative record of both the count and `headers.back()`.
 
 New (desired) order:
 
