@@ -64,5 +64,5 @@ The cross-direction ion types (`yb`, `ya`) are MS3-only and only appear for N-te
 - FLASHTagger / FLASHExtender algorithm internals — named and referenced, but internals (tag generation, sequence extension, PTM localization algorithm) are not explained here.
 - Theoretical-mass calculation internals — only the "what" and "when" of computation; the "how" is deferred.
 - Calibration math beyond the two-pass description (loose → tight; median ppm error → correction factor).
-- Quantification follow-up mode (`FLASHIda.cpp:900-908`, suffix `'F'`) — sibling mechanism, tag-independent; deferred to a future quantification packet.
+- Quantification (`FLASHIda.cpp:395-414`, marker `'Q'`) — tag-independent, and after ADR-0038 no longer a "follow-up" at all: `ms_settings.ms2_quant` is ROSTERED per precursor and measured, and what a differential verdict buys is the ordinary `'R'` identification scan. Deferred to a future quantification packet.
 - Deconvolution internals — upstream subsystem; separate packet candidate.
