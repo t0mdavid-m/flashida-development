@@ -59,14 +59,15 @@ SOURCE_REGION = ("rf_lens", "source_cid", "source_cid_scaling")
 #
 # DELETE an entry the moment the regenerated reference lands carrying that key. A stale entry here
 # is a hole in the allowlist, which is the failure this file exists to prevent (ADR-0007).
-PENDING_REFERENCE_KEYS = {
-    "characterization.min_target_mass",  # ADR-0023, exhaustive-mode pool floor
-    # ADR-0038. All four land in the regenerated reference; delete these four the moment it does.
-    "quantification.labelling",
-    "quantification.conditions",
-    "quantification.correction_matrix",
-    "ms_settings.ms2_quant",
-}
+# EMPTY, and that is the correct steady state. Every key that was pending is now carried by the
+# committed reference: ADR-0023's characterization.min_target_mass (whose entry outlived its own
+# regeneration and sat here stale), and ADR-0038's labelling / conditions / correction_matrix /
+# ms_settings.ms2_quant. Verified against config_schema_reference.json rather than assumed.
+#
+# Add an entry ONLY while a key is genuinely ahead of the reference, and delete it in the same
+# change that promotes the regenerated file. An entry that outlives its regeneration is a silent
+# hole in the allowlist, which is the failure this file exists to prevent (ADR-0007).
+PENDING_REFERENCE_KEYS = set()
 
 SCAN_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 RESERVED_SCAN_NAMES = {"ms1", "ms2", "ms3", "none", "off", "all"}
