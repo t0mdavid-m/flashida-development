@@ -50,6 +50,15 @@ its `map_index`.
 
 ## Decision
 
+> ⚠ **Amended by [ADR-0039](0039-the-quantification-objective-decides-what-a-verdict-buys.md).**
+> *Which* verdicts buy is now authored: `quantification.identify`
+> (`differential` | `quantified` | `all` | `none`) plus `quantification.enriched_in`, which names
+> the condition a differential species must be enriched in rather than a direction. `differential`
+> and `either` are the defaults and reproduce everything below exactly. What is measured, which
+> scan is marked `'Q'` and which `'R'`, and the four `scan_results.tsv` columns are untouched —
+> 0039 also adds the fourth structural rejection (`enabled` without `ms_settings.ms2`) that the
+> three below were missing.
+
 **The quantification scan is the screen. The identification scan is what a differential result
 buys.**
 
