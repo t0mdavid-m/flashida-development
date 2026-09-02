@@ -720,16 +720,38 @@ quantification scan because a run is labelled, which is what makes the distincti
 identification scan worth having; expecting its reporter region to exist under an activation that
 cannot release the label, or in a scan whose mass range begins above it.
 
+**Quantification objective**:
+Which quantification verdicts are worth an identification scan — the run's answer to "what am I
+here to sequence": only what moved, everything I could measure, everything at all, or nothing.
+It is a **cut point on the verdict ladder**, not a list of verdicts, because the verdicts are
+ordered by how much is known about the species. Because a quantification scan raises no tags and no
+MS3 targets of its own, the objective also decides which species are characterized.
+_Avoid_: calling it a *filter on quantification* — every selected precursor is screened either way,
+and the objective spends the results rather than restricting them; reading "nothing" as the feature
+being off, which is what `quantification.enabled` says.
+
+**Enriched-in condition**:
+The condition a species must be **more abundant in** for a differential verdict to count as the
+result the run is looking for. Named as one of the two conditions, never as a direction: the ratio's
+numerator is whichever condition was declared first, so "up" is only meaningful relative to a
+declaration order that is nowhere in sight at the point of use, and reverses if that order changes.
+A species absent from one condition entirely is enriched in the other — the extreme case, not an
+exception to it.
+_Avoid_: "up-regulated" / "down-regulated", which name a direction rather than a condition and
+invert silently; concluding a species was not enriched from the fold change alone, which carries no
+finite value when a condition is wholly absent.
+
 **Identification scan**:
 The MS2 acquired to **sequence a proteoform** — the ordinary MS2 of every mode, with the
 fragmentation the method chose for informative backbone cleavage. It is where tags are found,
 where a conditional MS2 is triggered, and where MS3 targets are picked; it means the same thing and
 carries the same marker in every mode. What changes between modes is only *when* it fires: normally
-once per selected precursor, and in a labelled run only for the precursors a quantification scan
-found differential.
+once per selected precursor, and in a labelled run only for the precursors whose quantification
+verdict satisfies the run's quantification objective.
 _Avoid_: treating "the default MS2" as a statement about dispatch — it names the scan's job, not
 its unconditionality; supposing an identification scan is skipped because a species was
-uninteresting, when it may simply not have been measured yet.
+uninteresting, when it may simply not have been measured yet, or may have been measured and found
+uninteresting *in a direction the objective did not ask for*.
 
 ## Language — scan configuration
 
@@ -773,7 +795,7 @@ scan parameter.
 **Follow-up scan**:
 A second MS2 of a precursor already fragmented, dispatched from the regular-MS2 path because
 something **found in the returning scan** justified spending another — an identification scan
-(`'R'`, bought when the quantification screen came back differential) or a conditional MS2 (`'C'`,
+(`'R'`, bought when the quantification screen's verdict satisfied the objective) or a conditional MS2 (`'C'`,
 bought when sequence tags were found). The trigger is always a measurement of the scan that
 returned, never a property known when it was queued; a follow-up is what a result *buys*. It
 inherits the precursor's identity, targeting, scoring and FAIMS CV from the triggering MS2, and

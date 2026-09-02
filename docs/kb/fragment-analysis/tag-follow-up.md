@@ -71,7 +71,7 @@ ScanCommand buildFollowUp(const ScanCommand& ctx,
                           int priority = /* default */);
 ```
 
-The suffix char goes into the `type` field of the emitted command; `'C'` marks this as "conditional" (from tag match). `'F'` is retired (ADR-0038) — `'Q'` now marks the quantification scan, which is rostered rather than bought, and the scan a differential verdict buys is an ordinary `'R'`. The suffix appears in log lines and downstream TSV output.
+The suffix char goes into the `type` field of the emitted command; `'C'` marks this as "conditional" (from tag match). `'F'` is retired (ADR-0038) — `'Q'` now marks the quantification scan, which is rostered rather than bought, and the scan its verdict buys is an ordinary `'R'`. Which verdicts buy is `quantification.identify` (ADR-0039), defaulting to differential-only. The suffix appears in log lines and downstream TSV output.
 
 ## Config keys
 
@@ -111,7 +111,7 @@ Briefly — see `../config-flow/` for full detail:
 
 - **Silently-off on missing protein sequence.** `conditional_ms2_enabled = true` + empty `protein_sequence` means `tags_found` will never be `true`. The mode is configured but never fires. `Config::validate()` catches empty `protein_sequence` via other constraints (exploration with `FragmentCount`, or any level-≥2 `SelectionMetric` — see `../config-flow/config-flow.md` Stage 9), but there is *no direct validation* tied to `conditional_ms2_enabled`. A pathological config that enables conditional MS2 with no exploration/selection metric active will silently not fire, with no startup diagnostic.
 
-- **Neighbour: the quantification screen, and it SUPPRESSES this packet's mechanism.** At `FLASHIda.cpp:395-414` a parallel block measures reporter ions and buys a scan through the same `buildFollowUp` machinery. After ADR-0038 it is not a sibling follow-up: `ms_settings.ms2_quant` is ROSTERED per precursor and marked `'Q'`, it is the only scan measured, and what it buys is an ordinary `'R'` identification scan.
+- **Neighbour: the quantification screen, and it SUPPRESSES this packet's mechanism.** At `FLASHIda.cpp:395-414` a parallel block measures reporter ions and buys a scan through the same `buildFollowUp` machinery. After ADR-0038 it is not a sibling follow-up: `ms_settings.ms2_quant` is ROSTERED per precursor and marked `'Q'`, it is the only scan measured, and what it buys is an ordinary `'R'` identification scan. ADR-0039 makes the buy condition a config key (`quantification.identify` + `.enriched_in`) rather than a hardcoded `verdict == Differential`; the default is unchanged, so this packet's mechanism is unaffected either way.
   ⚠️ **On a `'Q'` scan the tag detection at step 3 does not run at all** — `is_quant_scan` gates it — so no `'C'` follow-up can ever be raised from a quantification scan. Its activation and energy were chosen to release a reporter ion, not to fragment informatively, so tags read off it would come from the wrong spectrum. Pinned by `FLASHIda_ProcessScan_test::processScan_quant_scan_raises_no_tagging_or_ms3`, whose control is this packet's own fixture with quantification added and nothing else changed.
 
 - **Priority ordering.** Follow-ups land at the same queue priority tier as MS2/MS3; specific ordering depends on `buildFollowUp`'s `priority` argument. See `../acquisition-loop/engine-entry-points.md` for how `getNextScanCommand` picks from the queue (AGC and cycle-time MS1 can preempt).
