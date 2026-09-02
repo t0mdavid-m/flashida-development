@@ -60,7 +60,12 @@ that **authored charge set** narrows the candidates before that judgement runs; 
 can only subtract, never extend. A set may be **co-isolated** — all members
 isolated together in one scan as separate **notches**, sharing one isolation event and one identity — or
 acquired as one scan per member, which yields that many independent Precursors
-rather than one. The instrument caps the set's size.
+rather than one. The set's size is bounded at both ends, and both bounds are authored: a **floor**,
+below which the species is not acquired at all, its charge states being too few to be worth the
+scans; and a **cap** on how many are kept, which keeps the most intense and drops the rest.
+Co-isolation additionally meets a hard instrument limit on simultaneous windows. One scan per
+member meets no such limit — there its size is a scan count rather than a geometry — so leaving
+the cap unauthored leaves that count unbounded.
 _Avoid_: "all charge states" unqualified (the set is SNR-gated and capped);
 treating co-isolation and one-scan-per-charge as interchangeable — the first is one
 Precursor, the second is several.
@@ -711,9 +716,11 @@ the origin is not knowable from the scan itself — internal calibration produce
 **Quantification scan**:
 The MS2 acquired to **measure reporter ions**, not to sequence anything. Its fragmentation is chosen
 for one purpose — releasing the isobaric label's reporter group, which needs collisional activation
-— so its fragment ions are a by-product and nothing reads them. It is the scan a labelled run
-spends *first* on every selected precursor, and the only scan in the run that is measured. What it
-produces is a verdict about one species: the two conditions differ, or they do not.
+— so its fragment ions are a by-product and nothing reads them. It is what a labelled run spends
+*first* on every selected precursor — one scan per member of the **acquisition charge set** — and
+the only kind of scan in the run that is measured. What one of them produces is a verdict about one
+species *as seen through one isolation window*; what the **quantification group** produces is that
+species' **consensus verdict**.
 _Avoid_: calling the scan a quantification result *buys* the quantification scan — it is the scan
 that does the measuring, and the one it buys is an identification scan; assuming an MS2 is a
 quantification scan because a run is labelled, which is what makes the distinction from the
@@ -740,6 +747,43 @@ exception to it.
 _Avoid_: "up-regulated" / "down-regulated", which name a direction rather than a condition and
 invert silently; concluding a species was not enriched from the fold change alone, which carries no
 finite value when a condition is wholly absent.
+
+**Quantification group**:
+Every quantification scan measuring **one species' reporter population** in one survey, together
+with the single verdict they reach. One species, one group, whatever the acquisition charge set's
+size: co-isolated, the group is one scan measuring the whole set at once; acquired one scan per
+charge, it is one scan per member, each measuring the same population through a different window.
+The group is what buys an **identification scan** — never a member on its own — so the
+identification is bought once however many charge states were spent screening. Pooling reporter
+measurements across charge states is sound where pooling **fragments** across them is not: the
+reporter ion is released at the same m/z whatever the precursor's charge, so its ratio is a property
+of what was in the window rather than of the charge — which is exactly what makes disagreement
+between charges meaningful.
+_Avoid_: calling it a Precursor (one scan per charge yields several, and the group spans them);
+reading it as pooled fragment evidence, which is a different thing and unsound; expecting a group to
+reach a verdict before every one of its members has returned.
+
+**Consensus verdict**:
+A **quantification group's** single verdict, decided by majority vote over its members' verdicts,
+each read *with its direction* — so "differential" alone never counts as agreement when the members
+disagree about which condition is enriched. A member that measured nothing usable abstains rather
+than dissents. It is the consensus verdict, never a member's own, that the **quantification
+objective** cuts on, and the number reported beside it is weighted towards the members carrying the
+most ion current, those being the best measured. Too few usable votes is not a verdict about the
+species but about the measurement, and reads as one.
+_Avoid_: treating a member's verdict as the species' verdict; counting a member that could not be
+measured as disagreement; expecting a vote where only one charge state was ever acquired.
+
+**Chimericity**:
+Members of one **quantification group** disagreeing about the same species' reporter ratio —
+evidence that their isolation windows did not hold the same population, since one clean species must
+give the same ratio at every charge. It is the reason to acquire more than one charge state at all.
+Disagreement short of a tie is settled by the majority and reported as such: the dissenting member
+is discarded rather than averaged in, and is deliberately never the window the identification is
+acquired from, because sequencing the interference would attribute the ratio to the wrong molecule.
+_Avoid_: reading it as a property of a single scan (it exists only *between* measurements);
+"co-isolation", which names an acquisition geometry and not a disagreement; treating a species whose
+members disagreed as unmeasured — the majority still carries a result.
 
 **Identification scan**:
 The MS2 acquired to **sequence a proteoform** — the ordinary MS2 of every mode, with the
