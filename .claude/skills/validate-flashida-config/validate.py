@@ -349,6 +349,65 @@ def validate(path, ref):
             rep.error("A22", f"unknown quantification.labelling '{lab}'. Valid: "
                              f"{', '.join(valid_lab)}. ('none' is not accepted -- "
                              "quantification.enabled is the switch.)")
+        # ADR-0039. The fourth structural rejection, and the one that closes a LIVE gap: Config
+        # assigns quant_.identification_scan only when ms_settings.ms2 was authored, and the
+        # pre-existing "rank_by is not none but ms2 is not defined" guard reads the ROSTER, which in
+        # a quant config is non-empty because the 'Q' scan holds it. So without this the bought scan
+        # was built from a default-constructed ScanConfig. Required even under identify "none",
+        # where it is inert, so flipping the objective never invalidates a config.
+        if not isinstance((cfg.get("ms_settings") or {}).get("ms2"), dict):
+            rep.error("A23", "quantification.enabled is true but ms_settings.ms2 is not set. ms2 is "
+                             "the IDENTIFICATION scan the screen buys (ADR-0038); ms2_quant is the "
+                             "scan that does the measuring. Required whenever quantification is "
+                             "enabled -- inert under quantification.identify 'none', so the "
+                             "objective stays a one-word edit.")
+
+    # --- ADR-0039: the quantification objective ------------------------------------------------
+    # Parsed whatever `enabled` says, exactly as Config does: these two are read during parsing and
+    # only their MUTUAL constraint is gated on enabled. config_schema_reference.json relies on that
+    # -- it carries both at non-default values with quantification off.
+    valid_identify = ("differential", "quantified", "all", "none")
+    identify = q.get("identify")
+    if identify is None:
+        identify = "differential"
+    if identify not in valid_identify:
+        rep.error("A24", f"unknown quantification.identify '{identify}'. Valid: "
+                         f"{', '.join(valid_identify)} (case-sensitive). It selects WHICH "
+                         "quantification verdicts buy the identification scan ms_settings.ms2: "
+                         "differential (only what moved -- the default), quantified (anything "
+                         "cleanly measured), all, or none (quantify only, never identify). "
+                         "Note 'off' is characterization.mode's spelling and is NOT accepted here; "
+                         "quantification.enabled is the switch.")
+
+    cond_names = [c.get("name") for c in (q.get("conditions") or [])
+                  if isinstance(c, dict)]
+    if "either" in cond_names:
+        rep.error("A25", "a quantification condition may not be named 'either' -- that is the "
+                         "quantification.enriched_in sentinel meaning 'either direction' "
+                         "(ADR-0039), and a condition of that name makes enriched_in ambiguous.")
+
+    enriched_in = q.get("enriched_in")
+    if enriched_in is None:
+        enriched_in = "either"
+    if enriched_in != "either":
+        if enriched_in not in cond_names:
+            known = ", ".join(f"'{n}'" for n in cond_names) or "(none authored)"
+            rep.error("A26", f"quantification.enriched_in names unknown condition "
+                             f"'{enriched_in}'. Valid: {known}, or 'either'. It names the CONDITION "
+                             "a species must be enriched in for a differential verdict to buy the "
+                             "identification scan -- never a direction, because fold_change is "
+                             "mean(conditions[0]) / mean(conditions[1]) and 'up' would mean "
+                             "'enriched in whichever condition is listed first'.")
+        elif q.get("enabled") and identify != "differential":
+            # The engine ACCEPTS this and says so at load. Exactly the category this skill exists
+            # to surface: authored, bound, and inert. Deliberately not an error -- a template that
+            # sets enriched_in once must stay valid across every identify value (ADR-0013's
+            # ms_settings.ms3 rule), which a throw would break.
+            rep.warn("B10", f"quantification.enriched_in is '{enriched_in}' but "
+                            f"quantification.identify is '{identify}', so the direction is NOT "
+                            "applied -- it restricts only the 'differential' objective. The engine "
+                            "loads this and prints [CONFIG-WARN]; nothing is rejected. Set identify "
+                            "to 'differential' if the restriction was intended.")
 
     # Gated on ms2_quant EXISTING, not on quantification.enabled: the block has exactly one
     # purpose, so a first_mass above the reporter range is worth naming while the switch is still

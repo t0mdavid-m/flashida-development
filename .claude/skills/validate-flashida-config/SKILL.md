@@ -71,6 +71,10 @@ two of them lived under a level you were not configuring.
 | A20 | `quantification.conditions` is not **exactly two**. `fold_change = mean(conditions[0]) / mean(conditions[1])` is a two-group ratio, and the array **order is the direction**; a time course needs a different statistic, not the first two groups |
 | A21 | `quantification.enabled` together with `precursor_selection.exploration`. Incompatible by construction: exploration replaces the level-2 roster with CE-sweep variants, so the quantification scan is never dispatched — and A10 does **not** catch it, because the inverted roster does have exactly one entry |
 | A22 | unknown `quantification.labelling`. The seven OpenMS schemes only; `"none"` is deliberately not among them, since `enabled` is the switch |
+| A23 | `quantification.enabled` without `ms_settings.ms2`. The scan the screen **buys** — absent, the engine builds it from a default-constructed `ScanConfig`, and the pre-existing "rank_by is not none but ms2 is not defined" guard cannot catch it because it reads the roster, which a quant config fills with the `'Q'` scan (ADR-0039). Required even under `identify: "none"`, where it is inert, so flipping the objective never invalidates a config |
+| A24 | unknown `quantification.identify`. `differential` \| `quantified` \| `all` \| `none`, case-sensitive (ADR-0039). `"off"` is `characterization.mode`'s spelling and is **not** accepted — `enabled` is the switch |
+| A25 | a `quantification.conditions` entry **named** `"either"`. That is `enriched_in`'s sentinel for "either direction", so the name would make the key ambiguous |
+| A26 | `quantification.enriched_in` names no authored condition. It names a **condition**, never a direction — `fold_change = mean(conditions[0]) / mean(conditions[1])`, so `"up"` would mean "enriched in whichever condition is listed first" and would invert if the array were reordered |
 
 ### Class B — the engine stays silent
 
@@ -84,6 +88,7 @@ two of them lived under a level you were not configuring.
 | B6 | source-region parameter explicitly `0` on an MSn scan | means *inherit the survey*, not *off* (ADR-0011) |
 | B7 | a name in **both** `additional_scans` and a `follow_up_scan` | fires unconditionally per precursor **and** as a conditional follow-up. `additional_ms2` is one flat namespace serving two roles and nothing separates them |
 | B8 | `characterization.min_target_mass` set with `mode != "exhaustive"` | parsed, emitted across the bridge, and never consulted — only the exhaustive pool builder reads it (ADR-0023 decision 9). It is **not** a second `deconvolution.min_mass`; that floor does not reach MSn output at all |
+| B10 | `quantification.enriched_in` set while `quantification.identify` is not `"differential"` | authored, bound, and **inert**: direction restricts only the differential objective. The engine loads it and prints `[CONFIG-WARN]` rather than rejecting — deliberately, so a template that sets the direction once stays valid across every `identify` value (ADR-0039, applying ADR-0013's `ms_settings.ms3` rule). Warned, never an error |
 | B9 | `ms_settings.ms2_quant.first_mass` above the labelling scheme's lowest reporter ion | the quantification scan cannot contain a reporter ion, so every spectrum returns `extraction_failed`, no identification scan is ever bought, and the run degrades to plain DDA. Checked per scheme (`itraq8plex` 113.108, `itraq4plex` 114.111, every TMT 126.128); `first_mass: 0` means "instrument default" (ADR-0011) and is skipped. Gated on `ms2_quant` **existing**, not on `enabled`, so the trap is named before the switch is flipped |
 
 It also reports FAIMS state, since `cv_values` emptiness is the switch (ADR-0012): `[]` off, one CV
@@ -116,8 +121,12 @@ The reshape's success measure is how much of Class B became Class A:
   `additional_ms2` would sort the names alphabetically and silently reorder dispatch.
 - **With quantification enabled the roster shows `ms_settings.ms2_quant`, not `ms2`** — that is
   ADR-0038 working, not a missing scan. The quantification scan is the screen and holds the
-  unconditional slot; `ms_settings.ms2` becomes the identification scan a differential verdict
+  unconditional slot; `ms_settings.ms2` becomes the identification scan the verdict
   buys, so it is off the roster by design and fires per *verdict* rather than per precursor.
+  **Which verdicts buy is `quantification.identify`** (ADR-0039) — `differential` (default) |
+  `quantified` | `all` | `none` — refined for the differential case by `quantification.enriched_in`,
+  which names the **condition** a species must be enriched in, not a direction. Under
+  `identify: "none"` nothing is ever bought and `ms_settings.ms2` is required but inert.
 - **Zero Class A errors across the 42 configs `--all` walks** is the baseline — the 41 in
   `FlashIDA/test-data/configs/` plus the shipped `FlashIDA/src/Flash/etc/method.json`, which is in
   the sweep precisely because it is the one config nobody diffs against a golden. Any error there is
