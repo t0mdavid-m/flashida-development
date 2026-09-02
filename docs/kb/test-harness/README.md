@@ -1,5 +1,5 @@
 ---
-last_verified: 2026-08-25
+last_verified: 2026-09-02
 code_anchors:
   - FlashIDA/src/Flash.Tests/Mocks/ContinuityTestHarness.cs   # C# PushScanAndDrainFull (canonical driver)
   - OpenMS/src/tests/class_tests/openms/source/FLASHIda_TestHelpers.h   # C++ runInterleaved (canonical driver)
@@ -66,6 +66,14 @@ Loop, once per iteration:
      (contract above unchanged). Used by the C# `Golden_Exploration_MS3_CytC` golden mode; the C++ mirror is
      present for drift-guard parity but currently unexercised (the C++ exploration test uses
      `driveOneExplorationGroup` + the single fixture + range checks).
+   - *Optional CHARGE-keyed selection (ADR-0040, opt-in, both languages):* `ms2_charge_map` (C++) /
+     `ms2ChargeMap` (C#), same shape and the same **NO FALLBACK** rule, but keyed on
+     `abs(cmd.stages[0].charge_state)`. It exists so the members of one **quantification group** can be
+     given different reporter ratios — without it every member is fed the same spectrum, the vote is
+     unanimous by construction, and the chimericity path passes while testing nothing. Applied only when
+     `ms2_ce_map` is null: both select the same feed, so a run that swept CE *and* voted would be
+     ambiguous. Used by the C# `quant_separate_chimeric` golden mode, which pairs it with a fail-closed
+     post-drive assertion that a group actually recorded `agreeing < ballots`.
    - **MS3** (`>= 3`): decode the trailing ion (`decodeTrailingIonKey` / `DecodeIonFromScanDescription`); look it
      up in the manifest and feed it, or **skip** if absent (never fabricate). *Legacy C++ plausibility only:*
      when no manifest is supplied, the MS2 spectrum is fed back as the MS3 scan — this shortcut is **not** part
