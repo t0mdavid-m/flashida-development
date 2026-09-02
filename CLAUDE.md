@@ -89,6 +89,19 @@ A behaviour change usually moves more than one set. Know which you touched:
 | Regression TSVs (13) | `FlashIDA/test-data/golden/phase4_*.tsv`, `baseline_*.tsv` | `regression-runner.ps1 -captureMode` stages into its own `-OutputDir` — but **prefer the CI artifact `phase4-golden-capture` for this set**: `compare_golden.py` uses `REL_TOL=1e-4`, ten times tighter than the C# comparer, leaving only ~2.6× headroom over the worst observed cross-build drift. **That artifact carries only the 10 `phase4_*` cases** — `flashida-ci.yml:437-439` uploads `phase4-golden/phase4_*.tsv` and the runner names each output after its *case*, so `baseline_phase0.tsv`, `baseline_phase3.tsv` and `phase7_exploration.tsv` are not in it |
 | Continuity JSONs (17) | `FlashIDA/test-data/golden/continuity_*.json` | `ContinuityTests.AssertGolden` always stages to `FlashIDA/bin/continuity-output/` and never touches the golden dir; CI artifact `continuity-golden-capture` is the fallback |
 
+**A fourth generated file recaptures the same way, and it is not a golden.**
+`FlashIDA/test-data/config_schema_reference.json` is produced by
+`MethodParameters.GenerateReferenceConfigJson()` and pinned by `ConfigSchemaParityTests.Reference_IsNeverStale`,
+which **fails closed** — it does *not* self-heal. Regeneration is opt-in behind
+`REGEN_CONFIG_REFERENCE=1`, and CI runs exactly that in its own `Capture config schema reference`
+step (`flashida-ci.yml:396-410`, `if: always()`), uploading the result as artifact
+**`config-schema-reference-capture`**. So a regenerated reference is available from **any** run,
+red or green, **without the Windows container** — `gh run download <id> -n config-schema-reference-capture`.
+⚠️ Adding a schema key means **three** sites plus the file: the model, `ToCppJson`, **and
+`BuildFullReferenceConfig`** — which sets every value deliberately NON-DEFAULT, so the reference
+proves the emitter carries the *authored* value rather than merely round-tripping a default. Missing
+the third site is invisible locally and fails only in CI.
+
 The five `<stream>` basenames are fixed **in the engine** (`IdaLogger`'s `k*Name` constants,
 mirrored by `LogGoldenComparer.FileNames`); only their location is configurable, via the single
 `runtime.log_dir` key. Renaming one is a golden-moving change on both sides.
