@@ -78,6 +78,17 @@ DEFAULT_MODE = "off"
 DEFAULT_MAX_TARGETS = 3
 DEFAULT_RANK_BY = "qscore"
 
+# Lowest reporter-ion m/z per labelling scheme, read off the OpenMS quantitation methods
+# (e.g. TMTSixPlexQuantitationMethod.cpp:23, ItraqEightPlexQuantitationMethod.cpp:23). A
+# quantification scan whose first_mass sits ABOVE its scheme's floor contains no reporter ion
+# at all, so it measures nothing -- see B9. These are physical constants of the labelling
+# chemistry, not tunables; they do not drift the way a parsed schema value would.
+REPORTER_FLOOR = {
+    "itraq4plex": 114.111, "itraq8plex": 113.108,
+    "tmt6plex": 126.128, "tmt10plex": 126.128, "tmt11plex": 126.128,
+    "tmt16plex": 126.128, "tmt18plex": 126.128,
+}
+
 
 class Report:
     def __init__(self, path):
@@ -316,18 +327,18 @@ def validate(path, ref):
     q = cfg.get("quantification") or {}
     if q.get("enabled"):
         if not isinstance((cfg.get("ms_settings") or {}).get("ms2_quant"), dict):
-            rep.error("A16", "quantification.enabled is true but ms_settings.ms2_quant is not set. "
+            rep.error("A19", "quantification.enabled is true but ms_settings.ms2_quant is not set. "
                              "ms2_quant IS the quantification scan -- rostered once per precursor "
                              "and the only scan measured. Without it nothing is measured and no "
                              "identification scan is ever bought.")
         conds = q.get("conditions")
         if not isinstance(conds, list) or len(conds) != 2:
-            rep.error("A16", "quantification.conditions must name EXACTLY TWO conditions "
+            rep.error("A20", "quantification.conditions must name EXACTLY TWO conditions "
                              f"(got {len(conds) if isinstance(conds, list) else 0}). fold_change is "
                              "mean(conditions[0]) / mean(conditions[1]), a two-group ratio; the "
                              "ARRAY ORDER is the direction.")
         if isinstance((cfg.get("precursor_selection") or {}).get("exploration"), dict):
-            rep.error("A16", "quantification.enabled and precursor_selection.exploration are "
+            rep.error("A21", "quantification.enabled and precursor_selection.exploration are "
                              "incompatible. Exploration replaces the level-2 roster with CE-sweep "
                              "variants, so the quantification scan is never dispatched and nothing "
                              "is ever measured.")
@@ -335,9 +346,28 @@ def validate(path, ref):
         valid_lab = ("itraq4plex", "itraq8plex", "tmt6plex", "tmt10plex",
                      "tmt11plex", "tmt16plex", "tmt18plex")
         if lab not in valid_lab:
-            rep.error("A16", f"unknown quantification.labelling '{lab}'. Valid: "
+            rep.error("A22", f"unknown quantification.labelling '{lab}'. Valid: "
                              f"{', '.join(valid_lab)}. ('none' is not accepted -- "
                              "quantification.enabled is the switch.)")
+
+    # Gated on ms2_quant EXISTING, not on quantification.enabled: the block has exactly one
+    # purpose, so a first_mass above the reporter range is worth naming while the switch is still
+    # off rather than after someone flips it. ADR-0038's "the user is trusted" list names the
+    # activation and the tolerance; this is a third way to configure a screen that measures
+    # nothing, and unlike those two it is checkable from the JSON alone.
+    qscan = (cfg.get("ms_settings") or {}).get("ms2_quant")
+    if isinstance(qscan, dict):
+        q_lab = q.get("labelling", "tmt6plex")
+        floor = REPORTER_FLOOR.get(q_lab)
+        # first_mass 0 means "use the instrument method default" (ADR-0011), NOT a literal zero.
+        first_mass = qscan.get("first_mass", 0)
+        if floor and first_mass and first_mass > floor:
+            rep.warn("B9", f"ms_settings.ms2_quant.first_mass is {first_mass}, above the lowest "
+                           f"{q_lab} reporter ion at {floor} m/z, so the quantification scan "
+                           "cannot contain a reporter ion. Every spectrum returns "
+                           "extraction_failed, no identification scan is ever bought, and the run "
+                           "degrades to plain DDA. The engine does not check this -- "
+                           "Config.cpp:987-988 names only the activation and the tolerance.")
 
     if cfg.get("conditional_ms2") and "tagging" not in follow_refs:
         rep.error("A15", "conditional_ms2 is true but tagging.follow_up_scan is not set. Name an "

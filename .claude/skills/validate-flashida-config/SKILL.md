@@ -7,7 +7,7 @@ description: Validate a FLASHIda method.json before running it. Answers "will MS
 
 ```bash
 uv run --quiet python .claude/skills/validate-flashida-config/validate.py <config.json>
-uv run --quiet python .claude/skills/validate-flashida-config/validate.py --all   # all 39: the 38 in test-data/configs + src/Flash/etc/method.json
+uv run --quiet python .claude/skills/validate-flashida-config/validate.py --all   # all 42: the 41 in test-data/configs + src/Flash/etc/method.json
 ```
 
 No build, no DLLs, no instrument. Pure JSON analysis, ~200 ms. Exit 1 if any CLASS A error.
@@ -34,6 +34,10 @@ The headline is now one line, because one key decides it:
 === method_exploration_followup.json
   MS3: ON   mode=ambiguity   budget=3 [stated]
   MS2: 1 precursor(s) x 2 scan config(s) ['ms_settings.ms2', 'ms_settings.additional_ms2.secondary']
+
+=== method_quant.json
+  MS3: OFF  because characterization.mode == "off"
+  MS2: 1 precursor(s) x 1 scan config(s) ['ms_settings.ms2_quant']
 ```
 
 Before the reshape that first line took **five facts across three sections in two languages**, and
@@ -63,6 +67,10 @@ two of them lived under a level you were not configuring.
 | A16 | `mode`, `rank_by`, `targeting`, `metric` are legal values |
 | A17 | `metric: "remaining_precursor"` with an absent or empty `overrides` map. Such a sweep scans only the ~2 Th window it reads and always throws its pre-scans away, so it must declare what they run at — the **static form of ADR-0020 gate #1** (ADR-0026 decision 3) |
 | A18 | `metric: "remaining_precursor"` paired with `"multiplexed"` **at the same level** — `precursor_charges` for the `precursor_selection` block, `fragment_charges` for the `characterization` one. A notch set is not one interval, and a bound pre-scan has only one. Two level-matched checks, not one "multiplexed anywhere" test: `separate` and the **cross-level** pair both stay legal (ADR-0026 decision 4) |
+| A19 | `quantification.enabled` without `ms_settings.ms2_quant`. **The direction that quietly does nothing** — with no quantification scan the roster falls back to `ms2`, so the run is plain DDA that measures nothing and buys nothing (ADR-0038) |
+| A20 | `quantification.conditions` is not **exactly two**. `fold_change = mean(conditions[0]) / mean(conditions[1])` is a two-group ratio, and the array **order is the direction**; a time course needs a different statistic, not the first two groups |
+| A21 | `quantification.enabled` together with `precursor_selection.exploration`. Incompatible by construction: exploration replaces the level-2 roster with CE-sweep variants, so the quantification scan is never dispatched — and A10 does **not** catch it, because the inverted roster does have exactly one entry |
+| A22 | unknown `quantification.labelling`. The seven OpenMS schemes only; `"none"` is deliberately not among them, since `enabled` is the switch |
 
 ### Class B — the engine stays silent
 
@@ -75,6 +83,8 @@ two of them lived under a level you were not configuring.
 | B5 | `overrides["tolerance_ppm"]` | a **migration leftover**. It is a first-class exploration key now; left in the map it is accepted, dropped silently, and the tolerance reverts to `deconvolution.tol[level-1]` |
 | B6 | source-region parameter explicitly `0` on an MSn scan | means *inherit the survey*, not *off* (ADR-0011) |
 | B7 | a name in **both** `additional_scans` and a `follow_up_scan` | fires unconditionally per precursor **and** as a conditional follow-up. `additional_ms2` is one flat namespace serving two roles and nothing separates them |
+| B8 | `characterization.min_target_mass` set with `mode != "exhaustive"` | parsed, emitted across the bridge, and never consulted — only the exhaustive pool builder reads it (ADR-0023 decision 9). It is **not** a second `deconvolution.min_mass`; that floor does not reach MSn output at all |
+| B9 | `ms_settings.ms2_quant.first_mass` above the labelling scheme's lowest reporter ion | the quantification scan cannot contain a reporter ion, so every spectrum returns `extraction_failed`, no identification scan is ever bought, and the run degrades to plain DDA. Checked per scheme (`itraq8plex` 113.108, `itraq4plex` 114.111, every TMT 126.128); `first_mass: 0` means "instrument default" (ADR-0011) and is skipped. Gated on `ms2_quant` **existing**, not on `enabled`, so the trap is named before the switch is flipped |
 
 It also reports FAIMS state, since `cv_values` emptiness is the switch (ADR-0012): `[]` off, one CV
 fixed, ≥ 2 cycling; and notes when `mode: off` leaves an `ms_settings.ms3` block or a
@@ -104,7 +114,11 @@ The reshape's success measure is how much of Class B became Class A:
 - **The `MS2:` line is the dispatch roster, in dispatch order.** It is built from the reference
   array, never from map iteration — `nlohmann`'s `object_t` is a `std::map`, so walking
   `additional_ms2` would sort the names alphabetically and silently reorder dispatch.
-- **Zero Class A errors across the 39 configs `--all` walks** is the baseline — the 38 in
+- **With quantification enabled the roster shows `ms_settings.ms2_quant`, not `ms2`** — that is
+  ADR-0038 working, not a missing scan. The quantification scan is the screen and holds the
+  unconditional slot; `ms_settings.ms2` becomes the identification scan a differential verdict
+  buys, so it is off the roster by design and fires per *verdict* rather than per precursor.
+- **Zero Class A errors across the 42 configs `--all` walks** is the baseline — the 41 in
   `FlashIDA/test-data/configs/` plus the shipped `FlashIDA/src/Flash/etc/method.json`, which is in
   the sweep precisely because it is the one config nobody diffs against a golden. Any error there is
   either a bug in this script or a stale reference — see below.
