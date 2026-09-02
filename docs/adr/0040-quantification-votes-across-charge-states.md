@@ -153,8 +153,18 @@ The consensus verdict draws from the **existing four values**. Every case lands:
 | majority among directional ballots | `differential` (with the winning direction) or `not_differential` |
 | dissent short of a tie | the majority's, with the dissent reported as an agreement ratio |
 | exact tie (1–1, 1–1–1) | the bloc holding the **highest-`window_snr` ballot** wins |
-| fewer usable ballots than `min_charge_states` | `incomplete_channels` — *"no honest ratio exists"* |
+| fewer usable ballots than the floor | `incomplete_channels` — *"no honest ratio exists"* |
 | nothing usable returned | `extraction_failed` |
+
+⚠️ **The ballot floor is `min(min_charge_states, group size)`, not `min_charge_states` flat.**
+`min_charge_states` is a requirement on the acquisition charge **set** and is enforced once, at MS1
+admission; this is its decision-time half — *"too many members abstained to trust the vote"* — and
+the two are the same number only under `separate`. `multiplexed` co-isolates the whole set into
+**one** measurement, so an uncapped floor rejects its single ballot and that mode can never produce
+a result at all. Shipped uncapped for one CI run and measured as `incomplete_channels | 0/1` on
+every row of `quant_multiplexed`, directly contradicting this ADR's own mode table above. A geometry
+that can only ever produce one measurement satisfies the floor with one. Pinned by
+`quant_multiplexed_group_of_one_still_reaches_a_consensus`.
 
 There is **no `chimeric` verdict**. Chimericity is handled by the vote, which is what a vote is for;
 a species whose members disagreed still has a majority result, and that result is what it gets.
