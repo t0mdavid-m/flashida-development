@@ -75,6 +75,7 @@ two of them lived under a level you were not configuring.
 | A24 | unknown `quantification.identify`. `differential` \| `quantified` \| `all` \| `none`, case-sensitive (ADR-0039). `"off"` is `characterization.mode`'s spelling and is **not** accepted — `enabled` is the switch |
 | A25 | a `quantification.conditions` entry **named** `"either"`. That is `enriched_in`'s sentinel for "either direction", so the name would make the key ambiguous |
 | A26 | `quantification.enriched_in` names no authored condition. It names a **condition**, never a direction — `fold_change = mean(conditions[0]) / mean(conditions[1])`, so `"up"` would mean "enriched in whichever condition is listed first" and would invert if the array were reordered |
+| A27 | `precursor_selection.min_charge_states` exceeds `max_charge_states` (ADR-0040). Unsatisfiable: the cap truncates the acquisition charge set **below** the floor, so `admitCandidate` refuses every species and the run acquires nothing, silently. Also warns on the two states the engine accepts and ignores — `min_charge_states > 1` under `precursor_charges: "single"` (inert; the set is always size 1) and `max_charge_states` above the 10-window ABI ceiling (clamped) |
 
 ### Class B — the engine stays silent
 
