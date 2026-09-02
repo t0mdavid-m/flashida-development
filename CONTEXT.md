@@ -718,7 +718,7 @@ _Avoid_: calling the scan a quantification result *buys* the quantification scan
 that does the measuring, and the one it buys is an identification scan; assuming an MS2 is a
 quantification scan because a run is labelled, which is what makes the distinction from the
 identification scan worth having; expecting its reporter region to exist under an activation that
-cannot release the label.
+cannot release the label, or in a scan whose mass range begins above it.
 
 **Identification scan**:
 The MS2 acquired to **sequence a proteoform** — the ordinary MS2 of every mode, with the
@@ -736,10 +736,10 @@ uninteresting, when it may simply not have been measured yet.
 **Scan config**:
 One fully-specified set of instrument parameters for a scan (analyzer, resolution, AGC,
 injection time, mass range, activation and its parameters). Every one lives under
-`ms_settings` — `ms1`, `ms2`, `ms3` (bare objects) and any number of named entries in
+`ms_settings` — `ms1`, `ms2`, `ms2_quant`, `ms3` (bare objects) and any number of named entries in
 `additional_ms2` — and means the same thing at every one of them: **the config fully
-determines the scan's instrument parameters**. The two `follow_up_scan` keys are no longer
-scan configs; they are *references* to one (ADR-0014). For an
+determines the scan's instrument parameters**. The `tagging.follow_up_scan` key is not a
+scan config; it is a *reference* to one (ADR-0014). For an
 analyzer-side parameter a value left unset means "use the instrument method default", never
 "inherit from another scan"; a source-region parameter left unset takes the survey's, resolved
 while the config is built so that the config still fully determines the scan.
