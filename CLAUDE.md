@@ -118,6 +118,20 @@ of them.**
 
 The 5 log streams per mode are `ida.log`, `scan_commands.tsv`, `scan_results.tsv`, `identification.tsv`, `pooled_identification.tsv` — each has a distinct role (command detail / pure event / per-ID + coverage / cumulative). Golden comparison matches columns **by header name**, so reordering log columns needs no recapture; adding, removing, or changing a value does. Column inventory: `LOG_COLUMN_ORDER_REFERENCE.md`.
 
+⚠️ **NEVER recapture for a column-order permutation, and do not read one in a diff as a reason to.**
+Because a reorder needs no recapture, the committed goldens legitimately carry a **MIX** of column
+orders — only the modes recaptured since a given reorder have the new one. As of ADR-0040's
+recapture all 28 modes agree, but the next reorder re-splits them, and that is correct rather than
+drift. Two consequences:
+- A golden whose header is permuted relative to the engine's current emit order is **not stale**.
+  Comparison resolves by name, so it passes. Recapturing "to tidy it up" spends a full CI cycle and
+  an owner review to change nothing a test can observe.
+- When a recapture *is* forced for a real reason (a column added/removed/revalued), the capture
+  normalises every mode's order at the same time — so unrelated modes' headers move in that diff.
+  That is inert. Check the column **set** (sorted) is identical and move on; only a set difference,
+  or a changed value, is a real change. ADR-0040's recapture moved nine `pooled_identification`
+  headers exactly this way, all of them header-only files with no data rows.
+
 **Writing a golden is gated by a repo hook, not just by judgement.** `.claude/settings.json` wires six hooks that fire on every session in this repo:
 
 | Event | Matcher | Hook | Effect |
