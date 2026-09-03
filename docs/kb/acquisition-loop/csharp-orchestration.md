@@ -2,19 +2,21 @@
 title: C# Orchestration — startup, per-scan event flow, shutdown
 applies_to: FlashIDA/src/Flash/Flash.cs, FlashIDA/src/Flash/DataPipe.cs,
             FlashIDA/src/Flash/IDA/UnifiedScanProcessor.cs
-last_verified: 2026-08-09
+last_verified: 2026-09-03
 code_anchors:
-  - FlashIDA/src/Flash/Flash.cs:163      # Main (CLI, method load, run folder, log4net)
-  - FlashIDA/src/Flash/Flash.cs:255      # Main's stopRequest spin-wait
-  - FlashIDA/src/Flash/Flash.cs:266      # InstrumentConnected
-  - FlashIDA/src/Flash/Flash.cs:401      # OnContactClosure
-  - FlashIDA/src/Flash/Flash.cs:471      # SendCustomScan
-  - FlashIDA/src/Flash/Flash.cs:508      # ProcessSpectrum
-  - FlashIDA/src/Flash/Flash.cs:570      # HandleAcqError
-  - FlashIDA/src/Flash/Flash.cs:578      # StopExecution
+  - FlashIDA/src/Flash/Flash.cs:174      # Main (CLI, method load, run folder, log4net)
+  - FlashIDA/src/Flash/Flash.cs:287      # Main's stopRequest spin-wait, and the teardown after it
+  - FlashIDA/src/Flash/Flash.cs:327      # InstrumentConnected
+  - FlashIDA/src/Flash/Flash.cs:467      # OnContactClosure
+  - FlashIDA/src/Flash/Flash.cs:569      # SendCustomScan
+  - FlashIDA/src/Flash/Flash.cs:623      # OnAcquisitionStreamClosing
+  - FlashIDA/src/Flash/Flash.cs:638      # ProcessSpectrum
+  - FlashIDA/src/Flash/Flash.cs:805      # HandleAcqError
+  - FlashIDA/src/Flash/Flash.cs:813      # StopExecution
+  - FlashIDA/src/Flash/Flash.cs:830      # RequestStop
   - FlashIDA/src/Flash/LogPathResolver.cs   # run-folder composition
   - FlashIDA/src/Flash/DataPipe.cs:12    # 2-stage TPL Dataflow
-  - FlashIDA/src/Flash/IDA/UnifiedScanProcessor.cs:15   # ProcessMS adapter
+  - FlashIDA/src/Flash/IDA/UnifiedScanProcessor.cs:16   # ProcessMS adapter
 see_also:
   - ../scan-pipeline/csharp-consumer.md
   - engine-entry-points.md
@@ -54,7 +56,7 @@ fails to load, or a log folder that cannot be created, exits 1 here via `Console
 5. Subscribes `AcquisitionErrorsArrived` to `HandleAcqError`.
 6. Waits for contact closure (or skips via `--nocc`).
 
-`OnContactClosure` (`Flash.cs:401`) — or the `OverrideCC` branch inside
+`OnContactClosure` (`Flash.cs:467`) — or the `OverrideCC` branch inside
 `InstrumentConnected` if contact-closure is disabled — then:
 
 1. Subscribes `MsScanArrived` to `ProcessSpectrum`.
@@ -65,7 +67,7 @@ fails to load, or a log folder that cannot be created, exits 1 here via `Console
 
 ## Per-Scan Event Flow
 
-`ProcessSpectrum` (`Flash.cs:508`) is the acquisition loop's heartbeat. Called
+`ProcessSpectrum` (`Flash.cs:638`) is the acquisition loop's heartbeat. Called
 on the Thermo callback thread, it performs two independent actions per
 invocation:
 
@@ -79,121 +81,206 @@ The scan flows through `DataPipe` → `UnifiedScanProcessor.ProcessMS` →
 `wrapper.ProcessScan` (P/Invoke into `FLASHIda::processScan`; see
 [engine-entry-points.md](engine-entry-points.md)).
 
-**2. Drain** — pull one command from the C++ queue and submit it:
+**2. Drain** — top the instrument up to `scheduling.target_depth`:
 
 ```csharp
-var cmd = new ScanCommand();
-if (wrapper.GetNextScanCommand(ref cmd) == 1)
+int targetDepth = Math.Max(1, methodParams.Config.Scheduling.TargetDepth);
+
+for (int sent = 0; !stopRequest && outstanding < targetDepth && sent < targetDepth; sent++)
 {
-    SendCustomScan(scanFactory.BuildFromCommand(cmd));
+    var cmd = new ScanCommand();
+    if (wrapper.GetNextScanCommand(ref cmd) != 1) break;
+    try
+    {
+        if (!SendCustomScan(scanFactory.BuildFromCommand(cmd))) break;
+        outstanding++;
+    }
+    catch (InvalidOperationException ex) { log.Fatal(...); break; }
 }
 ```
 
-`SendCustomScan` (`Flash.cs:471`) increments `currentNumber` (becomes the
-`RunningNumber` on the submitted scan) and logs a one-line summary before
-calling `scanControl.SetFusionCustomScan`.
+A **loop**, default target 2 (ADR-0033). This section used to say "at most
+one command per invocation" — that was true until 0033 and is the thing 0033
+exists to fix: one send per arrival can only oscillate the depth between 0
+and 1 and can never *reach* 2, so a single `if` reads like the fix and
+changes nothing. At depth 1 the instrument's queue is empty between every
+pair of scans and a Tribrid does not wait — it runs its own method, measured
+at 53 % of the duty cycle.
 
-Each `ProcessSpectrum` invocation drains **at most one** command. The rate
-match is natural: one scan arrives from the instrument, one command is sent
-back. A burst of commands produced by a single `processScan` call accumulates
-in the C++ queue and drains over subsequent `ProcessSpectrum` invocations.
+Three independent bounds, none redundant: `outstanding < targetDepth` is the
+intent, `sent < targetDepth` guards against a throwing `BuildFromCommand`
+spinning the instrument event thread, and `!stopRequest` is the latch half of
+latch-then-cancel (ADR-0041). `GetNextScanCommand` is **no bound at all** —
+it never returns 0.
+
+`SendCustomScan` (`Flash.cs:569`) increments `currentNumber` (becomes the
+`RunningNumber` on the submitted scan), logs a one-line summary, calls
+`scanControl.SetFusionCustomScan`, and **returns whether the instrument
+accepted it**. A refusal breaks the loop and is not counted (ADR-0041).
+
+A burst of commands produced by a single `processScan` call accumulates in
+the C++ queue and drains over subsequent `ProcessSpectrum` invocations.
 
 ## DataPipe Async Staging
 
 `DataPipe` (`DataPipe.cs:12`) is a 2-stage TPL Dataflow:
 
 ```csharp
-inputScans  = new BufferBlock<IMsScan>();
-processBlock = new ActionBlock<IMsScan>(scan => processor.ProcessMS(scan));
+inputScans   = new BufferBlock<ScanData>();
+processBlock = new ActionBlock<ScanData>(scan => { try { processor.ProcessMS(scan); } catch ... },
+    new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = 1 });
 inputScans.LinkTo(processBlock,
     new DataflowLinkOptions { PropagateCompletion = true });
 ```
 
-Purpose: decouple the instrument callback thread from the C++ analysis
-thread. `ProcessSpectrum` calls `dataPipe.Push(msScan)` (a cheap
-`BufferBlock.Post`) and returns; the `ActionBlock` later drains the buffer
-on a separate worker and calls `processor.ProcessMS`, which performs the
-P/Invoke into `FLASHIda::processScan`.
+**`ScanData`, not `IMsScan`** — the queue holds an owned snapshot. `Push`
+runs `ScanData.From` synchronously on the *arrival* thread, while the handle
+is still live, so it is not the cheap `BufferBlock.Post` this section used to
+describe. That placement is the point: an `IMsScan` is a window onto
+framework-owned memory the iAPI releases once the next scan replaces it as
+`LastScan`, so a queued *handle* is only safe while the queue stays ~1 deep —
+which it was by accident, because the drain blocked behind the deconvolution.
+
+`MaxDegreeOfParallelism = 1` is stated rather than left to the TPL default,
+because the engine leans on it: `processScan` is serialised against itself by
+this block and by nothing else.
 
 The buffer is **unbounded** — there is no back-pressure signal to the
 instrument. If `ProcessScan` falls behind the instrument rate, memory grows.
+Bounding it was considered and rejected: a dropped exploration variant wedges
+its group for the rest of the run and leaks its pending-map entry.
 
 ## UnifiedScanProcessor Adapter
 
-`UnifiedScanProcessor.ProcessMS` (`UnifiedScanProcessor.cs:15`) is the only
-C# → C++ call site:
+`UnifiedScanProcessor.ProcessMS` (`UnifiedScanProcessor.cs:16`) is the only
+C# → C++ call site. It takes an **owned `ScanData` snapshot**, not an
+`IMsScan` — the handle is read in `ScanData.From`, on the arrival thread,
+while it is still live:
 
 ```csharp
-double[] mzs = msScan.Centroids.Select(c => c.Mz).ToArray();
-double[] ints = msScan.Centroids.Select(c => c.Intensity).ToArray();
-double rt = double.Parse(msScan.Header["StartTime"]);
-int msLevel = int.Parse(msScan.Header["MSOrder"]);
-string scanDesc = "";
-msScan.Trailer.TryGetValue("Scan Description", out scanDesc);
-
-double faimsCv = 0.0;
-if (msScan.Trailer.TryGetValue("FAIMS CV", out var cvStr))
-    double.TryParse(cvStr, out faimsCv);
-
-wrapper.ProcessScan(mzs, ints, rt, msLevel, scanDesc ?? "", faimsCv);
+public void ProcessMS(ScanData scan)
+{
+    int rc = wrapper.ProcessScan(scan.Mzs, scan.Intensities, scan.RetentionTime,
+                                 scan.MsLevel, scan.ScanDescription, scan.FaimsCv,
+                                 scan.InstrumentScanNumber);
+    if (rc == -1) log.Error("ProcessScan was not successful (bridge returned -1)");
+}
 ```
+
+Seven arguments, not six: `InstrumentScanNumber` was appended by ADR-0035 as
+the third identity channel — the only one that survives into the converted
+mzML. `-1` is an already-handled failure (the wrapper logged it with a stack
+trace); `0` is a normal gate rejection, not an error.
 
 See also [`../scan-pipeline/csharp-consumer.md`](../scan-pipeline/csharp-consumer.md)
 for the P/Invoke surface.
 
 ## Shutdown Sequence
 
-Shutdown is initiated by the duration timer:
+**Three triggers, one path** (ADR-0041). Each calls `RequestStop`
+(`Flash.cs:830`), which is one-shot and returns whether *this* call latched:
 
-1. `duration.Elapsed` fires `StopExecution` (`Flash.cs:578`), which sets
-   `stopRequest = true` and calls `duration.Close()`.
-2. `Main`'s spin-wait (`Flash.cs:255`):
+| Trigger | Reason logged |
+|---|---|
+| `duration.Elapsed` → `StopExecution` (`:813`) | `Time is over` |
+| `IAcquisition.AcquisitionStreamClosing` → `OnAcquisitionStreamClosing` (`:623`) | `Acquisition ended` |
+| `Console.CancelKeyPress`, registered in `Main` as soon as `log` exists | `Ctrl+C` |
 
-   ```csharp
-   while (!stopRequest) { }
-   log.Info("Exiting");
-   ```
+The `DataPipe` abort path is a fourth caller and inherits all of this.
 
-   exits, the process unwinds.
+`RequestStop` records the reason and closes the timer **first**, publishing
+`stopRequest` in a `finally`. That order is load-bearing: the flag releases
+`Main` into a teardown that returns from the process, so publishing it first
+lets the line saying *why* the run stopped lose the race — and on the `^C`
+path that is the only record there is. The `finally` keeps what the old
+flag-first ordering protected: a throwing logger still latches.
 
-There is **no explicit pipeline join** — no `DataPipe.Complete()`, no wait on
-in-flight scans, no drain of the C++ queue. Commands still in the queue and
-scans still in the pipeline are dropped at process exit. This is intentional:
-the instrument already stopped producing scans before the timer fires, so
-the tail work is not useful.
+**Teardown is the tail of `Main`** (`Flash.cs:287`) — one thread, once, in
+written order, rather than inside `RequestStop`, which is called from four
+different threads:
+
+```csharp
+while (!stopRequest) { }
+
+try { if (msscans != null) msscans.MsScanArrived -= ProcessSpectrum; }
+catch (Exception ex) { log.Error(...); }
+
+try { if (scanControl != null) scanControl.CancelCustomScan(); }
+catch (Exception ex) { log.Error(...); }
+
+log.Info(String.Format("Exiting (depth {0})", outstanding));
+```
+
+`ProcessSpectrum`'s drain loop also reads `!stopRequest` — the **latch** half
+of latch-then-cancel. Without it the cancel buys nothing, because the next
+arrival tops the queue straight back up to `target_depth`, and the iAPI
+guarantees arrivals continue after an acquisition closes.
+
+Both steps are null-guarded because `msscans`/`scanControl` are null if the
+instrument never connected — a `^C` during connection falls straight through
+the spin loop, and so does `-t` test mode.
+
+There is still **no explicit pipeline join** — no `DataPipe.Complete()`, no
+wait on in-flight scans, no drain of the C++ queue, and no
+`DisposeFLASHIda`. That is now deliberate on a ground that actually holds:
+every one of the engine's five streams `.flush()`es per row and
+`FLASHIda::~FLASHIda()` is `= default`, so nothing is lost by exiting and
+there is no tail for a join to wait for. (It previously read *"the instrument
+already stopped producing scans before the timer fires"* — a precondition
+nothing enforces, since `global.duration` and the Xcalibur method are
+independent clocks.)
 
 ## Error Patterns
 
 Try/catch wraps every Thermo-API boundary:
 
-- Instrument container creation (`Flash.cs:236`–`:252`)
-- `ScanControl` acquisition (`Flash.cs:299`–`:324`)
+- Instrument container creation (`Flash.cs:269`–`:285`)
+- `ScanControl` acquisition (`Flash.cs:365`–`:390`)
 - Method load + log-folder creation (in `Main`, before log4net is configured; reports via
   `Console.Error` rather than `log`)
-- `DataPipe` creation (`Flash.cs:354`–`:363`)
+- `DataPipe` creation (`Flash.cs:420`–`:429`)
 - First custom-scan submission (in `OnContactClosure` and the `OverrideCC`
   branch inside `InstrumentConnected`)
+- Each teardown step separately (`Flash.cs:287`–`:317`)
 
-`AcquisitionErrorsArrived` → `HandleAcqError` (`Flash.cs:570`) logs
+`AcquisitionErrorsArrived` → `HandleAcqError` (`Flash.cs:805`) logs
 instrument-side errors (spray instability, etc.) but does not retry.
 
-The code comment at `Flash.cs:320` warns: *"unhandled exception does not
+The code comment at `Flash.cs:386` warns: *"unhandled exception does not
 crash the software the usual way, but lead to weird behavior"*. That is why
-the try/catch density is high in the instrument-facing paths.
+the try/catch density is high in the instrument-facing paths — and why
+teardown guards its two iAPI calls individually rather than sharing one
+`try`.
 
 ## Gotchas
 
-- **`msScan.Dispose()` at end of `ProcessSpectrum` is mandatory.** Thermo
-  `IMsScan` holds unmanaged resources.
+- **NOBODY disposes the `IMsScan`** — this entry previously said disposal was
+  *mandatory*, and that is the inversion that killed real runs. An `IMsScan`
+  is a handle to **framework-owned** shared memory the iAPI releases itself
+  once the next scan replaces it as the container's `LastScan`; our only job
+  is to stop reading it. `ProcessSpectrum` says so explicitly. Disposing on
+  the arrival thread frees memory the pool thread is still lazily
+  enumerating; disposing on the pool thread instead faulted the `ActionBlock`
+  on the first scan of the run. Pinned by `DataPipe_DoesNotDisposeScan`.
 - **`DataPipe`'s `BufferBlock` is unbounded.** If `ProcessScan` falls behind
-  the instrument rate, memory grows without bound.
+  the instrument rate, memory grows without bound. Deliberate — a dropped
+  exploration variant wedges its group for the rest of the run.
 - **`SendCustomScan` owns `RunningNumber` assignment.** It auto-increments
   `currentNumber` before submit; this value round-trips as the `Access ID`
   on the returning scan. Do not assign `RunningNumber` elsewhere.
-- **Per-invocation drain is single-command.** `ProcessSpectrum` calls
-  `GetNextScanCommand` exactly once; if the C++ queue has a burst, it
-  drains over subsequent scans. A multi-command drain would require a loop
-  — currently not done.
+  It also **returns whether the instrument accepted the command**, and that
+  return must be honoured — a declined command counted as outstanding is
+  never discharged, and two of them stop the drain loop for the rest of the
+  run (ADR-0041).
+- **The drain is a LOOP, not one command per arrival.** This entry used to
+  say the opposite. `ProcessSpectrum` tops the instrument up to
+  `scheduling.target_depth` (default 2) — one send per arrival can only
+  oscillate the count between 0 and 1 and can never *reach* 2, which is why
+  a single `if` reads like the fix and changes nothing (ADR-0033). The loop
+  is bounded three ways: `outstanding < targetDepth`, `sent < targetDepth`,
+  and `!stopRequest`. `GetNextScanCommand` is no bound at all — it never
+  returns 0.
 - **Spin-wait shutdown (`while (!stopRequest) {}`) burns a CPU core.** This
   is intentional; do not "improve" it without tracing the Thermo API
-  thread-affinity requirements.
+  thread-affinity requirements. Note the code **after** it is the run's
+  teardown, so the loop is not the last thing `Main` does.

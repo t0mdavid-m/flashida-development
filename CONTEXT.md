@@ -679,9 +679,24 @@ what it has sent, and what has come back. Depth above one is outside what the in
 guarantees — the vendor defines submitting a further command before the previous one has been
 dealt with as undefined, and it fails silently rather than erroring, so depth is a quantity that
 must be maintained deliberately and can never be inferred from the absence of complaint.
+The count is FLASHIda's **belief** about the instrument, not a measurement of it — it is derived
+from what was sent and what came back, so a command the instrument declines is believed
+outstanding while nothing will ever arrive to discharge it. A belief that runs ahead of reality
+is absorbing: it drives the believed depth to its target, the real one to zero, and removes the
+arrivals that were the only thing that could correct it. At a stop, outstanding commands are
+cancelled rather than awaited.
 _Avoid_: conflating it with the engine's own command queue, which is a different queue on the far
 side of the bridge and drains in the opposite direction — a command *leaves* the first to *enter*
 the second, so "the queue got deeper" is true of one and false of the other at the same moment.
+
+**Acquisition stop**:
+The end of the **instrument's** acquisition — the point at which it ends the acquisition it was
+performing, in most cases closing a data file. It is not the same event as the run's own clock
+expiring, and neither causes the other: the two are independent and either may come first.
+FLASHIda observes it rather than commanding it, and treats it as terminal — a run does not
+survive the end of the acquisition it was acquiring into.
+_Avoid_: "run end", which names FLASHIda's own clock; "shutdown", which names the process;
+and reading it as a guarantee of quiet — scans continue to arrive after it.
 
 ## Language — kinds of scan
 
