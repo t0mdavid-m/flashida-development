@@ -2,18 +2,19 @@
 title: C# Orchestration — startup, per-scan event flow, shutdown
 applies_to: FlashIDA/src/Flash/Flash.cs, FlashIDA/src/Flash/DataPipe.cs,
             FlashIDA/src/Flash/IDA/UnifiedScanProcessor.cs
-last_verified: 2026-09-03
+last_verified: 2026-09-04
 code_anchors:
-  - FlashIDA/src/Flash/Flash.cs:174      # Main (CLI, method load, run folder, log4net)
-  - FlashIDA/src/Flash/Flash.cs:287      # Main's stopRequest spin-wait, and the teardown after it
-  - FlashIDA/src/Flash/Flash.cs:327      # InstrumentConnected
-  - FlashIDA/src/Flash/Flash.cs:467      # OnContactClosure
-  - FlashIDA/src/Flash/Flash.cs:569      # SendCustomScan
-  - FlashIDA/src/Flash/Flash.cs:623      # OnAcquisitionStreamClosing
-  - FlashIDA/src/Flash/Flash.cs:638      # ProcessSpectrum
-  - FlashIDA/src/Flash/Flash.cs:805      # HandleAcqError
-  - FlashIDA/src/Flash/Flash.cs:813      # StopExecution
-  - FlashIDA/src/Flash/Flash.cs:830      # RequestStop
+  - FlashIDA/src/Flash/Flash.cs:178      # Main (CLI, method load, run folder, log4net)
+  - FlashIDA/src/Flash/Flash.cs:291      # Main's stopRequest spin-wait, and the teardown after it
+  - FlashIDA/src/Flash/Flash.cs:331      # InstrumentConnected
+  - FlashIDA/src/Flash/Flash.cs:468      # OnContactClosure
+  - FlashIDA/src/Flash/Flash.cs:567      # SendCustomScan
+  - FlashIDA/src/Flash/Flash.cs:621      # OnAcquisitionStreamClosing
+  - FlashIDA/src/Flash/Flash.cs:636      # ProcessSpectrum
+  - FlashIDA/src/Flash/Flash.cs:811      # HandleAcqError
+  - FlashIDA/src/Flash/Flash.cs:846      # ArmRunClock (run clock; arm vs restart)
+  - FlashIDA/src/Flash/Flash.cs:878      # StopExecution
+  - FlashIDA/src/Flash/Flash.cs:895      # RequestStop
   - FlashIDA/src/Flash/LogPathResolver.cs   # run-folder composition
   - FlashIDA/src/Flash/DataPipe.cs:12    # 2-stage TPL Dataflow
   - FlashIDA/src/Flash/IDA/UnifiedScanProcessor.cs:16   # ProcessMS adapter
@@ -56,18 +57,33 @@ fails to load, or a log folder that cannot be created, exits 1 here via `Console
 5. Subscribes `AcquisitionErrorsArrived` to `HandleAcqError`.
 6. Waits for contact closure (or skips via `--nocc`).
 
-`OnContactClosure` (`Flash.cs:467`) — or the `OverrideCC` branch inside
+`OnContactClosure` (`Flash.cs:468`) — or the `OverrideCC` branch inside
 `InstrumentConnected` if contact-closure is disabled — then:
 
 1. Subscribes `MsScanArrived` to `ProcessSpectrum`.
-2. Arms a `System.Timers.Timer` (`duration`) for the total method duration;
-   elapsed callback is `StopExecution`.
+2. **Arms** the run clock via `ArmRunClock()` — a `System.Timers.Timer`
+   (`duration`) whose elapsed callback is `StopExecution`. Armed, not started:
+   see step 4.
 3. Submits the first command via `scanControl.SetFusionCustomScan` to kick
    the instrument out of idle.
+4. Later, when the handshake **echoes**, the `inCustom` latch in
+   `ProcessSpectrum` calls `ArmRunClock()` again, which **restarts** the timer
+   (ADR-0043). `global.duration` is therefore measured from the echo, and the
+   wait for custom control is not charged against the run. The arm in step 2 is
+   what still bounds a run whose handshake never echoes — load-bearing, because
+   the send is wrapped in a `catch` that logs and carries on and
+   `OnAcquisitionStreamClosing` is armed on `inCustom`, so that timer is the
+   only stop trigger left besides `^C`.
+
+   Deliberately **not** keyed to `IAcquisition.AcquisitionStreamOpening`, the
+   event actually named for "the acquisition started": a scan executes and
+   echoes with no acquisition open at all, and `InstrumentConnected` commands
+   exactly that state via `SetMode(CreateOnMode())`. Worst-case process
+   lifetime is `duration + (send → echo)`.
 
 ## Per-Scan Event Flow
 
-`ProcessSpectrum` (`Flash.cs:638`) is the acquisition loop's heartbeat. Called
+`ProcessSpectrum` (`Flash.cs:636`) is the acquisition loop's heartbeat. Called
 on the Thermo callback thread, it performs two independent actions per
 invocation:
 
@@ -113,7 +129,7 @@ spinning the instrument event thread, and `!stopRequest` is the latch half of
 latch-then-cancel (ADR-0041). `GetNextScanCommand` is **no bound at all** —
 it never returns 0.
 
-`SendCustomScan` (`Flash.cs:569`) increments `currentNumber` (becomes the
+`SendCustomScan` (`Flash.cs:567`) increments `currentNumber` (becomes the
 `RunningNumber` on the submitted scan), logs a one-line summary, calls
 `scanControl.SetFusionCustomScan`, and **returns whether the instrument
 accepted it**. A refusal breaks the loop and is not counted (ADR-0041).
@@ -178,11 +194,11 @@ for the P/Invoke surface.
 ## Shutdown Sequence
 
 **Three triggers, one path** (ADR-0041). Each calls `RequestStop`
-(`Flash.cs:830`), which is one-shot and returns whether *this* call latched:
+(`Flash.cs:895`), which is one-shot and returns whether *this* call latched:
 
 | Trigger | Reason logged |
 |---|---|
-| `duration.Elapsed` → `StopExecution` (`:813`) | `Time is over` |
+| `duration.Elapsed` → `StopExecution` — the **run clock**, which starts at the handshake echo, not at startup (ADR-0043) | `Time is over` |
 | `IAcquisition.AcquisitionStreamClosing` → `OnAcquisitionStreamClosing` (`:623`) | `Acquisition ended` |
 | `Console.CancelKeyPress`, registered in `Main` as soon as `log` exists | `Ctrl+C` |
 
@@ -195,7 +211,7 @@ lets the line saying *why* the run stopped lose the race — and on the `^C`
 path that is the only record there is. The `finally` keeps what the old
 flag-first ordering protected: a throwing logger still latches.
 
-**Teardown is the tail of `Main`** (`Flash.cs:287`) — one thread, once, in
+**Teardown is the tail of `Main`** (`Flash.cs:291`) — one thread, once, in
 written order, rather than inside `RequestStop`, which is called from four
 different threads:
 
@@ -227,26 +243,26 @@ every one of the engine's five streams `.flush()`es per row and
 `FLASHIda::~FLASHIda()` is `= default`, so nothing is lost by exiting and
 there is no tail for a join to wait for. (It previously read *"the instrument
 already stopped producing scans before the timer fires"* — a precondition
-nothing enforces, since `global.duration` and the Xcalibur method are
+nothing enforces, since the **run clock** and the Xcalibur method are
 independent clocks.)
 
 ## Error Patterns
 
 Try/catch wraps every Thermo-API boundary:
 
-- Instrument container creation (`Flash.cs:269`–`:285`)
-- `ScanControl` acquisition (`Flash.cs:365`–`:390`)
+- Instrument container creation (`Flash.cs:273`–`:289`)
+- `ScanControl` acquisition (`Flash.cs:369`–`:394`)
 - Method load + log-folder creation (in `Main`, before log4net is configured; reports via
   `Console.Error` rather than `log`)
-- `DataPipe` creation (`Flash.cs:420`–`:429`)
+- `DataPipe` creation (`Flash.cs:424`–`:433`)
 - First custom-scan submission (in `OnContactClosure` and the `OverrideCC`
   branch inside `InstrumentConnected`)
-- Each teardown step separately (`Flash.cs:287`–`:317`)
+- Each teardown step separately (`Flash.cs:291`–`:321`)
 
-`AcquisitionErrorsArrived` → `HandleAcqError` (`Flash.cs:805`) logs
+`AcquisitionErrorsArrived` → `HandleAcqError` (`Flash.cs:811`) logs
 instrument-side errors (spray instability, etc.) but does not retry.
 
-The code comment at `Flash.cs:386` warns: *"unhandled exception does not
+The code comment at `Flash.cs:390` warns: *"unhandled exception does not
 crash the software the usual way, but lead to weird behavior"*. That is why
 the try/catch density is high in the instrument-facing paths — and why
 teardown guards its two iAPI calls individually rather than sharing one
