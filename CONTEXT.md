@@ -672,6 +672,16 @@ of *each individual scan*, never of a period of time.
 _Avoid_: connected (connection strictly precedes it); acquisition mode; reading the latch as a
 window inside which every arriving scan is ours.
 
+**Run clock**:
+FLASHIda's own bound on how long it will go on acquiring, authored as `global.duration`. It is
+**armed** before the handshake is sent — so a handshake that never echoes still bounds the run —
+and **restarted** when that handshake echoes, so the wait for control is not charged against the
+run. Expiring is one of three ways a run stops, and the only one that does not depend on the
+instrument.
+_Avoid_: "duration", which names the config key rather than the clock; "method start", which is
+Xcalibur's own independent clock; and "acquisition start" — the instrument's acquisition may open
+before or after this clock starts, and deliberately does not gate it (ADR-0043).
+
 **Outstanding command**:
 A scan command FLASHIda has submitted that the instrument has not yet executed. Their count is
 the acquisition's **depth**, and it is the difference between two things FLASHIda already knows:
@@ -691,7 +701,7 @@ the second, so "the queue got deeper" is true of one and false of the other at t
 
 **Acquisition stop**:
 The end of the **instrument's** acquisition — the point at which it ends the acquisition it was
-performing, in most cases closing a data file. It is not the same event as the run's own clock
+performing, in most cases closing a data file. It is not the same event as the **run clock**
 expiring, and neither causes the other: the two are independent and either may come first.
 FLASHIda observes it rather than commanding it, and treats it as terminal — a run does not
 survive the end of the acquisition it was acquiring into.
