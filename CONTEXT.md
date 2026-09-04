@@ -812,6 +812,21 @@ its unconditionality; supposing an identification scan is skipped because a spec
 uninteresting, when it may simply not have been measured yet, or may have been measured and found
 uninteresting *in a direction the objective did not ask for*.
 
+**Monitor scan**:
+An MS1 acquired during a **sweep** solely so the operator can watch the *source* — spray stability,
+contamination, whether the sample is still eluting at all. It is **observed and never acted upon**:
+it is deconvolved and its masses recorded, but nothing is selected from it, nothing is excluded by
+it, and no later acquisition decision reads anything it wrote. That neutrality is what makes it safe
+to insert into a sweep at all — a sweep's variants are measurements of *one eluting precursor*, and
+an ordinary survey landing between them would both consume the budget and shift what the run does
+next. It exists because a sweep suppresses surveys completely, so a long one leaves the operator
+blind for its whole duration. Being a picture of the source rather than an observation of a species,
+it belongs to no **Precursor** and enters no **acquisition memory**.
+_Avoid_: any name containing *survey* — a survey is the scan acquisition decisions are made from,
+and this one makes none; reading its deconvolved masses as evidence about a species, or as grounds
+for having detected one; expecting it in `ida.log`, which is the record of decisions; confusing it
+with a **pre-scan**, which is also not kept as a final measurement but *is* read, and by the engine.
+
 ## Language — scan configuration
 
 **Scan config**:
