@@ -330,6 +330,25 @@ reading absence as proof the cleavage did not occur (dynamic range and charge
 partitioning both hide real fragments); conflating it with an **unwitnessed bond** — a
 bond can be witnessed by the complementary ion while this ion stays unobserved.
 
+**Caged bond**:
+A backbone bond enclosed by an intact cross-link — a disulfide, or the two thioethers of
+heme c — so that cleaving it alone releases no free b or y ion: the two halves stay tethered.
+A fragment that cuts a caged bond is observable only when the cross-link also breaks, and
+then in whichever form the broken link leaves behind. The link's atoms are not shared out
+evenly: after a C–S cleavage one cysteine keeps both sulfurs (persulfide, 31.97207 Da above
+the linear mass) and the other is left as dehydroalanine (33.98772 Da below); after an S–S
+cleavage one side is the thiol at the linear mass and the other the thioaldehyde, 2.01565 Da
+lighter; for heme c the whole heme leaves with one cysteine's sulfur and that cysteine becomes
+dehydroalanine. Which side keeps the sulfur is decided per cleavage event, so the same fragment
+appears in both forms. The two sides of any severed link sum to the link's delta. A fragment
+that encloses **both** anchors carries the full delta exactly; the linear ladder, which treats
+every Cys as a free thiol, misses it by 2 Da.
+_Avoid_: "impossible fragment" (it is observable whenever the link breaks, and how often it
+matches is a measurement of link cleavage, not an error); a linear ladder as the only mass;
+reading a match on a caged bond as a wrong pairing before comparing it with the chance rate;
+assuming the link's atoms split evenly between the two fragments; reading a 1 or 2 Da lighter form as
+chemistry before the deconvolution's monoisotope error rate is known.
+
 **Complementary ion pair**:
 `b_k` and `y_(L−k)` — the two halves of **one** backbone cleavage of a proteoform of
 length `L`. Observing either half proves the cleavage occurred; *which* half is seen is
