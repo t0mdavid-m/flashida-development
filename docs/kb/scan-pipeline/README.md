@@ -38,6 +38,9 @@ C# acquisition loop → GetNextScanCommand (bridge) → queue.dequeue
 4. [multi-notch-wire-grammar.md](multi-notch-wire-grammar.md) — the two-axis iAPI parameter grammar
    (`;` descends an MSⁿ stage, `,` widens one into co-isolation notches), why
    `PossibleParameters` documents only the first axis, and what `MSXTargets` actually is.
+5. [offline-coupling.md](offline-coupling.md) — the one consumer of `scan_commands.tsv` outside the
+   acquisition: how FLASHDeconv joins an mzML spectrum to its command by tracking id and locates
+   the commanded precursor in the survey that command was decided from (ADR-0046).
 
 ## Out of Scope
 

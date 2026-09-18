@@ -63,9 +63,15 @@ host used to write.** Concretely:
 7. **The same instrument scan number is also written to `scan_results.tsv`**, on every MS level.
    `ida.log` has MS1 entries only, so this is what makes an MS2, MS3 or exploration-variant row
    joinable to the mzML.
+   > ⚠️ **Amended by ADR-0046.** Never implemented — `scan_results.tsv` has no such column — and
+   > no longer needed: a converted spectrum reaches its command by **tracking id**, at every MS
+   > level, because the scan description survives conversion.
 8. **Every change is confined to FLASHIda.** `FLASHDeconvAlgorithm`, `FLASHDeconvFeatureFile`,
    `TOPPBase` and the GUI are untouched, which is possible precisely because this fixes the
    *producer* to emit what the consumer already expects.
+   > ⚠️ **Reversed by ADR-0046**, which removes `-FD:ida_log` from FLASHDeconv and the wizard and
+   > has FLASHDeconv read `scan_commands.tsv` instead. Decisions 1–6 stand for the readers
+   > `ida.log` still has.
 
 ## Considered alternatives
 
@@ -104,6 +110,11 @@ The new one is categorically unlike the other two: FLASHIda neither mints it nor
 exists only on the returning scan), and it is the **only** one that survives into the converted data
 file, which is exactly what makes it the right join key. `CONTEXT.md` is extended accordingly; ADR-0008's
 decisions are unaffected, since neither of its channels may still carry the other's value.
+
+> ⚠️ **Corrected by ADR-0046.** It is not the only one. msconvert preserves the scan description,
+> so the **tracking id** survives conversion too — measured on 18,548 of 18,548 spectra of a real
+> run. The two join different things: the instrument scan number places a spectrum in the
+> acquisition's order, the tracking id ties it to the command that caused it.
 
 **`ScanData` carries seven values, not six.** `DataPipe.cs`'s remark and the parent `CLAUDE.md` both
 said six; both are corrected. The read is `int.TryParse`, deliberately unlike the two `int.Parse` /

@@ -184,8 +184,13 @@ public void ProcessMS(ScanData scan)
 ```
 
 Seven arguments, not six: `InstrumentScanNumber` was appended by ADR-0035 as
-the third identity channel — the only one that survives into the converted
-mzML. `-1` is an already-handled failure (the wrapper logged it with a stack
+the third identity channel. It survives into the converted mzML — and so does
+the tracking id, inside the scan description msconvert preserves (ADR-0046
+corrects the older "only one that survives" claim). The scan number places a
+spectrum in the acquisition's order; the tracking id ties it to its command,
+which is what FLASHDeconv joins on — see
+[`../scan-pipeline/offline-coupling.md`](../scan-pipeline/offline-coupling.md).
+`-1` is an already-handled failure (the wrapper logged it with a stack
 trace); `0` is a normal gate rejection, not an error.
 
 See also [`../scan-pipeline/csharp-consumer.md`](../scan-pipeline/csharp-consumer.md)
