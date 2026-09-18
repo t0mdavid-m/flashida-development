@@ -102,9 +102,15 @@ differ by a median of 0.003 ppm (99th percentile 0.017 ppm).
    path that does not resolve to a file is an error, never a silent uncoupled run.
 7. **The wizard finds the run folder FLASHIda wrote**: beside the mzML,
    `<base>_<yyyy-MM-dd-HH-mm-ss>[_n]/scan_commands.tsv` (`LogPathResolver.Compose`'s shape), the
-   stamp matched strictly, exactly one match required — checked for **every** input before anything
-   runs. It writes the path to **`FD:scan_commands`**, under the subsection where FLASHDeconv
-   registers it.
+   stamp matched strictly, checked for **every** input before anything runs. It writes the path to
+   **`FD:scan_commands`**, under the subsection where FLASHDeconv registers it.
+   **The two ways an input can fail to resolve are not equally dangerous, and are answered
+   differently.** *Several* matching folders **refuse the batch**: picking one could couple the
+   wrong acquisition, and a wrong precursor is invisible in the results. *None* is **reported in the
+   log pane and the batch proceeds**, that input simply uncoupled — the behaviour before this ADR,
+   which is visible in the output rather than hidden in it. This is decision 4 at file level: a scan
+   the engine never commanded is not an error, and neither is a whole run it never drove. It was
+   found the hard way — see the last consequence below.
 8. **MS2 only.** MS3 rows are parsed and level-checked; MS3 spectra keep the existing search.
 9. **The reader accepts every `scan_commands.tsv` already acquired.** Columns resolve by header
    name and no new column is required.
@@ -213,6 +219,16 @@ decision 10 is a C++ test instead,
 written cell byte for byte with the dequeued command's own `double`. The three integer-shaped
 `3954` cells pass only through the comparer's `floaty` **OR**; narrowing that to the golden token
 alone would fail them closed.
+
+**A batch is normally mixed, and the first version of decision 7 forgot that** (amended the day it
+landed). The wizard's checkbox is a *batch-wide* setting, but an experiment folder holds the
+FLASHIda arms **and** the instrument-method controls they are compared against. A control was never
+FLASHIda-driven — its spectra carry no scan description at all — so no run folder exists for it and
+none ever will. Requiring one per input refused a twelve-file batch because seven could not resolve,
+six of them legitimately. The grill asked how the wizard should find *a* folder and never asked what
+a *batch* looks like, which is the gap. The repair also removed a latent crash the strict gate had
+been hiding: once an input may resolve to zero folders, the unguarded `front()` on the result is
+undefined behaviour.
 
 **What CI still cannot prove.** CI builds `FLASHDeconv` and `FLASHDeconvWizard` and never runs
 either. Parsing, joining and validation are covered by FLASHIda-side tests; the locate step is

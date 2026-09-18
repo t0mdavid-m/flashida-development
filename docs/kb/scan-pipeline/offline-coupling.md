@@ -78,4 +78,10 @@ the commanded mass 40–46 % of the time.
 |---|---|---|
 | parse, join, `massRank` | `FLASHIda/ScanCommandJoin.h` — header-only, stateless | `FLASHIda_Logging_test`, twenty `scan_commands_*` sections, in CI and both containers |
 | locate (pick the PeakGroup) | `FLASHDeconvAlgorithm` — inside the FLASHDeconv no-go boundary | **no CI job runs FLASHDeconv**: an acceptance run on real data |
-| find the run folder | `FLASHDeconvTabWidget` — `<mzML base>_<yyyy-MM-dd-HH-mm-ss>[_n]/scan_commands.tsv`, exactly one match, checked for every input before anything runs | compiled by CI only (`WITH_GUI=OFF` in the containers) |
+| find the run folder | `FLASHDeconvTabWidget` — `<mzML base>_<yyyy-MM-dd-HH-mm-ss>[_n]/scan_commands.tsv`, checked for every input before anything runs | compiled by CI only (`WITH_GUI=OFF` in the containers) |
+
+⚠️ **A batch is normally mixed**, so the wizard answers the two failure modes differently:
+*several* matching run folders **refuse the batch** (picking one could couple the wrong acquisition,
+which is invisible in the results); *none* is **logged and the batch proceeds**, that input simply
+uncoupled. An instrument-method control was never FLASHIda-driven — no scan descriptions, no run
+folder, nothing to couple — and refusing a batch for its sake is decision 4's mistake at file level.
