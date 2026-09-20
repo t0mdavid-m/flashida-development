@@ -261,3 +261,36 @@ after at identical settings. Report the locate step as verified by that run, not
 The probe's own four-row split is a **mass** measurement: the code additionally requires a peak at
 the window charge inside the acquired window, so it is an upper bound on how often the commanded
 mass is found, and the run reports the true branch counts.
+
+**Acceptance run, 2026-09-20**, bundle from CI run 35525953560 (parent `efe82e1` / OpenMS
+`8c02322590`), both arms of `20260916/…RedAlk…__R1`, against the post-ADR-0046 results in
+`20260916_FixedPrecursor/`:
+
+| | 118 ms | 500 ms |
+|---|---|---|
+| located (the log line) | 13,873 / 13,873 | 6,936 / 6,936 |
+| survey **wrong** | **0** | **0** |
+| precursor = commanded mass | 10,303 of 10,322 (99.82 %) | 6,424 of 6,435 (99.83 %) |
+| 1–2 isotopes off · different mass | 8 · 11 | 6 · 5 |
+| msalign spectra | 8,131 (= baseline) | 5,855 (= baseline) |
+| **scans whose precursor changed** | **0 of 13,873** | **0 of 6,936** |
+
+Negative control: R1's mzML with **R2's** `scan_commands.tsv` aborted in **3 s**, exit 8, naming
+16,551 of 18,548 disagreeing scans and writing no output.
+
+⚠️ **The decision-3 amendment is INERT on this data, and that is the honest reading.** Of its three
+cases, two are shared with the old ladder (the window holds the commanded mass; the window holds
+nothing). Only *the window holds something the command did not name* is new, and it has ~0 instances
+here — because the locate step already finds the commanded mass in its own survey window for 99.8 %
+of MS2. The 8 + 6 isotope-off scans, predicted to move, do not: they still win their windows on
+charge-SNR, being the species that was isolated. Verified against the pre-amendment results, whose
+per-bucket split is identical. So the run establishes **no harm**, not the new behaviour; the
+amendment is a correctness fix for a case this instrument configuration rarely reaches.
+
+⚠️ **The 11 and 5 "different mass" scans PREDATE the amendment** — identical in both runs — and are
+unexplained. Example: 118 ms scan 6180, correct survey 6160, commanded 29,823.0000, assigned
+8,948.8381. Under either ladder a mass that far off cannot pass the rank gate, so something other
+than this pick rule assigns them. The obvious theory — six-significant-digit `mono_mass` in this
+pre-ADR-0046 file exceeding the locator tolerance at high mass — was **tested and refuted**: the file
+renders 1–2 decimals, worst rounding ≈ 0.05 Da against a tolerance of 0.36–0.54 Da there. 0.1 % of
+assigned precursors; left open rather than guessed at.
