@@ -1,7 +1,7 @@
 ---
 title: Offline coupling — how FLASHDeconv finds a commanded scan's precursor
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHDeconvAlgorithm.cpp, OpenMS/src/openms_gui/source/VISUAL/DIALOGS/FLASHDeconvTabWidget.cpp
-last_verified: 2026-09-18
+last_verified: 2026-09-20
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:63     # struct ScanCommandJoin
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:110    # trackingIdOf
@@ -36,8 +36,9 @@ see_also:
 mzML spectrum  ── meta value "scan description", first 3 chars ──►  tracking id
 tracking id    ──►  its scan_commands.tsv row  (mono_mass, anchor charge, parent_tracking_id)
 parent chain   ──  walked UP the rows to the ms_level 1 row ──►  the survey the command was decided from
-FLASHDeconv    ──  takes ITS OWN PeakGroup nearest mono_mass in THAT survey
-                   · else its own PeakGroup 1–2 isotopes away · else one rebuilt from the row
+FLASHDeconv    ──  takes ITS OWN PeakGroup nearest mono_mass in THAT survey, same isotope
+                   · else the window's highest-charge-SNR species
+                   · else, only for a window holding nothing at all, one rebuilt from the row
 ```
 
 Three facts make this shape necessary, and each was measured on a real run before it was built:
@@ -51,6 +52,14 @@ Three facts make this shape necessary, and each was measured on a real run befor
 So the row is a **locator**, not a mass source: the reported mass, charge range and feature
 linkage stay FLASHDeconv's own. Searching the *latest* survey — what FLASHDeconv did — agreed with
 the commanded mass 40–46 % of the time.
+
+**A rebuilt precursor is the last resort, not the second** (ADR-0046 decision 3, amended
+2026-09-20). A window that holds *something* the command did not name takes that species on
+charge-SNR; only a window holding nothing at all is rebuilt from the row. The rebuild makes a
+one-peak PeakGroup with no isotope envelope, and `SpectralDeconvolution` bounds the **fragment**
+deconvolution by the precursor PeakGroup — so preferring it over a measured species costs the MS2
+as well as the mass. An isotope-off PeakGroup is likewise no longer taken *as* the commanded
+species; it competes as an ordinary candidate.
 
 ## Rules that are easy to get wrong
 

@@ -83,9 +83,30 @@ differ by a median of 0.003 ppm (99th percentile 0.017 ppm).
    then asking which spectrum carries that id. One hop is not enough: a follow-up MS2 — the
    conditional `'C'`, or the `'R'` a quantification verdict buys — names the MS2 that *triggered* it
    as its parent (`ScanCommandQueue::buildFollowUp`), not the survey.
-3. **When its deconvolution lacks that mass** (0.2 %), FLASHDeconv accepts its own PeakGroup one or
-   two isotopes away, and otherwise rebuilds a single-peak PeakGroup from the row, as the `ida.log`
-   path did.
+3. **A rebuilt precursor is the last resort, not the second** (amended 2026-09-20). What the
+   commanded survey's isolation window holds decides:
+
+   | The window holds | Precursor |
+   |---|---|
+   | the commanded mass, **same isotope only** | that PeakGroup — FLASHDeconv's own |
+   | something, but not the commanded mass | the **highest charge-SNR** species in the window — the rule an uncommanded scan follows |
+   | nothing at all | a single-peak PeakGroup rebuilt from the row, as the `ida.log` path did |
+
+   As first accepted this read *commanded mass → its own PeakGroup 1–2 isotopes away → rebuilt from
+   the row*, and the middle rung took the isotope-off call as the commanded species. Both of the
+   lower rungs preferred the command's **number** over a species FLASHDeconv had actually measured
+   in that window, and the bottom rung is the costlier of the two: `peakGroupFromCommand_` builds a
+   PeakGroup with one peak and **no isotope envelope**, and
+   `SpectralDeconvolution::performSpectrumDeconvolution` bounds the **fragment** deconvolution's max
+   charge and max mass by the precursor PeakGroup — so a rebuilt precursor truncates what fragments
+   can be found on that MS2 as well as naming the mass. An isotope-off PeakGroup is no longer taken
+   as the commanded species; it competes as an ordinary candidate, and usually still wins its window
+   on charge-SNR, being the species that was isolated.
+   By the probe above this changes the branch taken for **32 of 13,873** MS2 on the reference run
+   (the 9 isotope-off plus the 23 with nothing matching), and the *outcome* for fewer still — only
+   where a louder different species shares the window. It lowers "the msalign precursor equals the
+   commanded mass" below 100 % **by design**: that figure was partly measuring the rebuild agreeing
+   with itself.
 4. **A spectrum with no tracking id, or an id with no row, is an uncommanded scan**, not an error.
    It keeps the existing search of the latest preceding survey, unchanged. So does a commanded scan
    whose **survey is not in the data file** — an `-min_rt`/`-max_rt` crop removes it legitimately —
@@ -233,6 +254,10 @@ undefined behaviour.
 **What CI still cannot prove.** CI builds `FLASHDeconv` and `FLASHDeconvWizard` and never runs
 either. Parsing, joining and validation are covered by FLASHIda-side tests; the locate step is
 covered only by the acceptance run — one run per arm re-deconvolved with the CI bundle, its
-per-MS2 precursors checked against the predictions above (13,838 + 3 located, 9 by isotope, 23
-rebuilt for the reference run), and TopPIC proteoform-level rows compared before and after at
-identical settings. Report the locate step as verified by that run, not by a green badge.
+per-MS2 precursors checked against the predictions above (13,838 + 3 at the commanded mass for the
+reference run; the 9 isotope-off and 23 unmatched now take the window's loudest species, and only a
+window holding nothing at all is rebuilt), and TopPIC proteoform-level rows compared before and
+after at identical settings. Report the locate step as verified by that run, not by a green badge.
+The probe's own four-row split is a **mass** measurement: the code additionally requires a peak at
+the window charge inside the acquired window, so it is an upper bound on how often the commanded
+mass is found, and the run reports the true branch counts.
