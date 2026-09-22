@@ -1,7 +1,7 @@
 ---
 title: Exploration — Lifecycle and State Machine
 applies_to: OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp, OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Exploration.h
-last_verified: 2026-04-20
+last_verified: 2026-09-22   # anchors below predate ADR-0044/0045; see scoring-and-winner.md for the current ones
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Exploration.h:65    # ExplorationVariant struct
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Exploration.h:100   # ExplorationGroup struct
@@ -42,7 +42,7 @@ One exploration cycle walks the following states, each keyed to a call site:
 
 - **Dispatch and return.** The caller enqueues the commands on the scan queue. Variants run on the instrument asynchronously and return in arbitrary order. Each returning scan's tracking ID is routed through `Exploration::feedResult` (`OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:229`, declared at `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Exploration.h:186`). `feedResult` deconvolves the variant spectrum, scores it against the configured metric, and records the result on the owning `ExplorationGroup`.
 
-- **Completion and winner.** When every variant in a group has `received=true`, the group completes. The highest-scoring variant becomes the winner (`group.winner_index`). If `level_config.overrides` is non-empty, a separate production `ScanCommand` is built from `level_config.scans[0]` with the winner's CE/RT/activation copied onto it (`Exploration.cpp:460`); otherwise no post-winner production scan is emitted. (The `overrides` map itself was already applied to the variant base config at `initiate` time — see `scoring-and-winner.md` for detail.)
+- **Completion and winner.** When every variant in a group has `received=true`, the group completes. The highest-scoring variant becomes the winner (`group.winner_index`). If `level_config.overrides` is non-empty — or the sweep is a measuring metric at MS3 (ADR-0020) — a separate production `ScanCommand` is built from `level_config.scans[0]` with the winner's CE/RT/activation copied onto it (`Exploration.cpp:460`); otherwise no post-winner production scan is emitted. (The `overrides` map itself was already applied to the variant base config at `initiate` time — see `scoring-and-winner.md` for detail.)
 
 - **Next level.** If the next MSn level is configured for exploration, `Exploration::initiateNextLevel` (`OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:504`, declared at `OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Exploration.h:200`) is called with the winner's deconvolved result. For an MS2 winner this starts an MS3 exploration group rooted at a selected MS2 fragment.
 

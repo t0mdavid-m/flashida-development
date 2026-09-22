@@ -40,6 +40,8 @@ CONFIG_DIR = os.path.join(REPO, "FlashIDA", "test-data", "configs")
 MODE_VALUES = {"off", "ambiguity", "coverage", "exhaustive"}
 RANK_BY_VALUES = {"intensity", "qscore", "none"}
 METRIC_VALUES = {"none", "mass_count", "remaining_precursor", "fragment_count"}
+KNOWN_ANALYZERS = ("Orbitrap", "IonTrap", "")   # ADR-0045 decision 3; "" = instrument method default
+
 TARGETING_VALUES = {"none", "inclusion", "in_depth", "exclusion_masses"}
 # ScanCommand.h -- MAX_NOTCHES_PER_STAGE (9) + the anchor. An ABI dimension (Notch notches[18],
 # ADR-0019), so precursor_selection.max_charge_states can only lower it, never raise it.
@@ -475,6 +477,21 @@ def validate(path, ref):
     # activation coupling, at every scan site the engine checks
     checked_sites = {p for p, _ in roster(cfg, 1) + roster(cfg, 2) + roster(cfg, 3)}
     checked_sites |= {f"ms_settings.additional_ms2.{n}" for n in follow_refs.values() if n in add}
+    # ADR-0045 decision 3: analyzer is a closed set, at EVERY scan object (referenced or not -- the engine
+    # validates at parse, before the roster is known) and at every exploration.overrides.analyzer.
+    for site, scan in scan_defs(cfg):
+        an = scan.get("analyzer")
+        if an is not None and an not in KNOWN_ANALYZERS:
+            rep.error("A29", f"{site}.analyzer is {an!r}; must be one of \"Orbitrap\", \"IonTrap\" or \"\" "
+                             "(case-sensitive). The engine branches on this string -- a trap pre-scan is "
+                             "measured, never identified -- so a misspelling must fail here rather than "
+                             "miss both gates and reach the instrument verbatim (ADR-0045).")
+    for sect, lvl, expl in explorations(cfg):
+        an = (expl.get("overrides") or {}).get("analyzer")
+        if an is not None and an not in KNOWN_ANALYZERS:
+            rep.error("A29", f"{sect}.exploration.overrides.analyzer is {an!r}; must be one of "
+                             "\"Orbitrap\", \"IonTrap\" or \"\" (case-sensitive) (ADR-0045).")
+
     for site, scan in scan_defs(cfg):
         if site not in checked_sites:
             continue  # an unreferenced definition never fires; that is B1's problem
@@ -500,36 +517,37 @@ def validate(path, ref):
         if metric == "fragment_count" and not seq:
             rep.error("A11", f"{sect}.exploration.metric 'fragment_count' requires a non-empty "
                              "characterization.protein_sequence")
-        # ADR-0026 decision 3 (Config.cpp:924-931). A remaining_precursor sweep scores a variant
-        # from the raw intensity inside [precursor_mz +/- isolation_width/2] and discards everything
-        # else the pre-scan returned, so those pre-scans are bound to that window and are ALWAYS
-        # thrown away -- the winner is re-acquired by a full-range production scan. A sweep that
-        # never keeps a scan must say what its scans run at. It is also the STATIC form of ADR-0020
-        # gate #1: an MS2 group with EMPTY overrides cascades by feeding initiateNextLevel the
-        # winning variant's deconvolved spectrum, and a window-only spectrum carries no fragments,
-        # so the cascade yields ZERO MS3 targets with no throw and no warning -- only
-        # `[MS3-PLAN] no_containing_fragment` and a user concluding their protein did not fragment.
-        if metric == "remaining_precursor" and not (expl.get("overrides") or {}):
-            rep.error("A17", f"{sect}.exploration.metric is \"remaining_precursor\" but "
-                             f"{sect}.exploration.overrides is empty. Such a sweep never keeps its "
-                             "pre-scans -- they are scanned over their isolation window only and the "
-                             "winner is re-acquired -- so it must declare the settings they run at. "
-                             "Add an overrides block, e.g. \"overrides\": {\"analyzer\": "
-                             "\"IonTrap\"} (ADR-0026 decision 3).")
-        # ADR-0026 decision 4 (Config.cpp:946-963). [first_mass, last_mass] is ONE interval and a
-        # notch set is not: charge states 10-16 of a ~12 kDa protein scatter their 2 Th windows over
-        # ~463 Th, so binding to the anchor alone would isolate seven charge states and read one,
-        # while spanning them all would cut the ~900x speed win to ~4x. Two level-matched checks
-        # rather than one "multiplexed anywhere" test -- see charge_mode() for which pairs are legal.
+        # ADR-0045 decision 2. A pre-scan read out by the ion trap is measured, never identified -- the
+        # engine skips deconvolution, matching and pooling for it -- so a metric that COUNTS deconvolved
+        # masses or matched fragments scores every trap variant 0, and winner selection (seeded -1.0,
+        # strictly greater) crowns ce_min every time: N scans per precursor to pick the first grid
+        # point, with no wrong value anywhere to notice. remaining_precursor scores from the raw window
+        # sum and is the one metric that can read such a scan. (ADR-0026's "remaining_precursor
+        # requires non-empty overrides" -- the old A17 -- was withdrawn by ADR-0044 together with the
+        # scan-range binding it guarded; overrides are optional under every metric.)
+        ov = expl.get("overrides") or {}
+        if ov.get("analyzer") == "IonTrap" and metric != "remaining_precursor":
+            rep.error("A28", f"{sect}.exploration.overrides.analyzer is \"IonTrap\" but "
+                             f"{sect}.exploration.metric is \"{metric}\". A trap pre-scan is measured, "
+                             "never identified -- it is not deconvolved or matched -- so a metric that "
+                             "counts masses or fragments scores every variant 0 and the first grid "
+                             "point always wins. Use \"remaining_precursor\", or an Orbitrap override "
+                             "(ADR-0045).")
+        # ADR-0026 decision 4, re-grounded by ADR-0044. The remaining-precursor ratio sums the ANCHOR's
+        # isolation window and nothing else, so under co-isolation it reports one charge state's
+        # depletion while the same collision energy depletes its siblings at other rates. Two
+        # level-matched checks rather than one "multiplexed anywhere" test -- see charge_mode() for
+        # which pairs are legal.
         if metric == "remaining_precursor":
             ckey, cmode = charge_mode(cfg, sect)
             if cmode == "multiplexed":
                 rep.error("A18", f"{sect}.exploration.metric is \"remaining_precursor\" but "
-                                 f"{sect}.{ckey} is \"multiplexed\". A multiplexed scan reads "
-                                 "several non-contiguous isolation windows, which cannot be "
-                                 "expressed as the one scan range such a sweep's pre-scans are "
-                                 f"bound to. Set {ckey} to \"single\" or \"separate\", or pick a "
-                                 "different exploration metric (ADR-0026 decision 4).")
+                                 f"{sect}.{ckey} is \"multiplexed\". The remaining-precursor ratio sums "
+                                 "the ANCHOR's isolation window only, so under co-isolation it reports "
+                                 "one charge state's depletion while the same collision energy depletes "
+                                 f"its siblings at other rates. Set {ckey} to \"single\" or "
+                                 "\"separate\", or pick a different exploration metric (ADR-0044 "
+                                 "decision 4).")
         if (expl.get("ce_step", 5) or 0) <= 0:
             rep.error("A12", f"{sect}.exploration.ce_step is {expl.get('ce_step')}; must be > 0. "
                              "A non-positive step never terminates the sweep loop -- it spins "

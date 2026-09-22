@@ -1,16 +1,14 @@
 ---
 title: MS2 Exploration
 applies_to: OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp
-last_verified: 2026-04-20
+last_verified: 2026-09-22
 code_anchors:
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:753    # hasExploration(2) branch
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:760    # initiate(2, ...) call
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:836    # isExplorationVariant routing on MS2 results
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:115   # initiate definition
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:189   # queue.buildMS2 variant build
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:229   # feedResult definition
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:477   # queue.buildMS2 production scan from winner
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:504   # initiateNextLevel definition (MS3 cascade)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:488    # isExplorationVariant routing on MS2 results
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:500    # scan_results row reads explorationDeconvMassCount()
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:167   # initiate definition
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:357   # feedResult definition
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:397   # trap pre-scan: measured_only (ADR-0045)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:771   # post-winner production scan gate
 see_also:
   - exploration.md
   - variants-and-sweeps.md
@@ -29,11 +27,15 @@ The `ms_ctx` argument is a pointer to `ms1_ctx`, the `ScanCommand` that produced
 
 ## Variant construction
 
-Inside `Exploration::initiate` (`Exploration.cpp:115`), each variant's scan command is built via `queue.buildMS2(pg, charge, variant_config, expl_priority)` (`Exploration.cpp:189`). Each variant gets a unique tracking ID that later routes results back via `feedResult`. After winner selection, a separate production MS2 scan is built with another `queue.buildMS2` call at `Exploration.cpp:477` — but only when the level's `overrides` map is non-empty (see `scoring-and-winner.md` for emission-gate semantics).
+Inside `Exploration::initiate` (`Exploration.cpp:167`), each variant's scan command is built via `queue.buildMS2(pg, charge, variant_config, expl_priority)` from `scans[0]` patched by the level's `overrides`. **A pre-scan has no scan range of its own**: it reads out `ms_settings.ms2`'s `first_mass`/`last_mass` unless the overrides name another (ADR-0044; ADR-0026's narrowing of a `remaining_precursor` pre-scan to its ~2 Th isolation window was withdrawn — it bought no scan time on the trap and discarded the rest of every spectrum). Each variant gets a unique tracking ID that later routes results back via `feedResult`. After winner selection, a separate production MS2 scan is built from the **un-overridden** `scans[0]` — only when the level's `overrides` map is non-empty at MS2 (`Exploration.cpp:771`; see `scoring-and-winner.md`).
+
+### Trap pre-scans (ADR-0045)
+
+`"overrides": {"analyzer": "IonTrap", …}` puts the sweep on the ion trap. Such a variant is **measured, never identified**: `feedResult` reads the variant's own command (`Exploration.cpp:397`) and skips deconvolution, matching and the tracker feed, reading only the precursor-window sum. Consequences for this level: the sweep must use `remaining_precursor` (refused at load otherwise), the `scan_results` row of an `E` variant carries `mass_count 0` and empty `deconv_*` columns (`FLASHIda.cpp:500` reads accessors that report nothing after a measured-only feed), no trap variant appears in `identification.tsv` or a pooled model, and the Orbitrap follow-up carries all of the sweep's evidence. Golden: `exploration_iontrap`.
 
 ## Result routing
 
-When an MS2 scan completes and is surfaced to `FLASHIda::processScan`, the check at `FLASHIda.cpp:836` (`if (exploration_.isExplorationVariant(tracking_id))`) diverts it from the normal MS2 result path into `Exploration::feedResult` (`Exploration.cpp:229`). Ordinary MS2 results continue through the regular handler.
+When an MS2 scan completes and is surfaced to `FLASHIda::processScan`, the check at `FLASHIda.cpp:488` (`if (exploration_.isExplorationVariant(parent_tracking_id))`) diverts it from the normal MS2 result path into `Exploration::feedResult` (`Exploration.cpp:357`). Ordinary MS2 results continue through the regular handler.
 
 ## Handoff / MS3 cascade
 
