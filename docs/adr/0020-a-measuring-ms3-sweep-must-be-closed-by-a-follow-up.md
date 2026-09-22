@@ -77,6 +77,12 @@ Concretely:
    > remaining-precursor sweep always trips the first condition and never reaches the second.
    > This gate remains correct and reachable, but in practice only `mass_count` exercises it.
    > Do not cite its scope without ADR-0026.
+   >
+   > **And that amendment is itself withdrawn by
+   > [ADR-0044](0044-a-pre-scan-reads-out-its-levels-scan-range.md)** (accepted 2026-09-18,
+   > implemented 2026-09-22). The overrides-mandatory rule existed only to make a window-bound scan range safe;
+   > with the binding gone, a `remaining_precursor` sweep may again omit `overrides`, and this gate
+   > covers **both** measuring metrics as originally written.
 3. The follow-up returns on the **regular** MS3 path, where it is matched by the calibrated matcher
    against the live tracker winner (ADR-0002). `ms2_context_cache` is seeded for it, exactly as the
    overrides path already did — without that seed the scan is acquired and then silently
@@ -89,6 +95,12 @@ Deliberately **not** changed:
 - **MS2 sweeps.** Their variants are already identified under every metric, so a follow-up would buy
   no evidence and would cost one extra scan per precursor while delaying the MS3 cascade. An MS2
   group with no overrides keeps cascading to MS3.
+  <!-- AMENDED by ADR-0045 (accepted 2026-09-18, implemented 2026-09-22): true of every ORBITRAP
+       variant. A variant read out by the ion trap is measured, never identified -- not deconvolved,
+       not matched, not pooled -- under every metric. That exception belongs to the analyzer, not to
+       the reading/measuring split this ADR defines. A trap sweep always carries overrides, so it is
+       closed by the follow-up via the first condition above. -->
+
 - **`FragmentCount` at MS3.** It keeps the old rule and the inline fold, which now becomes the only
   way to reach that branch. Re-acquiring would spend an extra MS3 per target for data the group
   already holds.

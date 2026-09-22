@@ -1,6 +1,13 @@
 # 0026. A remaining-precursor sweep scans only the window it reads
 
 Status: Accepted (2026-08-24), implemented.
+**Amended by [ADR-0044](0044-a-pre-scan-reads-out-its-levels-scan-range.md)** (accepted 2026-09-18,
+implemented 2026-09-22) — the premise of this ADR, that ion-trap scan time is proportional to the range
+swept, did not survive the instrument: narrowing gave no worthwhile gain. 0044 **withdraws decisions
+1 and 3**, keeps decision 4 on the one ground that survives (the remaining-precursor ratio is a
+single-window measurement), and dissolves decision 5 into ordinary override semantics. **Decisions 2
+and 6 stand.** The title of this file describes behaviour 0044 removes; do not cite the binding, the
+"~900x" figure, or the overrides-mandatory rule without it.
 Amends: [ADR-0020](0020-a-measuring-ms3-sweep-must-be-closed-by-a-follow-up.md).
 Related: [ADR-0009](0009-scan-config-fully-determines-instrument-parameters.md),
 [ADR-0016](0016-co-isolated-charges-are-one-detection.md),
@@ -61,6 +68,8 @@ unaffected, since it fans out into one anchor per scan.
 **A remaining-precursor sweep declares that its pre-scans are measurements, and scans only what it
 measures.**
 
+<!-- WITHDRAWN by ADR-0044: a pre-scan reads out its level's configured scan range under every
+     metric. The text below is kept as the record of what was built and why. -->
 1. **The binding.** For an exploration sweep whose metric is `RemainingPrecursor`, each pre-scan's
    `first_mass`/`last_mass` are set to `precursor_mz -/+ isolation_width/2` -- exactly the window, no
    pad and no floor added at this site. Applies at **MS2 and MS3**, to every variant **including the
@@ -115,11 +124,17 @@ measures.**
    landing it separately kept a three-translation-unit refactor out of the diff that changes
    acquisition geometry.
 
+<!-- WITHDRAWN by ADR-0044: this rule was the interlock for the binding above. With no narrowing an
+     empty-overrides remaining_precursor sweep behaves exactly as an empty-overrides mass_count
+     sweep does, and ADR-0020's gate #2 covers remaining_precursor again. -->
 3. **Overrides are mandatory.** `exploration.metric == remaining_precursor` with an empty `overrides`
    map is **rejected at config load**, at both levels. A metric that never keeps its pre-scans must
    say so in the config, so that the follow-up is guaranteed by the schema rather than by the
    author's habit of writing one.
 
+<!-- AMENDED by ADR-0044: the rejection STANDS, but on one ground only. "A notch set is not one
+     interval" died with the binding; what survives is that the remaining-precursor ratio reads the
+     anchor's window alone, so under co-isolation it reports one charge state's depletion. -->
 4. **Level-matched multiplexing is rejected.** `precursor_selection.exploration.metric ==
    remaining_precursor` with `precursor_charges == multiplexed` throws; `characterization.exploration
    .metric == remaining_precursor` with `fragment_charges == multiplexed` throws. Two separate
@@ -128,6 +143,8 @@ measures.**
    stage-1 window, because stage-0 notches change which precursors are fragmented, not where the MS3
    readout sits.
 
+<!-- DISSOLVED by ADR-0044: with no binding there is nothing to suppress. first_mass/last_mass in
+     overrides patch the pre-scan like any other key. -->
 5. **An explicit range wins.** `first_mass`/`last_mass` present in `exploration.overrides` suppress
    the binding rather than being overwritten by it. This is the escape hatch for tuning against real
    hardware without a rebuild, and it is the one place where "automatic" is conditional.

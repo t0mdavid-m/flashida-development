@@ -122,6 +122,21 @@ of the deconvolved feature, the anchor is a property of the acquisition, and
 per-charge qscore, an authored charge set, or an exclusion fallback can make them
 differ.
 
+**Commanded precursor**:
+The species a scan command was built to fragment — its mass and **anchor charge**, as the engine
+resolved them in the survey the command was decided from. For a commanded scan it *is* the
+scan's precursor, by construction: the isolation exists because of it. A later analysis may
+**measure** that species better than the engine could — it re-reads the same survey with the
+whole run in hand — but it may not **choose** a different one. The record answers *which
+species, from which survey*; the analysis answers *how well is it known*. Merging the two
+questions fails quietly: an analysis that re-derives the choice from the spectrum alone reads
+the most recent survey, which is routinely not the one the command came from, and reports
+whatever is strongest in the window by then.
+_Avoid_: "logged precursor mass" (the record is a locator, not a measurement — the mass worth
+reporting is the analysis's own); "the precursor in the isolation window" (several species
+usually are, and one was commanded); assuming the survey acquired before a scan is the survey
+behind it.
+
 **Charge-keyed exclusion**:
 The variant of dynamic exclusion that keys on `(nominal mass, charge)` rather than
 on nominal mass alone, so a mass already fragmented at one charge stays eligible at
@@ -408,10 +423,17 @@ The window a scan was **commanded** to isolate and any window a measurement late
 the same interval. Where the two have drifted apart, the commanded one is authoritative — it is
 what decided which ions exist in the spectrum at all, so a measurement summing a narrower
 interval is discarding signal it paid to isolate.
+The window the instrument **acquires** is a third thing, and not quite the commanded one: the
+instrument sets a width on a coarser grid than it accepts, rounding down, so the acquired window
+sits on the commanded centre and is narrower by up to one grid step. The margin is several
+times wider than that step, so the envelope still arrives whole — but the commanded and the
+acquired width are different numbers, and nothing may depend on their being equal.
 _Avoid_: "isolation width" as a synonym (the width is one of the window's two numbers; a width
 without a centre is not a window); confusing it with the **Scan range**, which is what the
 analyzer reads out rather than what the stage transmits; reconstructing a window from a charge
-and a theoretical mass.
+and a theoretical mass; recognising a commanded scan in the data file by its window bounds — a
+scan is recognised by its **tracking id**, which is an identity, where a pair of bounds is only
+a coincidence waiting to be rounded.
 
 **Notch**:
 One of several isolation windows a single scan opens **in parallel within one
@@ -438,10 +460,26 @@ effect. A **measuring** metric (RemainingPrecursor, MassCount) only weighs bulk
 signal and never matches fragments, so at MS3 its pre-scans leave *no* evidence
 whatsoever — which is why a measuring MS3 sweep must always be closed by a
 Follow-up MSn. This asymmetry is MS3-only: at MS2 every variant is matched under
-every metric, because the whole-protein matcher used there is the right one.
+every metric, because the whole-protein matcher used there is the right one — with
+one exception that belongs to the analyzer rather than the metric, the **Trap
+pre-scan**, which is never matched at any level.
 _Avoid_: confusing a pre-scan with the production scan it informs; assuming a
 completed sweep has produced evidence (a measuring metric produces a *parameter*,
 not a measurement).
+
+**Trap pre-scan**:
+A **Pre-scan** read out by the ion trap rather than the Orbitrap, chosen to make a sweep
+cheap. It is **measured, never identified**: unit-resolution peaks cannot enter an
+identification that works at parts per million, so a trap pre-scan is neither deconvolved nor
+matched, and it contributes nothing to a Precursor's pooled model. The only thing read from it
+is raw signal — which is why the **Remaining-precursor ratio** is the one metric that can score
+a trap sweep. A metric that counts deconvolved masses or matched fragments would score every
+variant zero and crown the first. A trap sweep is always closed by a **Follow-up MSn** on the
+Orbitrap, and that scan carries all of the sweep's evidence.
+_Avoid_: expecting identification rows or pooled evidence from a trap pre-scan; pairing a trap
+sweep with a counting metric; treating "measured, never identified" as a property of the
+*metric* (that is the reading/measuring distinction above — this one belongs to the analyzer,
+and holds under every metric).
 
 **Baseline variant**:
 A pre-scan that measures one activation's *un-fragmented* reference — the
@@ -469,6 +507,19 @@ instead, so the grid and the baseline can always coincide.
 _Avoid_: treating the baseline as a scorable variant (it never wins); assuming it
 exists only for RemainingPrecursor (that was the pre-`august_pre` behavior); assuming
 one per group; letting it feed the pooled model.
+
+**Remaining-precursor ratio**:
+The fraction of a precursor that survives a fragmentation setting: the signal inside the
+**Isolation window** of a variant's spectrum, over the same window's signal in its activation's
+**Baseline variant**. It is a **single-window** measurement — it reads the anchor window and
+nothing else the scan returned — so it reports *one charge state's* depletion, not the
+species'. That is why it may not **decide** a sweep whose stage co-isolates several charge
+states as **Notches**: one collision energy depletes sibling charge states at different rates,
+so a target met by the anchor says little about the rest. It may still be *recorded* for such a
+scan, as the anchor's depletion and nothing more.
+_Avoid_: "precursor depletion" without saying of which charge state; reading it as a
+species-level quantity under co-isolation; assuming the rest of the spectrum contributes to it
+(a wider **Scan range** changes nothing about the number).
 
 **De-referenced activation**:
 An activation whose baseline returned with no signal in the isolation window. Its
@@ -506,12 +557,12 @@ production scan it informs. Their presence is therefore also a statement about
 fidelity: with overrides, no pre-scan was acquired at production settings, so a
 **Follow-up MSn** is mandatory; without them, the pre-scans ran at production
 settings and the winner is production-grade — provided the metric read it.
-For a metric whose pre-scans are *pure measurement* — one that never reads them, and whose
-winner is therefore always re-acquired — overrides stop being optional. Such a sweep must
-declare its degradation, so that "a pre-scan is never the final measurement" is guaranteed by
-the config rather than by the author's habit of writing one. A sweep that both bounds its
-**Scan range** to the **Isolation window** and omits overrides is asserting two contradictory
-things about the same scans.
+Overrides are optional under **every** metric. A sweep that omits them is making the ordinary
+claim — its pre-scans ran at production fidelity — and whether its winner is nonetheless
+re-acquired is decided by the **Follow-up MSn** rule (the metric and the level), never by
+obliging the author to write a patch. They were once mandatory for a metric that never reads
+its pre-scans; that rule existed only to make a window-bound **Scan range** safe, and was
+withdrawn with it.
 _Avoid_: reading overrides as settings for the follow-up scan (the follow-up is
 built from the *un-overridden* config, plus the winning parameters); treating an
 empty overrides map as "nothing special" rather than as "pre-scans ran at
@@ -667,16 +718,28 @@ The engine-minted base-94 identifier occupying the first three characters of
 `Trailer["Scan Description"]`. It is the **sole** key `FLASHIda::processScan` decodes and
 looks up in `pending_scan_map_`; a scan whose tracking id the engine did not mint is
 rejected before deconvolution. Minted by `ScanCommandQueue::nextTrackingId`.
-_Avoid_: scan id, Access ID, instrument job number.
+It outlives the acquisition: the scan description is preserved when the data file is converted,
+so the tracking id is still readable on the converted spectrum. That makes it the join from a
+spectrum back to the **command that caused it** — and, through that command's parent, to the
+survey the command was decided from — for every scan FLASHIda commanded, at every MS level.
+It identifies a scan only **within its own run**: every run mints from the same starting point,
+so the same id names a different scan in every acquisition.
+_Avoid_: scan id, Access ID, instrument job number; treating it as unique across runs; assuming
+a scan's survey is the survey acquired just before it — commands queue, so newer surveys
+routinely sit between a scan and the one it was decided from.
 
 **Instrument scan number**:
 The number the instrument itself assigns to a scan as it acquires it. Unlike the other two
-channels FLASHIda neither mints it nor asks for it — it exists only on the scan coming *back* —
-and it is the only one of the three that survives into the converted data file. That is what
-makes it the join between an acquisition and its later analysis, and why a log that claimed to
-carry it while carrying a tracking id was unusable rather than merely inaccurate.
+channels FLASHIda neither mints it nor asks for it — it exists only on the scan coming *back*.
+It survives into the converted data file, as the tracking id also does, but the two join
+different things: the instrument scan number places a spectrum in the **acquisition's order**
+and exists for every scan, commanded or not, while the tracking id ties a spectrum to the
+**command** that caused it and exists only for scans FLASHIda asked for. Neither can stand in
+for the other, which is why a log that claimed to carry one while carrying the other was
+unusable rather than merely inaccurate.
 _Avoid_: scan id, Access ID, tracking id; and "scan index", which names a position within a file
-rather than something the instrument assigned.
+rather than something the instrument assigned; calling it the *only* identity that survives
+conversion — it was believed to be, and the belief cost a consumer its exact join.
 
 **Handshake scan**:
 The single scan whose echoed **instrument job number** proves the instrument has entered
@@ -918,10 +981,17 @@ The asymmetry is what makes it safe to reason about: a range **wider** than the 
 measurement reads costs only time, because the surplus peaks fall outside the summed interval
 and contribute nothing; a range **narrower** than it silently truncates the measurement. So a
 range may be padded freely and clipped never.
-On a trapping analyzer that scans m/z sequentially, scan time is proportional to the range —
-which is the whole reason a measurement that reads a single **Isolation window** has cause to
-bound itself to that window.
+A **Pre-scan** has no range of its own: it reads out its level's configured range, like any
+other scan parameter, unless its **Exploration overrides** name another. That holds even for a
+pre-scan whose measurement reads a single **Isolation window**.
+On a trapping analyzer that scans m/z sequentially, only the *readout* part of a scan's duration
+scales with the range — injection, isolation, activation and fixed overhead do not — so
+narrowing the range buys far less than the ratio of the two widths suggests. Bounding a
+pre-scan to the window it reads was tried on that premise and withdrawn: it gave no worthwhile
+gain on the instrument, and it discarded the rest of the spectrum.
 _Avoid_: "mass range" (these are m/z; the deconvolution mass bounds are a different quantity in
-different units); assuming a narrowed range narrows the isolation, reduces the injected
-population, or changes AGC; reading a range of zero as a real setting — for this parameter,
-unset genuinely means unset.
+different units); "full range" without saying full *relative to what* (it means the level's
+configured range, not the analyzer's limit and not unset); assuming a narrowed range narrows the
+isolation, reduces the injected population, or changes AGC; estimating a trapping analyzer's
+scan time from its range width alone; reading a range of zero as a real setting — for this
+parameter, unset genuinely means unset.
