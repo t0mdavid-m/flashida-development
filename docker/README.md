@@ -242,6 +242,7 @@ or another session's in-flight work contaminates the comparison.
 | Date | Anchor SHA | CI run | Expected C# | Expected ctest | Image labels (`vs.buildversion` / `contrib.tag` / `qt`) | Result |
 |---|---|---|---|---|---|---|
 | 2026-08-27 | parent `9bcfc82` | **33083942633** (success) | `total=181 passed=180 failed=0 skipped=1` — the skip is `ContinuityTests.P4_AL_CT42_DeepMode_TargetLogEffect` | **26/26**, `Total Test time (real) = 2109.38 sec` | *(record at first green)* | *(pending)* |
+| 2026-09-22 | parent `dcd375e` (ADR-0044/0045; 29 golden modes) | **35774415075** (success) | `total=185 passed=184 failed=0 skipped=1` — same CT42 skip | **27/27**, `Total Test time (real) = 2306.60 sec` | *(Windows leg not run locally for this anchor — engine down, DLLs undecrypted)* | *(pending)* |
 
 **Acceptance:** the Windows container reproduces those two numbers **exactly**. The Linux container
 reproduces the *set* of 26, and its failures are **triaged, not assumed** — 13 of the 26 targets have
