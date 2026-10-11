@@ -198,6 +198,15 @@ function yml_scan(line,   had_cont, payload, after, c, rest, m, q, inner, v) {
       v = substr(line, RSTART, RLENGTH)
       sub(/^--tag[ \t]+/, "", v)
       setpin("contrib_tag", unquote(v), FNR)
+    } else {
+      # `gh release download [<tag>] [flags]` takes the tag POSITIONALLY (there is no --tag flag on
+      # this subcommand); a first argument that does not start with '-' is the tag.
+      v = line
+      sub(/^.*gh release download[ \t]+/, "", v)
+      if (v !~ /^-/ && v != "") {
+        sub(/[ \t].*$/, "", v)
+        setpin("contrib_tag", unquote(v), FNR)
+      }
     }
   }
 }
@@ -307,7 +316,7 @@ function validate_yml(   i, nonempty, why) {
   # --- pins the yml genuinely does NOT carry: say so, never invent one ---
   why = "the yml runs `gh release download -R OpenMS/contrib` with no tag"
   if (contrib_line > 0) why = why " (" src ":" contrib_line ")"
-  why = why ", so CI resolves whatever release is LATEST at run time. There is nothing here to parse - a Dockerfile that pins a contrib tag is pinning something CI does not."
+  why = why ", so CI resolves whatever release is LATEST at run time -- which is how run 38139642095 (2026-10-11) linked against a contrib built for a newer MSVC STL once the contrib cache lapsed. Pin it (positional tag) and this note goes away."
   addmissing("contrib_tag", why)
   addmissing("vc_toolset",      "not in the yml: CI gets MSVC from the windows-2022 runner image via egor-tensin/vs-shell, which resolves a floating channel. Assert cl.exe's version at container run time instead of pinning from here.")
   addmissing("win_sdk",         "not in the yml, same reason as vc_toolset.")

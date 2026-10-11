@@ -65,7 +65,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/OpenMS/contrib
-          key: ${{ runner.os }}-contrib3
+          # The key carries the tag so a re-pin can never be served a stale tarball from an old key.
+          key: ${{ runner.os }}-contrib-2026-03-25-183345
 
       - name: Download contrib build from archive
         if: steps.cache-contrib.outputs.cache-hit != 'true'
@@ -75,7 +76,14 @@ jobs:
         run: |
           mkdir -p OpenMS/contrib
           cd OpenMS/contrib
-          gh release download -R OpenMS/contrib --pattern 'contrib_build-Windows.tar.gz'
+          # PINNED to the release every green run built against (the Windows container pins the same
+          # tag). This used to be an untagged download, i.e. whatever release was LATEST at run time,
+          # masked for months by the contrib cache; when the cache lapsed on 2026-10-11 the run took
+          # 2026-09-28-183744, whose CoinOR libraries were built against a newer MSVC STL and import
+          # __std_rotate / __std_min_element_4i / ... that the 14.44 toolset's msvcprt cannot resolve
+          # (LNK2019 x5, LNK1120 on OpenMS.dll; run 38139642095). Re-pin deliberately, together with
+          # docker/windows/Dockerfile's CONTRIB_TAG/CONTRIB_BYTES, and recalibrate.
+          gh release download 2026-03-25-183345 -R OpenMS/contrib --pattern 'contrib_build-Windows.tar.gz'
           7z x -so contrib_build-Windows.tar.gz | 7z x -si -ttar
           rm contrib_build-Windows.tar.gz
           ls -la

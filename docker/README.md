@@ -107,12 +107,16 @@ regression runner → all four fail-closed gates. ~25–50 min: a gate, not an i
 in prose anywhere in this repo is stale by construction. Adding a C++ test still means editing **both**
 lists in the yml, and then running `ci lists` to confirm the parser sees it.
 
-**Nor are the toolchain pins authoritative here** — and only **one** of them is parseable out of the
+**Nor are the toolchain pins authoritative here** — and only **two** of them are parseable out of the
 yml. `install-qt-action`'s `version: '6.8.3'` is, so the parser reads it and the image build **fails**
-if a Dockerfile pin disagrees. The rest the yml simply does not carry: it runs
-`gh release download -R OpenMS/contrib` with **no tag**, so CI takes whatever release is latest at run
-time, and it resolves the VC toolset and the Windows SDK from the floating `aka.ms/vs/17/release`
-channel. Those are Dockerfile pins with nothing in the yml to check them against, so the container
+if a Dockerfile pin disagrees; and since 2026-10-11 the contrib download is
+`gh release download 2026-03-25-183345 -R OpenMS/contrib`, a positional tag the parser also reads.
+(It used to carry **no tag** and take whatever release was latest, which the `actions/cache` entry
+masked until it lapsed; run 38139642095 then downloaded 2026-09-28-183744, built against a newer
+MSVC STL, and `OpenMS.dll` failed to link with five `__std_*` unresolved externals out of the CoinOR
+libraries.) The rest the yml simply does not carry: it resolves the VC toolset and the Windows SDK
+from the floating `aka.ms/vs/17/release` channel. Those are Dockerfile pins with nothing in the yml to
+check them against, so the container
 asserts the built `cl.exe` equals CI's recorded `14.44.35207` and **warns loudly** rather than
 failing. The values actually used are on the image as `LABEL`s (`vs.buildversion`, `vctools`,
 `winsdk`, `contrib.tag`, `qt`). Read those and `docker/ci-lists.sh pins`, not this paragraph — and the
@@ -263,7 +267,7 @@ demands after a structural disagreement.
 | `WITH_GUI` | `ON` | **`OFF`** | CI needs `ON` only to ship `FLASHDeconvWizard.exe`, a delivery artifact. `OFF` skips 151 GUI TUs, AUTOUIC over 32 `.ui` files and four Qt components (−6 m 25 s) |
 | FLASHDeconvWizard bundle | built | **not built** | Delivery, not verification. CI keeps producing `openms-fresh-dll` unchanged |
 | `qtimageformats` | *believed* installed | not installed | It is a Qt **module**, not an aqt archive, and aqt silently drops unknown archive names — **so CI has been installing qtbase+qtsvg all along.** Harmless (`OpenMS_QT_COMPONENTS` is `Core Network`); the container matches CI's *effective* behaviour |
-| contrib tarball | used, **untagged** | **Linux: dropped**; Windows: tag `2026-03-25-183345` | The tarball is `contrib_build-Windows.tar.gz`; Linux gets everything from apt. CI's `gh release download` passes no tag and takes whatever release is latest, so the container is *stricter* here, not identical — and CI extracts into `OpenMS/contrib` where the container uses `C:\contrib` |
+| contrib tarball | tag `2026-03-25-183345` (pinned 2026-10-11; was **untagged**) | **Linux: dropped**; Windows: tag `2026-03-25-183345` | The tarball is `contrib_build-Windows.tar.gz`; Linux gets everything from apt. CI and the container now pin the same tag — re-pin both together (`flashida-ci.yml` + `Dockerfile` `CONTRIB_TAG`/`CONTRIB_BYTES`) and recalibrate. CI extracts into `OpenMS/contrib` where the container uses `C:\contrib` |
 | ccache | `400M` (near-cold) | `30G` (warm) | See *cold-cache compilation* under what stays remote-only |
 | ctest input tree | packaged/uploaded/unpacked | live build dir | The relocation path is remote-only |
 
