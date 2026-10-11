@@ -172,7 +172,7 @@ that calls it — there is no second command surface and no second parser).
 | Command | Engine | Cost | What it does |
 |---|---|---|---|
 | `ci doctor` | — | s | Engine mode + isolation, `Containers` feature state, images, **Thermo DLL identity gate (absent = FAIL, never skip)**, `git status` across all 3 repos, contrib, python-in-image, locale, ccache size, total disk footprint |
-| `ci doctor --compare-ci` | — | s | Fetches the latest green `openms-fresh-dll`; prints both DLL `sha256` values and both configure lines. **Informational, never a gate** |
+| `ci doctor --compare-ci` | — | s | Fetches the latest green `openms-fresh-dll`; prints both DLL `sha256` values and both configure lines. **Informational, never a gate.** Since 2026-10-11 that artifact is kept **30 days** (`cpp-test-build` 7), after 146 × 16 MB + 142 × 52 MB of per-run build products filled the account's artifact storage and stopped every upload; a green run older than that has no DLL to fetch and the check warns |
 | `ci lists` | — | ms | Parser self-test + reconciliation against the yml, under container mawk. The **Linux** entry points run it automatically as step 1; the **Windows** lane (`ci dll`, `ci cs`, `ci golden-diff`, `ci cpp --msvc`) deliberately does not — it needs the Linux engine, and Docker Desktop runs one at a time — so run this yourself after editing the workflow file or the parser |
 | `ci cpp <name…>` | Linux | s–min | Build + run only those targets — **the real inner loop** |
 | `ci cpp` | Linux | **~5 s** after build | Fast tier: the 26 minus anything over `--slow-threshold` (default 2 s) in the last run's JUnit timings. With no prior run it falls back to full and says so |

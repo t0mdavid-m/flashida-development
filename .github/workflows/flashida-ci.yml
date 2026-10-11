@@ -210,6 +210,10 @@ jobs:
         with:
           name: openms-fresh-dll
           path: openms-fresh-dll/
+          # Consumed by windows-tests in this run and by `ci doctor --compare-ci` for a calibration
+          # anchor; 16 MB per run at the default 90-day retention is what filled the account's artifact
+          # storage on 2026-10-11 (146 copies). Anchors older than this window are re-pinned, not kept.
+          retention-days: 30
 
       # --- Continue the SAME Release build: the 13 FLASH C++ test exes ---
       # class_tests are already configured (PACKAGE_TYPE=none default +
@@ -294,6 +298,9 @@ jobs:
         with:
           name: cpp-test-build
           path: cpp-test-build.tgz
+          # Consumed only by cpp-tests in this same run. 52 MB x 142 runs at the default 90-day
+          # retention was 7.4 GB of the 10 GB that hit the artifact storage quota on 2026-10-11.
+          retention-days: 7
 
   # ----------------------------------------------------------------
   # C# unit tests + regression + bridge verification — windows-2022.
