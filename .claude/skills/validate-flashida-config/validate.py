@@ -39,7 +39,10 @@ CONFIG_DIR = os.path.join(REPO, "FlashIDA", "test-data", "configs")
 # --- values the engine accepts, from the code (NOT the doc comments) ----------
 MODE_VALUES = {"off", "ambiguity", "coverage", "exhaustive"}
 RANK_BY_VALUES = {"intensity", "qscore", "none"}
-METRIC_VALUES = {"none", "mass_count", "remaining_precursor", "fragment_count"}
+METRIC_VALUES = {"none", "mass_count", "remaining_precursor", "fragment_count", "kinetic_model"}
+# ADR-0048: the two metrics that read a pre-scan's precursor SHARE (anchor window over the whole scan)
+# rather than counting deconvolved masses or matched fragments -- the only two a trap pre-scan can serve.
+SHARE_METRICS = {"remaining_precursor", "kinetic_model"}
 KNOWN_ANALYZERS = ("Orbitrap", "IonTrap", "")   # ADR-0045 decision 3; "" = instrument method default
 
 TARGETING_VALUES = {"none", "inclusion", "in_depth", "exclusion_masses"}
@@ -189,6 +192,8 @@ def check_unknown_keys(cfg, ref, rep):
             return
         if path.endswith(".exploration.overrides"):
             return
+        if path.endswith(".exploration.kinetic_model.k2"):
+            return   # ADR-0047: keys are ACTIVATIONS (user-authored); A30 checks the values
         if path == "ms_settings.additional_ms2":
             # keys are the user's; every value is a scan object
             sample = next((v for v in refnode.values() if isinstance(v, dict)), None)
@@ -526,28 +531,28 @@ def validate(path, ref):
         # requires non-empty overrides" -- the old A17 -- was withdrawn by ADR-0044 together with the
         # scan-range binding it guarded; overrides are optional under every metric.)
         ov = expl.get("overrides") or {}
-        if ov.get("analyzer") == "IonTrap" and metric != "remaining_precursor":
+        if ov.get("analyzer") == "IonTrap" and metric not in SHARE_METRICS:
             rep.error("A28", f"{sect}.exploration.overrides.analyzer is \"IonTrap\" but "
                              f"{sect}.exploration.metric is \"{metric}\". A trap pre-scan is measured, "
                              "never identified -- it is not deconvolved or matched -- so a metric that "
                              "counts masses or fragments scores every variant 0 and the first grid "
-                             "point always wins. Use \"remaining_precursor\", or an Orbitrap override "
-                             "(ADR-0045).")
-        # ADR-0026 decision 4, re-grounded by ADR-0044. The remaining-precursor ratio sums the ANCHOR's
-        # isolation window and nothing else, so under co-isolation it reports one charge state's
-        # depletion while the same collision energy depletes its siblings at other rates. Two
-        # level-matched checks rather than one "multiplexed anywhere" test -- see charge_mode() for
-        # which pairs are legal.
-        if metric == "remaining_precursor":
+                             "point always wins. Use a share-based metric (\"remaining_precursor\" or "
+                             "\"kinetic_model\"), or an Orbitrap override (ADR-0045, ADR-0048).")
+        # ADR-0026 decision 4, re-grounded by ADR-0044, extended to the Kinetic Model by ADR-0048. The
+        # precursor share sums the ANCHOR's isolation window and nothing else, so under co-isolation it
+        # reports one charge state's depletion while the same collision energy depletes its siblings at
+        # other rates. Two level-matched checks rather than one "multiplexed anywhere" test -- see
+        # charge_mode() for which pairs are legal.
+        if metric in SHARE_METRICS:
             ckey, cmode = charge_mode(cfg, sect)
             if cmode == "multiplexed":
-                rep.error("A18", f"{sect}.exploration.metric is \"remaining_precursor\" but "
-                                 f"{sect}.{ckey} is \"multiplexed\". The remaining-precursor ratio sums "
-                                 "the ANCHOR's isolation window only, so under co-isolation it reports "
+                rep.error("A18", f"{sect}.exploration.metric is \"{metric}\" but "
+                                 f"{sect}.{ckey} is \"multiplexed\". The precursor share sums the "
+                                 "ANCHOR's isolation window only, so under co-isolation it reports "
                                  "one charge state's depletion while the same collision energy depletes "
                                  f"its siblings at other rates. Set {ckey} to \"single\" or "
-                                 "\"separate\", or pick a different exploration metric (ADR-0044 "
-                                 "decision 4).")
+                                 "\"separate\", or pick a counting exploration metric (ADR-0044 "
+                                 "decision 4, ADR-0048).")
         if (expl.get("ce_step", 5) or 0) <= 0:
             rep.error("A12", f"{sect}.exploration.ce_step is {expl.get('ce_step')}; must be > 0. "
                              "A non-positive step never terminates the sweep loop -- it spins "
@@ -567,6 +572,46 @@ def validate(path, ref):
             if a in NEEDS_RT and rt_max <= rt_min:
                 rep.error("A14", f"{sect}.exploration activation '{a}' requires "
                                  f"reaction_time_min < reaction_time_max ({rt_min} >= {rt_max})")
+
+        # ADR-0047. The Kinetic Model has ONE authored input and no default: k2, the overfragmentation
+        # rate per NCE, per swept activation. The engine throws on every state below; this names them
+        # before the run. An authored k2 nobody reads is the stomped-key shape ADR-0040 removed, so the
+        # object under any other metric is an error too, not a warning.
+        kin = expl.get("kinetic_model")
+        if metric == "kinetic_model":
+            if not isinstance(kin, dict) or not isinstance(kin.get("k2"), dict):
+                rep.error("A30", f"{sect}.exploration.metric is \"kinetic_model\" but "
+                                 f"{sect}.exploration.kinetic_model.k2 is absent. It must carry the "
+                                 "overfragmentation rate per NCE for every swept activation, e.g. "
+                                 "{\"k2\": {\"HCD\": 0.0388}}. There is no default: k2 differs by an "
+                                 "order of magnitude between activations and is unmeasured at MS3 "
+                                 "(ADR-0047 decision 6).")
+            else:
+                k2 = kin["k2"]
+                for a in acts:
+                    v = k2.get(a)
+                    if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+                        rep.error("A30", f"{sect}.exploration.kinetic_model.k2 has no entry > 0 for the "
+                                         f"swept activation '{a}' (got {v!r}). k2 is never defaulted "
+                                         "(ADR-0047 decision 6).")
+                for a in k2:
+                    if a not in acts:
+                        rep.warn("B11", f"{sect}.exploration.kinetic_model.k2.{a} names an activation this "
+                                        f"level does not sweep ({acts}); the entry is inert, not invalid. "
+                                        "The engine prints [CONFIG-WARN] and loads.")
+            if len(acts) != 1:
+                rep.error("A30", f"{sect}.exploration.metric is \"kinetic_model\" but {len(acts)} "
+                                 f"activations are swept ({acts}). One k2 feeds one pool, so a kinetic "
+                                 "sweep names exactly one activation; author one block per activation "
+                                 "instead (ADR-0047).")
+            elif acts[0] not in NEEDS_CE:
+                rep.error("A30", f"{sect}.exploration.metric is \"kinetic_model\" but the swept activation "
+                                 f"'{acts[0]}' varies reaction time, not collision energy. The model is "
+                                 "defined on collision energy (ADR-0047).")
+        elif kin not in (None, {}):
+            rep.error("A30", f"{sect}.exploration.kinetic_model is authored but {sect}.exploration.metric "
+                             f"is \"{metric}\"; nothing would read it. Remove it or set the metric "
+                             "(ADR-0047).")
 
     # ---------------- CLASS B : the engine stays silent -------------------
     referenced = set(add_scans) | set(follow_refs.values())
@@ -605,7 +650,7 @@ def validate(path, ref):
         if metric == "none":
             sweepish = {"ce_min", "ce_max", "ce_step", "reaction_time_min", "reaction_time_max",
                         "reaction_time_step", "activations", "overrides",
-                        "tolerance_ppm"} & {k for k in expl if expl[k] not in (None, [], {})}
+                        "tolerance_ppm", "kinetic_model"} & {k for k in expl if expl[k] not in (None, [], {})}
             if sweepish:
                 rep.warn("B3", f"{sect}.exploration.metric is 'none' but {sorted(sweepish)} are "
                                "set -- ToJsonExploration takes the else branch and emits the "
