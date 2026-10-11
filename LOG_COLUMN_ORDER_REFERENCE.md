@@ -77,18 +77,25 @@ reagent_max_it, reagent_agc_target, scan_description, precursor_id, ms3_proteofo
 
 ---
 
-## 2. Results Log (`scan_results`) — 36 columns
+## 2. Results Log (`scan_results`) — 50 columns
 
 **Verification: ✅ COMPLETE** for the reorder. All columns of the 2026-07 permutation are present
 exactly once; the deconv block has since been restructured and extended — see the note below.
 
 ⚠️ **The numbered list below is the 2026-07 permutation and is NOT the live header.** It has 29
-entries; the live stream has 36. Two blocks were appended after it was drafted: the
-identification-YIELD trio (`tag_count`, `fragment_count`, `tic_coverage`, after `remaining_ratio`)
-and ADR-0038's quant block (`quant_channels`, `quant_condition_means`, `quant_fold_change`,
-`quant_verdict`, appended after `dequeue_ts`). Read the live header from
-`IdaLogger.cpp`, or the schema lock in `FLASHIda_LoggingFields_test`'s `schema_column_counts`,
-which is the authoritative record of both the count and `headers.back()`.
+entries; the live stream has 50. Four blocks were appended after it was drafted, and one column was
+renamed in place: the identification-YIELD trio (`tag_count`, `fragment_count`, `tic_coverage`,
+after column 13); ADR-0038's quant block (`quant_channels`, `quant_condition_means`,
+`quant_fold_change`, `quant_verdict`, appended after `dequeue_ts`); ADR-0040's consensus block
+(`consensus_verdict`, `consensus_fold_change`, `consensus_agreement`, `consensus_charges`,
+`consensus_id_charge`); and ADR-0047's kinetic block (`fit_p0`, `fit_ce_max_s`, `fit_width`, `k2`,
+`modeled_ce`, `modeled_b`, `fit_points`, `fit_rss`, `energy_source` — written on the one row that
+completes a `kinetic_model` exploration group, sentinel-valued everywhere else; `energy_source`
+alone is also set on the completing row of every other metric, `measured` or `none`). Column 13
+`remaining_ratio` is **renamed `precursor_share`** (ADR-0048): the anchor window's share of the
+scan's raw signal, on every MS2/MS3 row — a different quantity, hence a rename rather than a reuse.
+Read the live header from `IdaLogger.cpp`, or the schema lock in `FLASHIda_LoggingFields_test`'s
+`schema_column_counts`, which is the authoritative record of both the count and `headers.back()`.
 
 New (desired) order:
 
@@ -104,7 +111,7 @@ New (desired) order:
 10. instrument_duration_ms
 11. processing_duration_ms
 12. mass_count
-13. remaining_ratio
+13. precursor_share (was `remaining_ratio` until ADR-0048)
 14. exploration_group_id
 15. exploration_metric
 16. exploration_score
@@ -125,7 +132,7 @@ New (desired) order:
 Current order (for reference): tracking_id, ms_level, resolve_ts, duration_ms, received_ts,
 duration_received_ms, rt, mass_count, commands_pushed, child_ids, exploration_group_id,
 exploration_metric, variant_index, total_variants, collision_energy, exploration_score,
-remaining_ratio, activation_type, reaction_time, deconv_masses, deconv_qscores, deconv_charges,
+precursor_share, activation_type, reaction_time, deconv_masses, deconv_qscores, deconv_charges,
 deconv_intensities, parent_tracking_id, dequeue_ts, queue_duration_ms,
 instrument_duration_ms, processing_duration_ms, winner_tracking_id.
 
