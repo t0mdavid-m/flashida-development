@@ -604,10 +604,12 @@ def validate(path, ref):
                                  f"activations are swept ({acts}). One k2 feeds one pool, so a kinetic "
                                  "sweep names exactly one activation; author one block per activation "
                                  "instead (ADR-0047).")
-            elif acts[0] not in NEEDS_CE:
+            elif acts[0] not in NEEDS_CE or acts[0] in NEEDS_RT:
                 rep.error("A30", f"{sect}.exploration.metric is \"kinetic_model\" but the swept activation "
-                                 f"'{acts[0]}' varies reaction time, not collision energy. The model is "
-                                 "defined on collision energy (ADR-0047).")
+                                 f"'{acts[0]}' is not a collision-energy-only activation (HCD or CID). The "
+                                 "model is one-dimensional in collision energy: an ETD-family sweep varies "
+                                 "reaction time, which it cannot fit, and EThcD would sweep both axes and "
+                                 "leave the follow-up's reaction time undecided (ADR-0047).")
         elif kin not in (None, {}):
             rep.error("A30", f"{sect}.exploration.kinetic_model is authored but {sect}.exploration.metric "
                              f"is \"{metric}\"; nothing would read it. Remove it or set the metric "

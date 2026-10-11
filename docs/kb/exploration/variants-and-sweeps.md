@@ -56,7 +56,8 @@ caller, which enqueues them on the acquisition side. `initiate` prepends
   the level's primary activation. When multiple entries are configured (e.g.
   `["HCD","ETD"]`), the full CE × RT sweep repeats for each activation, as one
   contiguous block per activation. A `kinetic_model` sweep names exactly one
-  activation, and it must be CE-swept (`Config::validate`, ADR-0047).
+  activation, and it must be CE-only — HCD or CID; ETD has no CE axis and EThcD
+  would sweep two axes for a one-dimensional model (`Config::validate`, ADR-0047).
 
 Invariants: at least one variant is always produced, no reference scan is
 synthesized under any metric or activation (ADR-0048 superseded ADR-0029's
