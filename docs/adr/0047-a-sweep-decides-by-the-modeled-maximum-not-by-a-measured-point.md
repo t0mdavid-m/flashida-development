@@ -1,6 +1,6 @@
 # 0047. A sweep decides by the modeled maximum, not by a measured point
 
-Status: Proposed (grilled 2026-10-11), **not implemented**. Every decision below is the owner's.
+Status: Accepted, **implemented 2026-10-11** (Push 1: OpenMS `feb705f`..`802498c`, FlashIDA `4b77832`..`81edc9e`; Push 2: OpenMS `0d0273b`..`28336de`, FlashIDA `47147fd`..`8a16ff8`). Grilled 2026-10-11; every decision below is the owner's, **except decision 3's fit method, amended at implementation on evidence** (see the amendment note under decision 3).
 Related: [ADR-0048](0048-precursor-share-replaces-the-remaining-ratio-and-a-sweep-has-no-baseline.md)
 — the companion decision this one presupposes (the quantity the model is fitted to, and the
 removal of the reference scan). [ADR-0020](0020-a-measuring-ms3-sweep-must-be-closed-by-a-follow-up.md)
@@ -64,26 +64,35 @@ target. Three engine facts bound the design:
    received for that scan. At MS3 the window is the stage-1 fragment window. No instrument TIC
    header, no bridge change, no reference scan.
 
-3. **The fit is a bounded Gompertz, by Levenberg-Marquardt.** Eigen's LM (already used by
-   OpenMS's `GaussFitter` and others) on the residual P_i − P₀·exp(−e^((CE_i−c)/w)), with the
-   bounds of the study's "bounded Gompertz" arm imposed **exactly by reparametrization**, not
-   by penalty: w = w_min·(w_max/w_min)^σ(θ) onto (0.25, 25) NCE, P₀ = cap·σ(φ) onto
-   (0, 1.1 × highest acquired share), c free. The seed is the landmark read of the acquired
-   points (P₀ = highest share, c at the interpolated P₀/e crossing, w from the 0.85·P₀
-   crossing; c = ce_max and w = 4.2 NCE when a crossing is absent). At least three pre-scans
-   with a finite share are required; fewer, or non-convergence, is **no fit**. The four fit
-   constants (cap factor, width box, minimum points) are constants of the validated algorithm,
-   not configuration.
+3. **The fit is the study's bounded Gompertz, by its own lattice search — ported verbatim.**
+   *(Amended at implementation, 2026-10-11. As grilled, this decision said Levenberg-Marquardt;
+   the original text follows the amendment.)* `KineticModel::fitGompertz` reproduces
+   `curve_families.fit("Gompertz", …, A_max=plateau_bound)` of the vendored pipeline: a coarse
+   lattice over c ∈ 0..60 step 0.5 and 41 log-spaced widths on (0.25, 25) NCE, the closed-form
+   least-squares P₀ at each lattice point clipped to (0, 1.1 × highest acquired share), then a
+   refinement pass over c ± 0.5 (51 points) and w ÷1.3..×1.3 (41 points) around the coarse
+   minimum. At least three pre-scans with a finite share are required; fewer is **no fit**.
+   The fit constants (cap factor, width box, lattice and refinement spans, minimum points) are
+   constants of the validated algorithm, not configuration.
 
-   *Why reparametrization is exact:* each map is a smooth bijection of the real line onto the
-   open box, so every point the study's grid could return is reachable and nothing outside it
-   is; the objective's value at a point is unchanged, so its minimum over the box and over
-   (θ, φ, c) coincide. A minimum at a wall becomes a minimum at infinity in θ or φ, where LM
-   stops on its gradient tolerance within numerical distance of the clip — the same answer the
-   grid's clip gives. The one risk LM adds over the grid is the **basin**: it is local, the grid
-   is global over its lattice. The landmark seed starts inside the right basin by construction,
-   and decision 10 bounds the residual risk; a three-start LM (seed widths 2, 4, 8 NCE) is the
-   remedy if that test ever demands it.
+   *Why the amendment:* decision 10's layer A was run first with LM as written here. Against
+   the pipeline's 1080 fits (108 sweeps × 10 grid offsets) LM reached the **identical** CE* on
+   941, within ±1 on 1035, and missed 45 — mostly with an equal-or-lower RSS at a different
+   width, because the Gompertz RSS has a **flat valley in (P₀, w)** where several (P₀, w) pairs
+   fit six points equally well and the pool's argmax moves with w. A five-start LM made the
+   agreement *worse* (921). The owner's acceptance test was "equivalent results" (Q6/Q15:
+   CE* within ±1 on every fit, identical on ≥ 95 %); LM met the second bar and failed the
+   first. The lattice port agrees with the pipeline on **1080 of 1080** fits with identical
+   mean regret (0.148518 both sides), which is what `KineticModel_test` now pins. The study's
+   result was obtained with this fit, so shipping it is the conservative choice; the cost is
+   ~4 500 evaluations per fit, well under a millisecond at six to fifty points.
+
+   *As grilled (superseded):* Eigen's LM on the residual P_i − P₀·exp(−e^((CE_i−c)/w)), with the
+   bounds imposed exactly by reparametrization (w = w_min·(w_max/w_min)^σ(θ), P₀ = cap·σ(φ),
+   c free), a landmark seed (P₀ = highest share, c at the interpolated P₀/e crossing, w from the
+   0.85·P₀ crossing; c = ce_max and w = 4.2 NCE when a crossing is absent), non-convergence =
+   no fit; the basin risk was to be bounded by decision 10 and remedied by a three-start LM.
+   Decision 10 is what caught it.
 
 4. **The modeled maximum is an integer energy in [1, ce_max].** s(CE) is read from the fitted
    curve on every integer energy, the pool is the study's recursion
@@ -174,10 +183,11 @@ target. Three engine facts bound the design:
 
 ## Alternatives rejected
 
-- *Port the study's grid search verbatim.* Exactly reproducible and basin-free, but ~4 500
-  evaluations per fit for 0.5-NCE resolution; LM resolves both parameters to precision from a
-  smooth seed, and the equivalence test bounds the basin risk. Remains the fallback if that
-  test cannot be met.
+- *Levenberg-Marquardt instead of the study's lattice.* Was the grilled choice (decision 3 as
+  originally written); rejected at implementation when the equivalence test it was to be
+  bounded by showed 45 of 1080 fits landing on a different CE* (flat valley in (P₀, w)). The
+  lattice port — "exactly reproducible and basin-free, but ~4 500 evaluations per fit" — is
+  what ships; the evaluation cost is immaterial at six to fifty points.
 - *Adaptive point placement.* Not validated by any study; the decimation result is for a fixed
   grid with both edges.
 - *A `decision` switch on `remaining_precursor` instead of a metric.* Leaves the target key

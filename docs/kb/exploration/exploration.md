@@ -78,6 +78,6 @@ The exploration-winner path — `feedResult` detecting completion and internally
 
 - **Blocking on all variants.** Winner selection only fires when every variant in a group has `received=true`. A dropped or long-delayed variant leaves the group open indefinitely; there is no per-group timeout in the current implementation. Monitor scan-queue health in long runs.
 
-- **Baseline adds to load.** The `RemainingPrecursor` metric prepends a CE=0 reference scan (invisible in `ce_min` / `ce_max` / `ce_step`), adding one variant per group beyond the CE-grid count.
+- **No reference scan, but always a follow-up under `kinetic_model`.** Since ADR-0048 no metric prepends a CE=0 baseline: a group is exactly its grid points — with the top edge always acquired (ADR-0047 d.8), so `15..40/2` is 14 points, not 13. `kinetic_model` adds one follow-up per group at both levels (ADR-0047 d.5); `remaining_precursor` and `mass_count` add one at MS3 (ADR-0020) and whenever `overrides` is non-empty.
 
 - **Per-level tolerance.** `exploration_tolerance_ppm` can differ from the base deconvolution tolerance. Exploration variant deconvolutions use this field, not the base — useful when variants need looser matching than the primary MS2 pipeline.

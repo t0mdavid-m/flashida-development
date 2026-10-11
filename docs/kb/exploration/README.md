@@ -24,7 +24,7 @@ Exploration runs an autonomous CE/RT/activation sweep per selected precursor (MS
 
 - `exploration.md` — shared lifecycle, state machine, per-level config surface, validation, gotchas.
 - `variants-and-sweeps.md` — how variants are enumerated from CE/RT/activation axes; `ExplorationVariant` field reference.
-- `scoring-and-winner.md` — per-metric scoring (`MassCount` / `RemainingPrecursor` / `FragmentCount`), winner selection, `overrides` application.
+- `scoring-and-winner.md` — the precursor share every pre-scan carries (ADR-0048), per-metric scoring (`MassCount` / `RemainingPrecursor` / `FragmentCount` / `KineticModel`), winner selection or the modeled maximum (ADR-0047), follow-up dispatch and `overrides`.
 - `ms2-exploration.md` — triggered from MS1 precursor selection; handoff to MS3.
 - `ms3-exploration.md` — two trigger paths; fragment-ion targeting; `MS3FragmentMatcher` batch re-scoring.
 

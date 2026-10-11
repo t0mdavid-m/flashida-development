@@ -1,9 +1,9 @@
 # 0029. A baseline belongs to its activation
 
 Status: Accepted (2026-08-25), implemented.
-**Superseded by [ADR-0048](0048-precursor-share-replaces-the-remaining-ratio-and-a-sweep-has-no-baseline.md)** (proposed 2026-10-11, not yet implemented) — the
-**Precursor share** needs no reference scan, so no sweep acquires a baseline under any metric or activation once 0048 lands. The
-per-activation reasoning below describes behaviour 0048 removes; do not cite it for the engine as it will be.
+**Superseded by [ADR-0048](0048-precursor-share-replaces-the-remaining-ratio-and-a-sweep-has-no-baseline.md)** (implemented 2026-10-11) — the
+**Precursor share** needs no reference scan, so no sweep acquires a baseline under any metric or activation. The
+per-activation reasoning below describes behaviour 0048 removed; do not cite it for the engine as it is.
 Related: [ADR-0020](0020-a-measuring-ms3-sweep-must-be-closed-by-a-follow-up.md),
 [ADR-0026](0026-a-remaining-precursor-sweep-scans-only-the-window-it-reads.md),
 [ADR-0030](0030-activation-decides-whether-a-coupled-parameter-is-emitted.md).

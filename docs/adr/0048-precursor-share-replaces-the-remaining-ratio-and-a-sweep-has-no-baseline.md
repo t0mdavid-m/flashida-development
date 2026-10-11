@@ -1,6 +1,6 @@
 # 0048. Precursor share replaces the remaining ratio, and a sweep has no baseline
 
-Status: Proposed (grilled 2026-10-11), **not implemented**.
+Status: Accepted, **implemented 2026-10-11** (Push 2 of the Kinetic Model: OpenMS `0a9759d`..`2154155`, FlashIDA `47147fd`..`8a16ff8`). Grilled 2026-10-11.
 Supersedes: [ADR-0029](0029-a-baseline-belongs-to-its-activation.md) in full, and the Phase-2
 decision of 2026-07-06 that gave every metric a baseline.
 Amends: [ADR-0020](0020-a-measuring-ms3-sweep-must-be-closed-by-a-follow-up.md) — its
