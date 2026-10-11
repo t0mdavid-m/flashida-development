@@ -449,105 +449,159 @@ widens the current one); assuming several notches means several precursors.
 
 **Pre-scan**:
 An exploration scan acquired solely to optimize an MSn parameter — not kept as the
-final measurement. Example: a CE sweep under the RemainingPrecursor metric, whose
-pre-scans find the collision energy that leaves the target remaining-precursor
-ratio. Pre-scans feed winner selection; the Follow-up MSn is then acquired at the
-chosen parameters.
+final measurement. Example: a CE sweep under the **Kinetic model**, whose pre-scans
+measure how the **Precursor share** falls along collision energy so the **Modeled
+maximum** can be computed. Pre-scans feed the sweep's decision; the Follow-up MSn is
+then acquired at the chosen parameters.
 **Whether a sweep also *reads* its pre-scans is a property of its metric, not of the
 scans.** A **reading** metric (FragmentCount) matches every variant against the
 proteoform to score it, so its pre-scans leave identifications behind as a side
-effect. A **measuring** metric (RemainingPrecursor, MassCount) only weighs bulk
-signal and never matches fragments, so at MS3 its pre-scans leave *no* evidence
-whatsoever — which is why a measuring MS3 sweep must always be closed by a
+effect. A **measuring** metric (RemainingPrecursor, MassCount, the Kinetic model) only
+weighs bulk signal and never matches fragments, so at MS3 its pre-scans leave *no*
+evidence whatsoever — which is why a measuring MS3 sweep must always be closed by a
 Follow-up MSn. This asymmetry is MS3-only: at MS2 every variant is matched under
 every metric, because the whole-protein matcher used there is the right one — with
 one exception that belongs to the analyzer rather than the metric, the **Trap
-pre-scan**, which is never matched at any level.
+pre-scan**, which is never matched at any level. A sweep acquires **no reference
+scan**: the Precursor share needs none (see **Baseline variant**, retired).
 _Avoid_: confusing a pre-scan with the production scan it informs; assuming a
 completed sweep has produced evidence (a measuring metric produces a *parameter*,
-not a measurement).
+not a measurement); "baseline" (nothing is ratioed against a separate scan any more).
 
 **Trap pre-scan**:
 A **Pre-scan** read out by the ion trap rather than the Orbitrap, chosen to make a sweep
 cheap. It is **measured, never identified**: unit-resolution peaks cannot enter an
 identification that works at parts per million, so a trap pre-scan is neither deconvolved nor
 matched, and it contributes nothing to a Precursor's pooled model. The only thing read from it
-is raw signal — which is why the **Remaining-precursor ratio** is the one metric that can score
-a trap sweep. A metric that counts deconvolved masses or matched fragments would score every
-variant zero and crown the first. A trap sweep is always closed by a **Follow-up MSn** on the
-Orbitrap, and that scan carries all of the sweep's evidence.
+is raw signal — which is why the **Precursor share** is the one quantity that can score a trap
+sweep, and the two metrics built on it (RemainingPrecursor and the **Kinetic model**) the only
+ones allowed to decide one. A metric that counts deconvolved masses or matched fragments would
+score every variant zero and crown the first. A trap sweep is always closed by a **Follow-up
+MSn** on the Orbitrap, and that scan carries all of the sweep's evidence.
 _Avoid_: expecting identification rows or pooled evidence from a trap pre-scan; pairing a trap
 sweep with a counting metric; treating "measured, never identified" as a property of the
 *metric* (that is the reading/measuring distinction above — this one belongs to the analyzer,
 and holds under every metric).
 
-**Baseline variant**:
-A pre-scan that measures one activation's *un-fragmented* reference — the
-intact-precursor intensity its own siblings are ratioed against. It is that
-activation's ordinary variant with the **swept axis alone** turned off. Every
-other parameter is whatever its siblings carry, so an ETD baseline keeps the base
-scan config's collision energy rather than dropping to 0.
-**The two coupled axes turn off at different values**, and the asymmetry is the
-instrument's: a collision energy of 0 is commandable and simply does not fragment,
-but a reaction time of 0 is *rejected*, so "no reaction" means the instrument's
-minimum, 0.03 ms — short enough to leave the precursor intact. CE-swept → CE 0;
-RT-swept → RT 0.03; EThcD → both.
-It is **skipped in winner selection** and **excluded from the ProteoformTracker
-feed** (both on `is_baseline`), so it never wins and never reaches the pooled model.
-A baseline exists for **every** exploration metric, not only RemainingPrecursor
-(Phase-2 decision 2026-07-06).
-There is **one per swept activation**, at the head of that activation's block, not
-one per group — the ETD ion path measures a genuinely different reference from HCD's
-(ADR-0029). An activation that sweeps neither axis has no axis to zero, so it gets
-no baseline and competes normally. When a block's sweep already contains its own
-turn-off point (`ce_min: 0`, `reaction_time_min: 0.03`), that variant **is** the
-baseline and no second scan is acquired. The authored sweep grid is never floored —
-a `reaction_time_min` below the instrument minimum is rejected at config load
-instead, so the grid and the baseline can always coincide.
-_Avoid_: treating the baseline as a scorable variant (it never wins); assuming it
-exists only for RemainingPrecursor (that was the pre-`august_pre` behavior); assuming
-one per group; letting it feed the pooled model.
+**Precursor share**:
+The fraction of one scan's signal that is still the isolated species: the raw signal inside the
+anchor **Isolation window** over the raw signal of the whole spectrum of that **same scan**.
+Both sums carry the scan's ion supply (fill, transmission, whatever state the previous scan left
+the optics in), so the supply cancels and no reference scan is needed; an intact precursor reads
+about four fifths of its own spectrum, not one. Like the **Remaining-precursor ratio** it
+replaces, it is a **single-window** measurement — it reports *one charge state's* depletion, not
+the species', which is why it may not decide a sweep whose stage co-isolates several charge
+states as **Notches** — and it is read from raw peaks, never from a deconvolution, which is what
+lets a **Trap pre-scan** carry it. Recorded on every MSn scan that has an isolation window; at
+MS3 the window is the target fragment's. Its symbol is P.
+_Avoid_: remaining ratio (the retired quantity, ratioed against a reference scan that no longer
+exists); "precursor depletion" without saying of which charge state; TIC fraction (the
+denominator is the signal the engine received, not an instrument header); treating a scan's
+share as comparable across charge states or species.
 
-**Remaining-precursor ratio**:
-The fraction of a precursor that survives a fragmentation setting: the signal inside the
-**Isolation window** of a variant's spectrum, over the same window's signal in its activation's
-**Baseline variant**. It is a **single-window** measurement — it reads the anchor window and
-nothing else the scan returned — so it reports *one charge state's* depletion, not the
-species'. That is why it may not **decide** a sweep whose stage co-isolates several charge
-states as **Notches**: one collision energy depletes sibling charge states at different rates,
-so a target met by the anchor says little about the rest. It may still be *recorded* for such a
-scan, as the anchor's depletion and nothing more.
-_Avoid_: "precursor depletion" without saying of which charge state; reading it as a
-species-level quantity under co-isolation; assuming the rest of the spectrum contributes to it
-(a wider **Scan range** changes nothing about the number).
+**Fragmentation rate**:
+The **Precursor share** lost per unit of collision energy, and zero where the share rises.
+It is the change of the extent of fragmentation per unit of energy, as the rate of a reaction
+is to its extent, and it is what feeds the fragments in the **Kinetic model**. Under that
+model it is the derivative of the fitted **Gompertz curve**, so it is defined at every energy,
+not only at the acquired ones. Its symbol is s.
+_Avoid_: feed, depletion rate, slope (the quantity is a rate of the share, not of a ratio to a
+reference scan), precursor loss.
 
-**De-referenced activation**:
-An activation whose baseline returned with no signal in the isolation window. Its
-variants are **still acquired** — nothing is cancelled — but they score `-1.0`
-("not scored") and so can never win, because winner selection seeds its best score
-at `-1.0` and compares strictly greater. Sibling activations are unaffected and one
-of them supplies the winner. Only when *every* swept activation is de-referenced
-does the group finish with no winner.
-_Avoid_: reading the `-1.0` as a bad score rather than an absent one (a genuine
-zero-quality variant scores `0.0` and remains eligible); expecting a cancellation.
+**Gompertz curve**:
+The curve fitted to the Precursor shares of a sweep's pre-scans: the share falls from the
+**initial precursor share** P₀ toward zero, and its relative fragmentation rate s/P rises
+exponentially along collision energy — that rise is the curve's one assumption. Its two other
+parameters are the **inflection point**, the energy of the highest Fragmentation rate, where
+P₀/e of the share remains, and the **width** w, the energy step over which s/P grows by the
+factor e. It is fitted within a fixed box — P₀ at most 1.1 × the highest acquired share, w
+between a quarter and twenty-five energy units — on at least three pre-scans with a finite
+share; fewer than three, or no convergence, and the sweep has **no fit**. The acquired points
+are a fixed grid that always includes both ends of the authored range; nothing about where the
+curve falls moves where the next pre-scan is placed.
+_Avoid_: sigmoid, logistic, survival-yield curve (a different curve from the literature),
+decay fit; CE50 for the inflection point (half the share remains earlier than P₀/e).
+
+**Overfragmentation rate**:
+The chance per unit of collision energy that a fragment breaks again — the rate constant k₂ of
+the **Kinetic model**, with the unit per NCE. It is **authored**, per activation and per MSn
+level, and **never defaulted**: it differs by an order of magnitude between activations and is
+unknown wherever no sweep has been measured, so a sweep whose activation has no authored value
+is refused at load rather than run with another activation's constant. It is never fitted at run
+time; its value comes from offline fits on sweeps of **other** proteins.
+_Avoid_: decay constant; overfragmentation ratio (it has a unit); a global k₂; reading the
+authored value as something the engine measured.
+
+**Kinetic model**:
+The exploration metric that chooses a sweep's energy from the **Precursor share** alone:
+fragments are fed at the **Fragmentation rate** and break again at the **Overfragmentation
+rate**, and the energy chosen is the **Modeled maximum** of the resulting fragment pool. No
+fragment is matched and no target is hit — the decision is a computed energy, which may be one
+no pre-scan ran at. It is a **measuring** metric, so it may decide a **Trap pre-scan** sweep and
+its pre-scans at MS3 leave no evidence. The branching ratio between fragments and
+over-fragmentation only scales the pool, so the chosen energy does not depend on it.
+_Avoid_: chain (the deck's word); kinetic metric; "target" (there is nothing to hit); treating
+the best-scoring pre-scan as the result (no pre-scan wins under this metric).
+
+**Modeled maximum**:
+The energy the **Kinetic model** chooses: the integer collision energy, from one up to the top
+of the authored range, at which the modeled fragment pool is largest. It may lie **below** the
+first acquired pre-scan — the curve is fitted, not read at grid points — and when it sits at
+either end of its range that is recorded, because an edge maximum says the range was placed
+wrong. A **Follow-up MSn** is always acquired at it, at every level, since no pre-scan need
+have run there. Distinct from the *measured maximum*, where the fragment share actually peaks,
+which only an offline analysis with matched fragments can know.
+_Avoid_: winner (a winner is a measured variant that scored best; the modeled maximum is a
+computed energy), optimum (nothing proves it optimal), measured maximum.
+
+**Baseline variant** (retired):
+Formerly a pre-scan that measured one activation's un-fragmented reference, the denominator
+of every sibling's **Remaining-precursor ratio**, one per swept activation. It is gone: the
+**Precursor share** is referenced against the scan's own spectrum, so no metric reads a
+reference scan any more and none is acquired, under any metric or activation. A sweep is
+therefore exactly its grid points.
+_Avoid_: "baseline" for anything a sweep acquires; assuming a CE-0 point exists unless the
+authored grid starts there (then it is an ordinary pre-scan and enters the fit like any other);
+expecting the retired per-activation reference behaviour (ADR-0029) anywhere.
+
+**Remaining-precursor ratio** (retired):
+Formerly the signal inside a variant's **Isolation window** over the same window's signal in its
+activation's **Baseline variant**. Replaced by the **Precursor share**, which keeps everything
+this quantity was good for (a single-window, raw-signal, trap-readable measure of one charge
+state's depletion) and drops the reference scan. The metric that scored this quantity against a
+target keeps its name and its target key and now scores the share, so a target of 0.1 means
+"one tenth of the scan's signal is still precursor", not "one tenth of the unfragmented window".
+_Avoid_: reading an old target value as if its meaning had not changed; using this term for the
+share.
+
+**De-referenced activation** (retired):
+Formerly an activation whose **Baseline variant** returned no signal, so its variants were
+acquired but could never win. With no reference scan there is nothing to de-reference; a sweep
+with too few finite shares has **no fit** instead, and a sweep with no fit emits no Follow-up MSn.
+_Avoid_: reading a `-1.0` score as this condition (it now only ever means "not scored", e.g. a
+trap pre-scan under a counting metric).
 
 **Follow-up MSn**:
-The production MSn scan emitted at the parameters chosen by a parameter-optimizing
-pre-scan exploration (e.g. the CE that hit the target remaining-precursor ratio).
+The production MSn scan emitted at the parameters a pre-scan exploration chose (e.g. the
+**Modeled maximum**, or the pre-scan whose Precursor share came closest to a target).
 Dispatched via the model, and — unlike a pre-scan — identified on the ordinary MSn
 path, so it is the scan that actually contributes evidence.
-It is emitted when **either** of two conditions holds after winner selection:
+It is emitted when **any** of three conditions holds after the sweep's decision:
 - the pre-scans were **degraded** relative to production (**Exploration overrides**
   non-empty), so no variant was acquired at production settings; or
 - the sweep's metric never read its pre-scans (**Pre-scan**, a measuring metric —
   MassCount or RemainingPrecursor) and the level is **MS3**. An MS3 sweep that
-  leaves no evidence must be closed by a scan that does.
-An MS2 sweep is exempt from the second condition: its variants are already
-identified, and it cascades to MS3 rather than re-acquiring itself.
+  leaves no evidence must be closed by a scan that does; or
+- the sweep decided by the **Kinetic model**, at **any** level: the chosen energy is computed,
+  and in general no pre-scan ran at it, so there is nothing to cascade from.
+An MS2 sweep under a measured-point metric is exempt from the second condition: its variants
+are already identified, and it cascades to MS3 rather than re-acquiring itself. A sweep with
+**no fit** emits no follow-up and the target is not acquired at this level.
 _Avoid_: treating follow-up MSn as ad-hoc re-acquisition for a missing fragment —
 it is specifically the optimized production scan that *follows* pre-scans; assuming
-"overrides empty" implies "no follow-up" (that was the rule before the metric
-condition was added).
+"overrides empty" implies "no follow-up" (two of the three conditions do not read the
+overrides); expecting a follow-up at the authored collision energy when a fit failed (there is
+none).
 
 **Exploration overrides**:
 The scan settings a sweep's **pre-scans** run under, expressed as a patch on the
@@ -698,6 +752,109 @@ time, so nothing downstream of `Config` ever sees a name.
 _Avoid_: assuming definition order matters (dispatch order comes from the reference
 array, never from the definition map); a name for the common case (`ms_settings.ms2` and
 `.ms3` are unnamed bare objects — only extras are named).
+
+**Key**:
+One named entry of `method.json`, addressed by its dotted path (`quantification.identify`,
+`ms_settings.ms2.collision_energy`). A key is what the strict loaders accept or reject, what
+the schema reference enumerates, and what the key documentation describes. Some keys set a
+scan parameter; a key is never itself a parameter.
+_Avoid_: parameter (reserved for an instrument parameter a scan carries, as in "scan
+parameter" and "source-region parameter"); option, setting, field (the C# property behind a
+key, which can differ in name).
+
+## Language — annotation without a search (the Refine method)
+
+The terms of the `refine` annotation method (ADR-0049, Proposed). The owner's fuller glossary for
+the publication lives outside the repo; these are the terms the engine needs.
+
+**Annotation method**:
+Which of two procedures turns a deconvolved MS2 into a proteoform against the one supplied
+sequence: `flashtnt` (sequence tags, extended along the sequence, with blind shifts opened one
+fragment at a time) or `refine` (mass shifts detected first over all fragments at an FDR, then a
+path of levels aligned through them). The method decides how the model is seeded; it does not
+decide whether MS3 happens (that stays with `characterization.mode`).
+_Avoid_: identification workflow, search (no sequence database is searched by either), engine.
+
+**Observed matches / Expected matches / Signal**:
+For one trial mass shift: Observed is the number of distinct b and y ions of the supplied sequence
+that match an observed mass once offset by the shift; Expected is the same count over only the
+masses the unshifted ladder already explains, so it holds exactly the internal coincidences (an
+unmodified ion also matches every other ion at the mass of the residues between them); the Signal
+is Observed minus Expected, never negative. A real mass shift shows as a peak of the Signal.
+_Avoid_: expectation in the statistical sense (it is a count on the scan at hand), internal-ion
+subtraction (no internal fragment is matched or removed).
+
+**Shuffled sequence**:
+The residues of the supplied sequence in random order, run through the same scan by the same
+rules. It keeps composition, length and fragment count and loses the fragment masses, which makes
+it the decoy of the Cut.
+_Avoid_: decoy database, decoy residue (for an unknown shift no residue is impossible).
+
+**Cut**:
+The number of ions a peak of the Signal needs to become a level: the smallest count at which the
+false discovery rate of such peaks — mean peaks per shuffled sequence over peaks of the Signal — is
+at most the authored level (`characterization.refine.fdr`). Lenient on purpose; MS3 tests the levels.
+_Avoid_: threshold without saying where it comes from, ceiling.
+
+**Level**:
+What the fragments of one stretch carry: the sum of the mass shifts whose sites lie inside them. It
+shows as a peak of the Signal that passes the Cut, and in the spectral alignment it is a diagonal.
+0 is a level (where every path starts). A level belongs to the ion types attached to it: b, y or
+both. A level need not be a mass shift — on cytochrome c +526.13 Da is the sum of −89.03 and
++615.16, and no fragment carries +615.16 alone. A level one water or one ammonia below 0, or below
+a level of higher Signal, is a neutral loss and is not a level.
+_Avoid_: mass shift for a peak whose steps are not yet known, PTM.
+
+**Mass shift**:
+A step between two consecutive levels of one ion type along the sequence, 0 included. It carries
+a mass and a site range, not an identity; naming the modification is an interpretation added
+afterwards. A truncation, a substitution, a label and a cross-link are mass shifts too.
+_Avoid_: PTM, modification (when the identity is not known), level (a level is a sum of shifts).
+
+**Stretch**:
+The residues between two neighbouring mass shifts. Every cleavage site in one stretch gives the
+same two sums — its b ion shows the stretch's b level, its y ion the Total shift minus it — so a
+stretch is a piece of one diagonal. From one stretch to the next, one mass shift moves from the y
+ion to the b ion.
+_Avoid_: window (a window is where one shift can sit, between two stretches).
+
+**Total shift**:
+The sum of all mass shifts of a path, λk: the level behind the last shift, what the b ion and the y
+ion of any one cleavage site show together. It is unknown in advance, so every combination of a b
+level and a y level (0 included) is a candidate and is tried in a DP matrix of its own; the
+precursor mass is never read to set it.
+_Avoid_: precursor mass minus sequence mass (that comparison is the Precursor mass difference),
+target.
+
+**Path**:
+A sequence of levels from 0 to a Total shift along the supplied sequence; its steps are the mass
+shifts; its score is matched ions minus jumps. The best path of each candidate total is a
+**candidate proteoform**; the best path of the best total is what an MS2 reports; the best paths
+of the two best totals are what MS3 tests.
+_Avoid_: solution, alignment (the alignment is the search, a path is one of its results).
+
+**Precursor mass difference**:
+The measured precursor mass minus the supplied sequence's mass plus the reported Total shift. Logged
+on every annotated scan, never a gate: a large value names a supplied sequence that does not fit
+the measured protein, an adduct, or a shift no fragment shows.
+_Avoid_: rest, sequence guard (the publication's name for the same comparison), booking it into a
+shift.
+
+**Discriminating mass**:
+An observed MS2 mass that the best paths of the two best Total shifts explain differently — one
+explains it and the other does not, or they name different ions. A mass both paths give the same
+ion is shared. Ranked by intensity, it is what MS3 isolates under `characterization.mode:
+discriminating`; its pieces (prefixes and suffixes, predicted per path) say which path it holds for,
+or, when they fit neither, that it was a false positive such as an internal fragment.
+_Avoid_: target (overloaded: targeting modes, target log, the Containing fragment), contested site
+(the cleavage sites on which the two paths differ, a different thing).
+
+**Shift-carrying fragment**:
+A fragment observed at the mass of a fragment of the supplied sequence plus a non-zero shift. It is
+the only kind of fragment, at MS2 or MS3, that counts as evidence for a shift under `refine`. A
+fragment observed without the shift counts for nothing, because a labile group leaves without a
+trace.
+_Avoid_: modified fragment (an identity claim), site-determining ion.
 
 ## Language — instrument control
 

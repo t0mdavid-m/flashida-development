@@ -1,6 +1,9 @@
 # 0020. A measuring MS3 sweep must be closed by a follow-up scan
 
 Status: Accepted (2026-08-10), implemented. Corrects shipped behaviour of MS3 CE exploration.
+Extended by [ADR-0047](0047-a-sweep-decides-by-the-modeled-maximum-not-by-a-measured-point.md) (proposed 2026-10-11): a third measuring metric,
+`kinetic_model`, whose follow-up is acquired at **both** levels because its chosen energy is computed, not measured. Amended by
+[ADR-0048](0048-precursor-share-replaces-the-remaining-ratio-and-a-sweep-has-no-baseline.md): `remaining_precursor` scores the precursor share, not a ratio to a baseline.
 Related: [ADR-0013](0013-characterization-mode-is-the-single-ms3-switch.md),
 [ADR-0002](0002-proteoform-tracker-dispatch-authority.md).
 
