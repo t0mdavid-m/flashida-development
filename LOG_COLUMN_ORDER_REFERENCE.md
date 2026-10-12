@@ -104,7 +104,7 @@ New (desired) order:
 3. parent_tracking_id
 4. commands_pushed
 5. child_ids
-6. rt
+6. rt (retention time, minutes; ADR-0051)
 7. duration_ms
 8. duration_received_ms
 9. queue_duration_ms

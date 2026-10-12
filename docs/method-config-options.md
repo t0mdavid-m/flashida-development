@@ -31,7 +31,7 @@
 
 | Key | Type | Valid values | Default | What it does |
 |---|---|---|---|---|
-| `rt_window` | double | any double | `180` | How long a fragmented mass stays dynamically excluded before it may be picked again. |
+| `rt_window` | double | any double | `180` | How long, in seconds of retention time, a fragmented mass stays dynamically excluded before it may be picked again (ADR-0051). |
 | `targeting` | string | `none` \| `inclusion` \| `in_depth` \| `exclusion_masses` | `"none"` | Selects plain DDA, inclusion-list priority, soft de-prioritisation of already-seen masses, or hard mass exclusion. |
 | `strict_inclusion` | bool | `true` / `false` | `false` | Under inclusion targeting, forbids the non-target fallback pass so only listed masses are fragmented. |
 | `tie_threshold` | double | any double; compared `abs(qscore_a − qscore_b) < t` | `0.1` | Qscore gap under which two candidates count as tied, letting the inclusion list's priority column break the tie. |

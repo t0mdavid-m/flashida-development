@@ -18,8 +18,16 @@ is exactly **one** drive, implemented as faithful mirrors in two languages:
 - **C++:** `runInterleaved` in `FLASHIda_TestHelpers.h` — the canonical driver; `runFullAcquisition`,
   `runFullCycle`, `driveOneExplorationGroup`, and `bootstrapExplorationGroup` (non-draining group former) are
   thin wrappers/conveniences over it. C++-side-only knobs on `runInterleaved` (no C# twin): `single_group_only`
-  and `rt_offset` (shifts each fed MS1 survey rt — used by ChargeBasedExclusion's two-pass exclusion).
+  and `rt_offset` (shifts each fed MS1 survey rt; it has had no caller since its one user, the
+  ChargeBasedExclusion two-pass test, went with ADR-0021).
   `ms2AcquisitionRows(AcqResult)` projects MS2 commands to `(charge, mz, isolation_width)` rows.
+
+**The two mirrors feed retention time in different units, on purpose** (ADR-0051). C++ calls
+`FLASHIda::processScan` directly, which takes seconds, with the fixture header's value. C# goes through the
+bridge export with the instrument's minutes (`MockMsScan` divides the header by 60), and the export converts.
+Both therefore hand the engine the same seconds. A retention-time behaviour proven only in C++ has not crossed
+the conversion; `RetentionTimeWindowTests` (C#) and `processScan_export_converts_the_hosts_minutes_to_seconds`
+(C++) are the tests that do.
 
 **Shared-fixtures consolidation (2026-06-17).** `ScanData`, `loadTsvScans`, `TSVFile`, `ExplResult`,
 `AcquisitionRow`, and all drivers live ONCE in `FLASHIda_TestHelpers.h`. Every acquisition-driving C++ test now

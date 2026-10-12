@@ -157,7 +157,7 @@ reopens it, a survey resolving it worse does not, and the bar only ever rises.
 Whether it governs anything is a **configuration** question, because it is consulted
 only for a species dynamic exclusion has not already barred, and whether an
 acquisition bars a species is decided by a single score threshold shared by the
-whole run. Above that threshold the species is barred for the retention-time window
+whole run. Above that threshold the species is barred for the **retention-time window**
 and the bar is never reached; below it, the bar governs. It is a **cross-survey**
 rule alone — within one survey what earns a PeakGroup a scan is what it adds to the
 **intended charge set**, never its score against a sibling's.
@@ -178,6 +178,16 @@ easily confused because they are written at the same moment.
 _Avoid_: "the exclusion list", which names one of these records as though it were
 all of them, and mis-describes the two that merely record; treating the qscore
 ledger or the MS3 dispatch record as exclusions.
+
+**Retention-time window**:
+How long a record of **acquisition memory** stands: it stops mattering once the surveys
+have moved on by more than the window in retention time — the time the instrument stamps
+on each scan, counted from the start of its acquisition and reported in minutes. The
+window itself is written in seconds.
+_Avoid_: reading the window in minutes because retention times are shown in minutes;
+measuring it on the **run clock** or on wall time; "exclude for the rest of the run" as a
+meaning of it — that is a window longer than the run, written explicitly; "RT" alone,
+which also names ion–ion reaction time.
 
 **Acquisition effect**:
 The set of writes one species' selection makes to acquisition memory in a single
