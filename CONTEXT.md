@@ -803,7 +803,13 @@ _Avoid_: decoy database, decoy residue (for an unknown shift no residue is impos
 **Cut**:
 The number of ions a peak of the Signal needs to become a level: the smallest count at which the
 false discovery rate of such peaks — mean peaks per shuffled sequence over peaks of the Signal — is
-at most the authored level (`characterization.refine.fdr`). Lenient on purpose; MS3 tests the levels.
+at most the authored level (`characterization.refine.fdr`, default 20 %). The report used 50 % so
+that MS3 could test the levels; on the corpus scans that let through pairs of chance jumps that buy
+three to six ions, and MS3 can only adjudicate them while the true path still ranks second, which
+holds at 20 % and not at 50 %. The shuffled sequences are matched once, against the masses the
+unshifted ladder does not explain (the single pass): a proteoform whose fragments mostly carry a
+shift leaves nearly every mass in the decoy pool and earns a high Cut — a known limit, kept because
+a second pass feeds the chance levels of pass one back into the decoys and drops the Cut to the floor.
 _Avoid_: threshold without saying where it comes from, ceiling.
 
 **Level**:
@@ -812,8 +818,15 @@ shows as a peak of the Signal that passes the Cut, and in the spectral alignment
 0 is a level (where every path starts). A level belongs to the ion types attached to it: b, y or
 both. A level need not be a mass shift — on cytochrome c +526.13 Da is the sum of −89.03 and
 +615.16, and no fragment carries +615.16 alone. A level one water or one ammonia below 0, or below
-a level of higher Signal, is a neutral loss and is not a level.
-_Avoid_: mass shift for a peak whose steps are not yet known, PTM.
+a level of higher Signal, is a neutral loss and is not a level. A level one, two or three neutron
+masses (1.00335 Da each) away from 0 or from a level of higher Signal is a **neutron satellite**
+and is not a level either: it is the same ions deconvolved with the wrong monoisotopic peak (on the
+September 2026 cytochrome c scan the true level +657.17 with 16 b ions sits beside +655.14 with 15
+and +654.13 with 11). Of the levels left, at most `characterization.refine.max_levels` (default 20)
+of highest Signal are kept, ties by the summed intensity of the masses attached, then the smaller
+shift; the cap bounds the number of candidate totals, not the answer.
+_Avoid_: mass shift for a peak whose steps are not yet known, PTM, fold (the report's Version 75
+word for removing such a level; the engine excludes, it never merges).
 
 **Mass shift**:
 A step between two consecutive levels of one ion type along the sequence, 0 included. It carries
@@ -838,7 +851,9 @@ target.
 
 **Path**:
 A sequence of levels from 0 to a Total shift along the supplied sequence; its steps are the mass
-shifts; its score is matched ions minus jumps. The best path of each candidate total is a
+shifts; its score is matched ions minus the **jump penalty** (`characterization.refine.jump_penalty`,
+default 2; the report wrote 1) times the number of jumps, and the recount after MS3 charges the same
+penalty. The best path of each candidate total is a
 **candidate proteoform**; the best path of the best total is what an MS2 reports; the best paths
 of the two best totals are what MS3 tests.
 _Avoid_: solution, alignment (the alignment is the search, a path is one of its results).
