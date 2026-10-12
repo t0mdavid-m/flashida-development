@@ -30,7 +30,7 @@ The entire C++↔C# surface consists of exactly five `extern "C" OPENMS_DLLAPI` 
 | --- | --- | --- | --- |
 | `CreateFLASHIda` (`:49`) | `(char* arg)` | `FLASHIda*` | Constructs the engine from a method config string. Returns opaque pointer for C# to carry; null on construction failure. |
 | `DisposeFLASHIda` (`:52`) | `(FLASHIda* obj)` | `void` | `delete` the engine. Caller must null its pointer. |
-| `ProcessScan` (`:55`) | `(FLASHIda* obj, double* mzs, double* ints, int length, double rt_min, int ms_level, const char* scan_description, double faims_cv)` | `int` | Ingest one raw spectrum; enqueues resulting commands. Return value is advisory (not a reliable count — treat as opaque status). |
+| `ProcessScan` (`:55`) | `(FLASHIda* obj, double* mzs, double* ints, int length, double rt_min, int ms_level, const char* scan_description, double faims_cv, int instrument_scan_number)` | `int` | Ingest one raw spectrum; enqueues resulting commands. Return value is advisory (not a reliable count — treat as opaque status). `rt_min` is the instrument's `StartTime` in **minutes**; the export passes `rt_min * 60` to `FLASHIda::processScan`, which takes seconds (ADR-0051). |
 | `GetNextScanCommand` (`:60`) | `(FLASHIda* obj, ScanCommand* output)` | `int` | `1` if `output` was filled, `0` if the queue is empty. |
 | `GetNextTrackingId` (`:63`) | `(FLASHIda* obj)` | `int` | Thread-safe allocator for a new tracking ID. Rarely used by C# — internal bookkeeping. |
 

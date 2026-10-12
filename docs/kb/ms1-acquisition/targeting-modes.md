@@ -122,7 +122,7 @@ loop does not apply — mode 3 runs only the single `iteration = 1` pass.
 | `qscore_threshold` | Global lower bound on QScore for any candidate to be selected. |
 | `snr_threshold` | Per-charge SNR cutoff; waived (set to 0.0) when a peak matches an explicit target. |
 | `tie_threshold` | QScore delta within which `priority` breaks ties (Mode 1 TSV only). |
-| `rt_window` | Seconds; governs which RT-keyed list entries are active in Modes 2 and 3. |
+| `rt_window` | Seconds of retention time. How long acquisition memory stands (the mass and m/z bars, the qscore ledger, the per-charge record), and which RT-keyed entries are active: target-log entries in Modes 2 and 3, tag-based targets. Retention time crosses the bridge in minutes and the C export converts it, so every comparison here is in seconds (ADR-0051); before that, all of them were 60× off on the instrument. |
 | `tqscore_threshold` | Cumulative exclusion threshold for Mode 2; mass is skipped if `1 - tqscore > threshold`. |
 | `inclusion_list_file` | Path to TSV target file (Mode 1). Its charge column takes an authored charge set — see above. |
 | `fasta_file` | FASTA database for tag-based target expansion — a non-empty `files.fasta` is the ONLY thing that enables it. (`tag_based_enabled` used to be listed here; it was declared, never assigned and never read, and has been deleted.) |
