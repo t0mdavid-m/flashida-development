@@ -238,6 +238,7 @@ jobs:
             FLASHIdaFAIMS_test \
             FLASHIda_exploration_test \
             KineticModel_test \
+            Refine_test \
             FLASHIda_LegacyConfig_test \
             ConfigSchemaParity_test \
             FLASHIda_Logging_test \
@@ -622,4 +623,4 @@ jobs:
       - name: Run FLASH C++ unit tests
         env:
           OPENMS_DATA_PATH: ${{ github.workspace }}/OpenMS/share/OpenMS
-        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHDeconvFeatureFile|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|KineticModel_test|FLASHIda_LegacyConfig|ConfigSchemaParity|FLASHIda_LoggingFields|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeModes|FLASHIda_CandidateAdmission|ScanConfig_applyOverrides|Config_SchemaProjection|Quantification_test|ProteoformTracker_CEOptimization|ProteoformTracker_Trajectory|ProteoformTracker_Localization|ProteoformTracker_WinnerContext|ProteoformTracker_NonWinnerRematch|ProteoformTracker_Exhaustive" --output-on-failure
+        run: ctest --test-dir OpenMS/build -R "DeconvolvedSpectrum_OptimizationMetadata|FLASHDeconvFeatureFile|FLASHIdaQueueTracking|FLASHIda_ProcessScan|ScanCommandLayout|FLASHIdaFAIMS|FLASHIda_exploration|KineticModel_test|FLASHIda_LegacyConfig|ConfigSchemaParity|FLASHIda_LoggingFields|FLASHIda_Logging|ScanCommandQueue_Concurrent|FragmentAnalysis|MS3FragmentMatcher|FLASHIda_ChargeModes|FLASHIda_CandidateAdmission|ScanConfig_applyOverrides|Config_SchemaProjection|Quantification_test|ProteoformTracker_CEOptimization|ProteoformTracker_Trajectory|ProteoformTracker_Localization|ProteoformTracker_WinnerContext|ProteoformTracker_NonWinnerRematch|ProteoformTracker_Exhaustive|Refine_test" --output-on-failure
