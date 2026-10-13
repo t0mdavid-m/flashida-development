@@ -4,7 +4,7 @@ Status: **Accepted, implemented 2026-10-13** (grilled 2026-10-11; **amended 2026
 finding**, decisions 3, 4, 9 and 11; layer B's fixture amended at implementation, see Consequences).
 Landed in three pushes: parent `6596d15` (byte-identical, CI run 38310697976 green), `072070f` (the
 seven columns and the new golden mode, CI run 38356161444 red on goldens by design) and `5634488` (the
-promoted goldens, CI run 38377218042). Every decision below is the owner's. The Context section is
+promoted goldens, CI run 38377218042 green: C# 191/190/0/1, ctest 30/30). Every decision below is the owner's. The Context section is
 kept as written before implementation.
 Source: the owner's Progress Report 09/2026 (30.09.2026), section "Annotate fragments, find mass
 shifts", and the prototype that produced its numbers
