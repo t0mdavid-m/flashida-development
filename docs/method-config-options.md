@@ -69,11 +69,11 @@
 
 | Key | Type | Valid values | Default | What it does |
 |---|---|---|---|---|
-| `mode` | string | `off` \| `ambiguity` \| `coverage` \| `exhaustive` | `"off"` | The whole MS3 gate, and the choice of what MS3 chases: PTM-site-containing fragments, uncovered cleavage sites, or — under `exhaustive` (ADR-0023) — **every deconvolved mass of the winner MS2 scan**, mapped or not. |
+| `mode` | string | `off` \| `ambiguity` \| `coverage` \| `fragments` \| `exhaustive` \| `discriminating` | `"off"` | The whole MS3 gate, and the choice of what MS3 chases: PTM-site-containing fragments (`ambiguity`), **every** fragment whose interior holds a bond MS2 never witnessed (`coverage`), **every** mapped fragment with a bond inside it (`fragments`, ADR-0052), **every deconvolved mass of the winner MS2 scan**, mapped or not (`exhaustive`, ADR-0023), or the masses that tell Refine's paths apart (`discriminating`, ADR-0049). A full-length ion (b_L/y_L) is never a target outside `exhaustive`. |
 | `protein_sequence` | string | any string; bare one-letter sequence, no header, **alphabet unvalidated** | `""` | The protein every MS2 identification and MS3 target choice is matched against. |
 | `max_targets` | int | any int; `≤ 0` disables MS3 planning | `3` | Per-identified-precursor budget of distinct **fragments** given MS3. Under `exhaustive` it counts distinct **masses**, and it bounds *targets*, never commands — a CE sweep or `fragment_charges: separate` multiplies commands on top of it. |
 | `min_fragment_charge` | int | any int; `≤ 0` disables the filter | `0` | Discards MS3 targets whose MS2 fragment charge falls below this. |
-| `min_target_mass` | double | any double (Da); `0` = off | `0` | **`exhaustive` only** — deconvolved masses below this are not MS3 targets. Not inheritable from `deconvolution.min_mass`/`min_charge`: those floors do not reach MSn output, so a config with `min_mass: 500` still yields 248 Da MS2 species. Read but inert under the other three modes. |
+| `min_target_mass` | double | any double (Da); `0` = off | `0` | **`exhaustive` only** — deconvolved masses below this are not MS3 targets. Not inheritable from `deconvolution.min_mass`/`min_charge`: those floors do not reach MSn output, so a config with `min_mass: 500` still yields 248 Da MS2 species. Read but inert under every other mode. |
 | `fragment_charges` | string | `single` \| `separate` \| `multiplexed` (**not** lowercased on emit) | `"single"` | How much of a target fragment's charge envelope one MS3 covers. |
 | `exploration` | object | the 11-key block above | `null` | An independent CE / reaction-time sweep for MS3. |
 

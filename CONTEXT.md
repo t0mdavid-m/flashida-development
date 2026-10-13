@@ -406,10 +406,23 @@ residues `[s,e]`: an observed fragment whose coverage **contains** the range
 `k ≥ L−s+1`. Its MS3 re-fragments the span and yields the internal cleavages that
 localize the PTM. The model picks the highest-`best_ms2`-intensity container,
 round-robin across ambiguous mods, bounded by `ms2.max_targets`; no container ⇒ no
-MS3 (MS3 cannot narrow a range nothing spans). See ADR-0005.
+MS3 (MS3 cannot narrow a range nothing spans). A full-length ion (b_L, y_L) contains every range
+and is never a container: it is the precursor, not a fragment. See ADR-0005, ADR-0052.
 _Avoid_: a fragment that cleaves *inside* `[s,e]` (that is what `narrowModifications_`
 matches to *narrow* the range — it cannot be a *target*, since its existence would
 already have narrowed the range); the retired legacy intensity-scatter MS3 selection.
+
+**Uncovered bond**:
+An inter-residue bond of the winner region that no MS2 fragment of the model witnesses (a b_k
+witnesses bond k, a y_k bond L−k).
+_Avoid_: uncovered residue (coverage is counted in bonds, not residues).
+
+**Coverage target**:
+An observed fragment whose interior — the bonds inside its span — holds at least one
+**uncovered bond**. Under `characterization.mode: coverage` every coverage target is acquired,
+strongest MS2 intensity first, until `max_targets`; one target never excuses another because
+its interior overlaps.
+_Avoid_: reading coverage as a set cover (it was one, and stopped at two targets on ubiquitin).
 
 **MS3 scan (two-stage)**:
 A single instrument command performing two sequential fragmentations: `stage[0]`
@@ -739,8 +752,10 @@ per-scan leaf; the leaf uses per-scan evidence only.
 **Characterization**:
 The feature umbrella and the method.json config section (`characterization`) for the
 per-Precursor proteoform model. It holds **decisions only** — no scan parameters — and
-its `mode` (`off | ambiguity | coverage`) is the **single switch** that decides whether
-MS3 happens at all. The two on-values *are* the objectives, so there is no separate
+its `mode` (`off | ambiguity | coverage | fragments | exhaustive | discriminating`) is the **single
+switch** that decides whether MS3 happens at all. The on-values *are* the objectives — containers of
+ambiguous modifications, coverage targets, every mapped fragment, every deconvolved mass, the masses
+that tell Refine's paths apart — so there is no separate
 `objective` key and no way to express "on, but with no objective"; unknown values are
 rejected rather than defaulted. The section also carries the target `protein_sequence`,
 the MS3 budget (`max_targets`) and the fragment-charge floor (`min_fragment_charge`).
