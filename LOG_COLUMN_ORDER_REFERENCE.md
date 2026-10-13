@@ -157,8 +157,9 @@ same call that fills `cmd.qscore` in `ScanCommandQueue`, so a selected mass's va
 
 ## 3. Identification Log (`identification`) — 41 columns
 
-**Current emit order (41)**, from `IdaLogger.cpp`'s header and pinned index-for-index by
-`FLASHIda_LoggingFields_test::schema_column_counts`:
+**Current emit order (41)**, from `IdaLogger.cpp`'s header. `FLASHIda_LoggingFields_test::schema_column_counts`
+pins the count, the first and last column and selected indices (the seven refine columns as one
+contiguous block), not every index:
 
 1. tracking_id
 2. scan_mode
@@ -203,8 +204,10 @@ same call that fills `cmd.qscore` in `ScanCommandQueue`, so a selected mass's va
 41. precursor_mass_difference
 
 **Columns 35–41 (ADR-0049, appended so no earlier column moves)** are Refine's candidate record
-(`FragmentAnalysis::ProteoformMatch::refine`), filled only on the regular MS2 identification row
-under `characterization.method: refine`:
+(`FragmentAnalysis::ProteoformMatch::refine`), filled under `characterization.method: refine` on
+every MS2 row whose own match Refine decided: the regular MS2 row and the exploration MS2
+self-identification rows. A winner-re-matched exploration row has no Refine record of its own and
+keeps the sentinels:
 
 | Column | Meaning | Format | Sentinel |
 |---|---|---|---|
@@ -216,8 +219,12 @@ under `characterization.method: refine`:
 | `n_levels` | levels kept after both exclusions and the cap (`RefineCandidates::n_levels` = `Detect::n_kept`) | int | `-1` |
 | `precursor_mass_difference` | precursor mono mass − (sequence mass + best λ_k), Da; 0 without a precursor mass | fixed, 4 dp | empty |
 
-Every other row — `flashtnt` (the default), exploration MS2, every MS3 — ends in the sentinel tail
-`-1\t\t\t-1\t-1\t-1\t`.
+A score can itself be −1 (S = ions − jump_penalty × jumps), so a `-1` in `annotation_score` is
+the sentinel only when `total_shift` is empty, and a `-1` in `second_score` means "no second
+candidate" only when `second_total_shift` is empty.
+
+Every other row — every row under `flashtnt` (the default), winner-re-matched exploration MS2 rows,
+every MS3 row — ends in the sentinel tail `-1\t\t\t-1\t-1\t-1\t`.
 
 **Historical: the 2026-07 reorder (32 columns).** Full 32-column order — your curated 19, then the 13 detail
 columns appended in their current relative order (decision: "append after"). Pure permutation.
