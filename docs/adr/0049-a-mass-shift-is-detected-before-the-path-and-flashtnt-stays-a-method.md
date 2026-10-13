@@ -218,6 +218,27 @@ At implementation (2026-10-13):
 - `identification.tsv` grows from 34 to 41 columns (decision 10); the seven are valued on the regular
   and the exploration self-identification MS2 rows under `refine`, and a real score of −1 is told from
   the sentinel by a non-empty `total_shift`.
+- **A round that can never close through MS3 decides for the best path and falls through to ambiguity
+  in the same call** (final review, 2026-10-13). Two cases: the pool is exhausted with nothing awaiting
+  its return — every discriminating record refused by the fragment-charge floor, or already dispatched
+  in an earlier survey — and a winner scan that cannot be isolated for MS3 (an ETD MS2 among them).
+  Both print `[DISCRIMINATING] precursor_id=… decided=fallthrough reason=pool_exhausted|
+  winner_scan_not_ms3_capable`, set the decision without a recount or a pooled row, and plan the
+  containing-fragment MS3s of the best path at once. A round with a dispatched MS3 still outstanding
+  waits, as before. In the same pass: a discriminating mass only path b explains is dispatched with the
+  unassigned ion label (as `exhaustive` marks a mass with no identity) instead of path b's label stated
+  against path a's model; and a record is frozen once the decision has fired — a late MS3 of a
+  discriminating mass is folded by the ambiguity path and never rewrites the round's evidence. None of
+  this moves a committed golden: every dispatched record there carries path a's label and no round
+  was exhausted.
+- **Two findings of the final review are deferred, by ruling, to decisions of their own.** The decoy
+  shuffle uses `std::shuffle` over `std::mt19937_64`, whose output is implementation-defined, so the FDR
+  per height — and with it the cut — may differ between standard libraries; on the committed cytochrome c
+  scan the cut's FDR sits at 0.179 against the 0.2 threshold on both toolchains today. A portable shuffle
+  (Fisher–Yates spelled out) would move the layer-A pins and is a golden-moving push. And the
+  ambiguity narrowing that follows the decision never reads the round's dispatched-mass memory, so it
+  re-acquires a containing fragment the round already fragmented (b61 on the golden); teaching it to
+  skip those masses changes the golden's post-decision MS3s and is likewise its own push.
 
 ## Alternatives rejected
 
