@@ -7,19 +7,19 @@ code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Refine.h:216                # struct RefineCandidates
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/RefineSettings.h:27         # struct RefineSettings (the seven knobs + tolerance)
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:121      # ProteoformMatch::refine
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.cpp:930            # getTopFragmentMatches (the method switch at :949)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.cpp:931            # getTopFragmentMatches (the method switch at :950)
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.cpp:794            # runRefineMatching_
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.h:192     # DiscriminatingRecord
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.h:202     # RefineState
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:457           # finalize step 3b: the round's records
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:566           # planNextScans: discriminating -> ambiguity after the decision
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:994           # planDiscriminating_
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1078          # recordDiscriminatingScan
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1121          # decideRefine
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:458           # finalize step 3b: the round's records
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:567           # planNextScans: discriminating -> ambiguity after the decision or the fall-through
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1032          # planDiscriminating_ (dead_end: decided=fallthrough)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1137          # recordDiscriminatingScan (false once decided)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1182          # decideRefine
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:391                             # refineRoundClose_
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:952                             # empty MS3 clears the stored deconvolution
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:956                             # empty MS3 clears the stored deconvolution
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:1064                # dispatchFromModel (re-dispatch after the decision)
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:1337                     # validate: the three refine refusals
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:1345                     # validate: the three refine refusals
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp:200                   # identification.tsv: the seven refine columns
   - FlashIDA/src/Flash/MethodConfig.cs:416                                                 # C# RefineBlockConfig
 see_also:
@@ -47,12 +47,12 @@ The ADR owns the *why* and the decisions; this page is where the code lives and 
 
 | Step | Entry point | What it does |
 |---|---|---|
-| Method switch | `FragmentAnalysis::getTopFragmentMatches` (`FragmentAnalysis.cpp:930`, switch at `:949`) | `AnnotationMethod::Refine` → `runRefineMatching_`, else `runTagBasedFragmentMatching_`. Resets `result.refine` first |
+| Method switch | `FragmentAnalysis::getTopFragmentMatches` (`FragmentAnalysis.cpp:931`, switch at `:950`) | `AnnotationMethod::Refine` → `runRefineMatching_`, else `runTagBasedFragmentMatching_`. Resets `result.refine` first |
 | MS2 annotation | `runRefineMatching_` (`FragmentAnalysis.cpp:794`) | masses ascending → `Refine::ladder` → `detect` → `assemble`; prints `[LEVELS]`/`[CANDIDATES]`; the best path fills the `ProteoformMatch` |
-| Round setup | `finalizeMS2` step 3b (`ProteoformTracker.cpp:457`) | winner's `RefineCandidates` → `RefineState`; with ≥ 2 totals, `Refine::discriminating` → `DiscriminatingRecord`s |
-| Planning | `planNextScans` (`:566`) → `planDiscriminating_` (`:994`) | undecided: the records not yet dispatched, intensity-desc, up to `max_targets` species; decided (or no record): **ambiguity** |
-| MS3 return | `recordDiscriminatingScan` (`:1078`), called from `FLASHIda.cpp`'s regular MS3 branch | `Refine::pieceTest` pools fits per record; true when every dispatched record has returned |
-| Decision | `FLASHIda::refineRoundClose_` (`FLASHIda.cpp:391`) → `decideRefine` (`ProteoformTracker.cpp:1121`) | `Refine::recount` over every record; a flip re-seeds mods + fragments from path b; pooled row trigger `MS3-DECIDE` |
+| Round setup | `finalizeMS2` step 3b (`ProteoformTracker.cpp:458`) | winner's `RefineCandidates` → `RefineState`; with ≥ 2 totals, `Refine::discriminating` → `DiscriminatingRecord`s |
+| Planning | `planNextScans` (`:567`) → `planDiscriminating_` (`:1032`) | undecided: the records not yet dispatched, intensity-desc, up to `max_targets` species (a b-only record goes out **unassigned**, `'u'`/0); decided (or no record): **ambiguity**. A round that can never close — pool exhausted with nothing outstanding, or the winner MS2 not MS3-capable — is decided **without recount or pooled row** (`[DISCRIMINATING] … decided=fallthrough reason=pool_exhausted\|winner_scan_not_ms3_capable`) and ambiguity is planned in the same call; a dispatched record still unreturned makes it wait instead |
+| MS3 return | `recordDiscriminatingScan` (`:1137`), called from `FLASHIda.cpp`'s regular MS3 branch | `Refine::pieceTest` pools fits per record; true when every dispatched record has returned; false once the decision has fired (the record is frozen) |
+| Decision | `FLASHIda::refineRoundClose_` (`FLASHIda.cpp:391`) → `decideRefine` (`ProteoformTracker.cpp:1182`) | `Refine::recount` over every record; a flip re-seeds mods + fragments from path b; pooled row trigger `MS3-DECIDE` |
 | Re-dispatch | `Exploration::dispatchFromModel` (`Exploration.cpp:1064`) | the `initiateNextLevel` tail, extracted byte-identical, replaying `winner_cmd` as stage 0 |
 
 Both MS2 routes reach the switch — the regular MS2 through `ProteoformTracker::selectNextLevelTargets`,
