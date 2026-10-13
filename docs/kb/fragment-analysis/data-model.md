@@ -3,16 +3,16 @@ title: Fragment Analysis — Data Model
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h, OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h
 last_verified: 2026-07-03
 code_anchors:
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:60   # PTMSite
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:69   # ProteoformMatch
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:79   # FragmentMatch (nested)
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:110  # toProForma + windowSnr (I2)
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:126                          # identification.tsv header (25 cols, I2)
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Exploration.h:97         # MS2Context window-SNR fields (I2)
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:67   # PTMSite
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:76   # ProteoformMatch
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:88   # FragmentMatch (nested)
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.h:138  # toProForma + windowSnr (I2)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/IdaLogger.cpp:164                # identification.tsv header (41 cols since ADR-0049)
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Exploration.h:92         # MS2Context window-SNR fields (I2)
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:38  # TheoreticalMass
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:47  # MatchDetail
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:58  # ProteoformContext
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.cpp:287       # rebasePTMSites
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:48  # MatchDetail
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:65  # ProteoformContext
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.cpp:312       # rebasePTMSites
 see_also:
   - README.md
   - tag-follow-up.md
@@ -26,7 +26,7 @@ All three modes produce or consume the same core result type: `FragmentAnalysis:
 
 ## `FragmentAnalysis::ProteoformMatch`
 
-Declared at `FragmentAnalysis.h:69`. Unified result of any fragment-matching operation (MS2 or MS3).
+Declared at `FragmentAnalysis.h:76`. Unified result of any fragment-matching operation (MS2 or MS3).
 
 | Field | Type | MS2 | MS3 | Meaning |
 |---|---|---|---|---|
@@ -37,6 +37,7 @@ Declared at `FragmentAnalysis.h:69`. Unified result of any fragment-matching ope
 | `matched_protein` | `std::string` | ✓ | — | Protein file / DB name (MS2 only; `calibrateAndScore` leaves it empty on MS3). |
 | `proteoform_sequence` | `std::string` | ✓ | ✓ | MS2: the matched protein slice. MS3: the **fragment sub-sequence** the MS3 precursor covers (`calibrateAndScore` writes `subseq`) — so `match` is the identified species for both levels. `score` stays −1 on MS3 (ProteoformTracker winner-select skips MS3 via `score<0`). |
 | `fragments` | `std::vector<FragmentMatch>` | ✓ | ✓ | Per-fragment match details |
+| `refine` | `std::shared_ptr<const RefineCandidates>` | ✓ | — | `characterization.method: "refine"` only (ADR-0049): Detect, every candidate path, the precursor mass difference. Null under `flashtnt`; reset by `getTopFragmentMatches` before every match. See [refine.md](refine.md) |
 | `ppm_offset` | `double` | — | ✓ | Median PPM error from MS3 calibration pass |
 | `correction_factor` | `double` | — | ✓ | `1 / (1 + ppm_offset * 1e-6)`; applied in tight pass |
 | `ms3_fragment_coverage` | `float` | — | ✓ | Distinct backbone bonds covered / (L−1) over the matched MS3 sub-fragments (`calibrateAndScore`); `-1` = non-MS3/none. Logged as `identification.tsv` `ms3_fragment_coverage`. |
@@ -45,7 +46,7 @@ Default values for MS3-only fields: `ppm_offset = 0.0`, `correction_factor = 1.0
 
 ## `FragmentAnalysis::ProteoformMatch::FragmentMatch`
 
-Nested struct declared at `FragmentAnalysis.h:79`. One entry per matched fragment ion.
+Nested struct declared at `FragmentAnalysis.h:88`. One entry per matched fragment ion.
 
 | Field | Type | MS2 | MS3 | Meaning |
 |---|---|---|---|---|
@@ -65,7 +66,7 @@ See `README.md` for the full MS2 and MS3-local ion-type domains.
 
 ## `FragmentAnalysis::PTMSite`
 
-Declared at `FragmentAnalysis.h:60`. A modification locator that can express ambiguity.
+Declared at `FragmentAnalysis.h:67`. A modification locator that can express ambiguity.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -82,7 +83,7 @@ Positions are 1-based in whatever sequence frame the owning `ProteoformMatch` re
 
 ## `toProForma` rendering
 
-Static helper at `FragmentAnalysis.h:97` (defined at `FragmentAnalysis.cpp:1316`). Formats a proteoform sequence with PTM annotations using ProForma notation:
+Static helper at `FragmentAnalysis.h:138` (defined at `FragmentAnalysis.cpp:1378`). Formats a proteoform sequence with PTM annotations using ProForma notation:
 
 - **Localized** PTM (`start == end`): `PEPTK[+79.9663]IDE`
 - **Ambiguous** PTM (`start != end`): `PEP(TKI)[+79.9663]DE`
@@ -123,7 +124,7 @@ Declared at `MS3FragmentMatcher.h:38`. One theoretical fragment mass entry used 
 
 ### `MS3FragmentMatcher::MatchDetail`
 
-Declared at `MS3FragmentMatcher.h:47`. Detail of a single observed-to-theoretical match.
+Declared at `MS3FragmentMatcher.h:48`. Detail of a single observed-to-theoretical match.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -137,7 +138,7 @@ Declared at `MS3FragmentMatcher.h:47`. Detail of a single observed-to-theoretica
 
 ### `MS3FragmentMatcher::ProteoformContext`
 
-Declared at `MS3FragmentMatcher.h:58`. Cached context carried from MS2 tag-matching into MS3 calibration.
+Declared at `MS3FragmentMatcher.h:65`. Cached context carried from MS2 tag-matching into MS3 calibration.
 
 | Field | Type | Meaning |
 |---|---|---|

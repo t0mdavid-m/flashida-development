@@ -11,7 +11,7 @@ subsystem guide — read the packet README first, drill down as needed.
 - [Exploration](exploration/README.md) — MS2 and MS3 exploration: variants, scoring, winner selection.
 - [Scan pipeline](scan-pipeline/README.md) — ScanCommand struct, queue, 5 bridge exports, C# consumer.
 - [Acquisition loop](acquisition-loop/README.md) — end-to-end round-trip: startup, per-scan event flow, C++ engine entry points, shutdown.
-- [Fragment analysis](fragment-analysis/README.md) — tag+follow-up mode, MS2 fragment matching, MS3 fragment matching + calibration.
+- [Fragment analysis](fragment-analysis/README.md) — tag+follow-up mode, MS2 fragment matching, MS3 fragment matching + calibration, the Refine annotation method and its discriminating MS3 round (ADR-0049).
 - [Test harness](test-harness/README.md) — the one interleaved engine-id-echo acquisition contract; C++ `runInterleaved` + C# `PushScanAndDrainFull` mirrors, ion-decode parity, drift guard.
 
 ## Conventions

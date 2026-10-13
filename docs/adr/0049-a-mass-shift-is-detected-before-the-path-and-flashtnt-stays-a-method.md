@@ -1,7 +1,11 @@
 # 0049. A mass shift is detected before the path, at an FDR, and FLASHTnT stays a method
 
-Status: Proposed (grilled 2026-10-11; **amended 2026-10-12 after the corpus finding**, decisions 3, 4,
-9 and 11), **not implemented**. Every decision below is the owner's.
+Status: **Accepted, implemented 2026-10-13** (grilled 2026-10-11; **amended 2026-10-12 after the corpus
+finding**, decisions 3, 4, 9 and 11; layer B's fixture amended at implementation, see Consequences).
+Landed in three pushes: parent `6596d15` (byte-identical, CI run 38310697976 green), `072070f` (the
+seven columns and the new golden mode, CI run 38356161444 red on goldens by design) and `5634488` (the
+promoted goldens, CI run 38377218042). Every decision below is the owner's. The Context section is
+kept as written before implementation.
 Source: the owner's Progress Report 09/2026 (30.09.2026), section "Annotate fragments, find mass
 shifts", and the prototype that produced its numbers
 (`C:\FLASHIda\fi_refine_publication_notes\evidence\`, outside every repo).
@@ -190,6 +194,30 @@ its own decision below:
   scans are different spectra of the same proteoform.
 - Open on hardware, carried from the report's WIP list: ion-trap pre-scans, ETD through the iAPI, and a
   y-ion MS3 target have never been acquired.
+
+At implementation (2026-10-13):
+
+- **Layer B runs the scan57 pair, not the July pair.** The log-golden mode `refine_discriminating_cytc`
+  (the 32nd) drives `ms1_cytc.txt` + `ms2_cytc_fresh_scan57.txt` and the `ms3_cytc_*` fixtures through
+  `method_refine_cytc.json` (`method_ms3_cytc_real.json` + method, mode and a `refine` block,
+  `max_targets` 3), because the July scan's discriminating masses (b4–b13) have no MS3 fixtures. On it
+  the engine reproduces the prototype at the defaults on the same 117 masses: cut 5, three levels kept,
+  best +526.14 at S 55 (−89.03 @ 1–8, +615.17 @ 15–22), second +6.92 at S 43. The round dispatches
+  b61 (real MS3 pieces), y71 and y79 — the first y-ion MS3 targets the engine has dispatched, answered
+  by the committed zero-peak fixture `ms3_empty_scan0.txt` because a round closes only when every
+  discriminating MS3 has returned — decides with the winner kept, and the ambiguity-narrowing MS3s
+  that follow (b51 among them) tighten the heme window to 15–21.
+- **The new mode found an engine bug outside this ADR.** An MS3 that arrived with zero peaks skipped
+  `deconvolveMSn` and read back the previous scan's stored deconvolution — identified, folded and
+  logged with it, in every mode, on the instrument too. It now clears explicitly (OpenMS
+  `3ea17e49cb`). No unit test pins it; the golden's `mass_count 0` MS3 rows do.
+- **Accepted limits.** MS3 evidence folded during a round is dropped when the decision flips the
+  model; `Refine::assemble` returns empty without a message on a ladder size mismatch; a re-matched
+  non-winner is stale after a flip; `[REFINE]` is not printed on the exploration MS2 path; the
+  golden's empty-fixture MS3 rows carry rt 0.
+- `identification.tsv` grows from 34 to 41 columns (decision 10); the seven are valued on the regular
+  and the exploration self-identification MS2 rows under `refine`, and a real score of −1 is told from
+  the sentinel by a non-empty `total_shift`.
 
 ## Alternatives rejected
 

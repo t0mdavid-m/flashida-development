@@ -3,12 +3,12 @@ title: MS3 Fragment Matching
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.cpp, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp
 last_verified: 2026-07-03
 code_anchors:
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:400          # calibrateAndScore call in feedResult
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:115   # calibrateAndScore declaration
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.cpp:397   # calibrateAndScore definition
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:66    # LOOSE_TOLERANCE_PPM constant
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.cpp:287   # rebasePTMSites definition
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:71    # getMS3IonTypes declaration
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:568          # scoreCalibratedVariants (-> calibrateAndScore) call in feedResult
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:157   # calibrateAndScore declaration
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.cpp:541   # calibrateAndScore definition
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:73    # LOOSE_TOLERANCE_PPM constant
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.cpp:312   # rebasePTMSites definition
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/MS3FragmentMatcher.h:89    # getMS3IonTypes declaration
 see_also:
   - README.md
   - data-model.md
@@ -20,11 +20,13 @@ see_also:
 
 MS3 fragment matching is the post-all-received batch re-score for MS3 exploration variants. After all MS3 variants in an exploration group have returned, `MS3FragmentMatcher::calibrateAndScore` performs its own two-pass matching against theoretical masses computed from the precursor's subsequence (not the full protein), using the cached `ProteoformContext` from MS2 tag-matching.
 
+Under `characterization.method: "refine"` a discriminating MS3 round also calls `calibrateAndScore`, from inside `Refine::pieceTest`, to compute a target's pieces per candidate path — see [refine.md](refine.md).
+
 This is distinct from MS2 matching (which hits the full protein sequence and reuses `FragmentAnalysis::getTopFragmentMatches`) and from the exploration-side view (which covers how `calibrateAndScore` fits into the feedResult winner-selection flow — see `../exploration/ms3-exploration.md`).
 
 ## Context
 
-`calibrateAndScore` fires **MS3-only, `FragmentCount`-metric-only**, inside `Exploration::feedResult` at `Exploration.cpp:400`. The gate:
+`calibrateAndScore` fires **MS3-only, `FragmentCount`-metric-only**, inside `Exploration::feedResultImpl_` (behind `feedResult`), through the thin forwarder `ProteoformTracker::scoreCalibratedVariants` at `Exploration.cpp:568`. The gate:
 
 ```
 group.exploration_metric == ExplorationMetric::FragmentCount && group.msn_level >= 3
@@ -37,14 +39,16 @@ For MS3 with `MassCount`, `RemainingPrecursor`, or any other metric, `calibrateA
 1. **Setup (before MS3 variants even fire).** When an MS2 completes and tag-matches, the `ProteoformContext` (region bounds + PTM sites) is cached on the parent `ExplorationGroup`. See `../exploration/ms3-exploration.md` for the group-level plumbing.
 2. **All MS3 variants received.** `feedResult` flips `all_received` → invokes:
    ```cpp
-   auto calibrated_scores = MS3FragmentMatcher::calibrateAndScore(
-       variant_spectra, protein_sequence, proteoform_ctx,
-       fragment_ion_type, fragment_ion_index,
+   // score_ctx = tracker->buildWinnerProteoformContext(precursor_id): the LIVE winner,
+   // falling back to group.proteoform_ctx only where no tracker exists (unit tests)
+   auto calibrated_scores = ProteoformTracker::scoreCalibratedVariants(
+       variant_spectra, protein_sequence, score_ctx,
+       group.fragment_ion_type, group.fragment_ion_index,
        MS3FragmentMatcher::LOOSE_TOLERANCE_PPM,
        config_.level(group.msn_level).tolerance_ppm,
        &detailed_results);
    ```
-3. **Pass 1 — calibration.** For each variant, match observed deconvolved masses against theoretical masses computed from the precursor subsequence, using the **loose tolerance** `LOOSE_TOLERANCE_PPM = 500.0` (compile-time constant, `MS3FragmentMatcher.h:66`). Collect PPM errors of matched pairs; compute the median → `ppm_offset`. Derive `correction_factor = 1 / (1 + ppm_offset * 1e-6)`.
+3. **Pass 1 — calibration.** For each variant, match observed deconvolved masses against theoretical masses computed from the precursor subsequence, using the **loose tolerance** `LOOSE_TOLERANCE_PPM = 500.0` (compile-time constant, `MS3FragmentMatcher.h:73`). Collect PPM errors of matched pairs; compute the median → `ppm_offset`. Derive `correction_factor = 1 / (1 + ppm_offset * 1e-6)`.
 4. **Pass 2 — tight rematch.** Apply `correction_factor` to observed masses; rematch at the **tight tolerance** `config_.level(group.msn_level).tolerance_ppm` (note: `tolerance_ppm`, not `exploration_tolerance_ppm`, and the level is taken dynamically from the group — typically 3). The resulting match count becomes the variant's calibrated score.
 5. **Return.** Two aligned outputs, one entry per variant:
    - `calibrated_scores[vi]` — overwrites `group.variants[vi].score` and casts to `int` into `fragment_count`.
@@ -53,7 +57,7 @@ For MS3 with `MassCount`, `RemainingPrecursor`, or any other metric, `calibrateA
 
 ## Ion types
 
-`MS3FragmentMatcher::getMS3IonTypes(char precursor_ion_class)` at `MS3FragmentMatcher.h:71` returns ion types based on whether the MS3 precursor subsequence originated from a b-ion or y-ion MS2 fragment. The switch groups `'a'`/`'b'`/`'c'` precursors together, and `'y'`/`'x'`/`'z'` (and default) together:
+`MS3FragmentMatcher::getMS3IonTypes(char precursor_ion_class)` at `MS3FragmentMatcher.h:89` returns ion types based on whether the MS3 precursor subsequence originated from a b-ion or y-ion MS2 fragment. The switch groups `'a'`/`'b'`/`'c'` precursors together, and `'y'`/`'x'`/`'z'` (and default) together:
 
 - **N-terminal-subsequence precursors** (`'a'`, `'b'`, `'c'`): `a`, `b`, `yb`, `ya`.
 - **C-terminal-subsequence precursors** (`'y'`, `'x'`, `'z'`, plus default): `a`, `b`, `y`.
@@ -76,7 +80,7 @@ Fragment indices produced internally are **subsequence-local** (1-based from the
 
 The mod-inclusive `adjusted_mass` = `observed + (theo_equiv − ms3_theoretical) + ambiguous_included`. Crucially `theo_equiv` (from `computeProteinPrefixMasses`) drops still-**ambiguous** mods (`if (start_position != end_position) continue;`), so `ambiguous_included` — the ambiguous mass the matched theoretical folded in — must be re-added; otherwise `adjusted_mass` = bare backbone (the mod stripped, ~526 Da low for cytC). A trivial b→b frame therefore gives `adjusted == observed`.
 
-The PTM-site rebasing logic lives in `MS3FragmentMatcher::rebasePTMSites` at `MS3FragmentMatcher.cpp:287`. The mapping for ion positions (subsequence → full-protein) is applied during match result population.
+The PTM-site rebasing logic lives in `MS3FragmentMatcher::rebasePTMSites` at `MS3FragmentMatcher.cpp:312`. The mapping for ion positions (subsequence → full-protein) is applied during match result population.
 
 ## Log surfaces: scan_commands fragment proteoform + identification coverage
 
