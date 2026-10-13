@@ -221,6 +221,12 @@ winner-consistent and the reported ProForma regenerates its own fragment masses
 (ADR-0006). MS3 is likewise scored against the *live* winner, not the triggering scan.
 Distinct from the per-scan `ProteoformMatch`, which is
 transient and recomputed every MS2.
+**Identified** and **has a winner scan** are separate properties. Under
+`characterization.mode: exhaustive` a model whose MS2 matched nothing still has a
+winner scan — the scan the MS2 decision chose — and its deconvolved masses are acquired
+at MS3 as **Unassigned masses**. Such a model stays **unidentified**: it has no
+proteoform, contributes no row to the **Pooled identification log**, and its MS3s are
+acquisitions on record, not evidence folded into it.
 _Avoid_: ProteoformMatch (single-scan, no pooling), MS2Context (per-MS3 cache of
 one MS2's bounds + PTMs), "identification" (per-scan in current code).
 

@@ -131,6 +131,9 @@ logged rather than matched.
    No precursor-identity skip and no above-precursor-mass skip.
 
 10. **Identification is still required.** `no_plan("unidentified_precursor")` stands (ADR-0002).
+    > **Amended by [ADR-0055](0055-an-exhaustive-ms3-needs-a-winner-scan-not-an-identification.md)
+    > (2026-10-13):** the escalation ladder below was never built, so an unidentified Precursor now
+    > plans from the scan the MS2 decision chose, and stays unidentified.
     Division of labour: an unidentified Precursor is the escalation ladder's problem — change the
     chemistry at MS2 — and an identified one is this mode's.
 

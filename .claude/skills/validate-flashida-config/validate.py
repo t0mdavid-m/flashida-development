@@ -752,7 +752,9 @@ def validate(path, ref):
     if mode == "exhaustive":
         floor = chz.get("min_target_mass", 0)
         rep.note("exhaustive: MS3 targets are EVERY deconvolved mass of the winner MS2 scan, not "
-                 "only the ones that mapped to the winning proteoform (ADR-0023). Pool filters: "
+                 "only the ones that mapped to the winning proteoform (ADR-0023) -- and since "
+                 "ADR-0055 an UNIDENTIFIED precursor is characterized too, every target unassigned. "
+                 "Pool filters: "
                  f"min_target_mass={floor}{' (off)' if not floor else ' Da'}, "
                  f"min_fragment_charge={chz.get('min_fragment_charge', 0)}"
                  f"{' (off)' if not chz.get('min_fragment_charge', 0) else ''}. max_targets bounds "
