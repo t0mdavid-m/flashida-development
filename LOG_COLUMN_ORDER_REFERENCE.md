@@ -155,12 +155,74 @@ same call that fills `cmd.qscore` in `ScanCommandQueue`, so a selected mass's va
 
 ---
 
-## 3. Identification Log (`identification`) — 34 columns
+## 3. Identification Log (`identification`) — 41 columns
 
-**Verification: ✅ COMPLETE.** Full 32-column order — your curated 19, then the 13 detail
+**Current emit order (41)**, from `IdaLogger.cpp`'s header and pinned index-for-index by
+`FLASHIda_LoggingFields_test::schema_column_counts`:
+
+1. tracking_id
+2. scan_mode
+3. ms_level
+4. precursor_id
+5. ms1_precursor_mass
+6. ms2_precursor_ion
+7. proteoform
+8. flash_extender_score
+9. tag_count
+10. ms2_fragments
+11. ms2_fragment_masses
+12. ppm_offset
+13. correction_factor
+14. ms1_precursor_mz
+15. ms1_precursor_charge
+16. ms2_precursor_mass
+17. ms2_precursor_mz
+18. ms2_precursor_charge
+19. start_pos
+20. end_pos
+21. ms3_fragments
+22. ms3_fragment_masses
+23. ms2_isolation_width
+24. ms2_window_snr
+25. ms2_charge_intensity
+26. ms3_isolation_width
+27. ms3_window_snr
+28. ms3_charge_intensity
+29. theoretical_masses
+30. diff_da
+31. diff_ppm
+32. fragment_qscores
+33. ms3_fragment_coverage
+34. tic_coverage
+35. annotation_score
+36. total_shift
+37. second_total_shift
+38. second_score
+39. cut
+40. n_levels
+41. precursor_mass_difference
+
+**Columns 35–41 (ADR-0049, appended so no earlier column moves)** are Refine's candidate record
+(`FragmentAnalysis::ProteoformMatch::refine`), filled only on the regular MS2 identification row
+under `characterization.method: refine`:
+
+| Column | Meaning | Format | Sentinel |
+|---|---|---|---|
+| `annotation_score` | best path's score S = ions − jump_penalty × jumps (`assemble.candidates[0].score`) | int | `-1` |
+| `total_shift` | best path's total mass shift λ_k, Da (`candidates[0].total`) | fixed, 4 dp | empty |
+| `second_total_shift` | second candidate's λ_k (`candidates[1].total`); empty when Assemble built one candidate | fixed, 4 dp | empty |
+| `second_score` | second candidate's S; `-1` when there is no second | int | `-1` |
+| `cut` | Detect's cut (`RefineCandidates::cut`) | int | `-1` |
+| `n_levels` | levels kept after both exclusions and the cap (`RefineCandidates::n_levels` = `Detect::n_kept`) | int | `-1` |
+| `precursor_mass_difference` | precursor mono mass − (sequence mass + best λ_k), Da; 0 without a precursor mass | fixed, 4 dp | empty |
+
+Every other row — `flashtnt` (the default), exploration MS2, every MS3 — ends in the sentinel tail
+`-1\t\t\t-1\t-1\t-1\t`.
+
+**Historical: the 2026-07 reorder (32 columns).** Full 32-column order — your curated 19, then the 13 detail
 columns appended in their current relative order (decision: "append after"). Pure permutation.
 
-New (desired) order (32):
+New (desired) order at the time (32):
 
 1. tracking_id
 2. scan_mode
