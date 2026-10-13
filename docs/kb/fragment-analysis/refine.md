@@ -11,11 +11,11 @@ code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/FragmentAnalysis.cpp:794            # runRefineMatching_
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.h:192     # DiscriminatingRecord
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.h:202     # RefineState
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:458           # finalize step 3b: the round's records
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:567           # planNextScans: discriminating -> ambiguity after the decision or the fall-through
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1032          # planDiscriminating_ (dead_end: decided=fallthrough)
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1137          # recordDiscriminatingScan (false once decided)
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1182          # decideRefine
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:441           # finalize step 3b: the round's records
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:550           # planNextScans: discriminating -> ambiguity after the decision or the fall-through
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1014          # planDiscriminating_ (dead_end: decided=fallthrough)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1116          # recordDiscriminatingScan (false once decided)
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/ProteoformTracker.cpp:1161          # decideRefine
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:391                             # refineRoundClose_
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda.cpp:956                             # empty MS3 clears the stored deconvolution
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Exploration.cpp:1064                # dispatchFromModel (re-dispatch after the decision)
@@ -49,10 +49,10 @@ The ADR owns the *why* and the decisions; this page is where the code lives and 
 |---|---|---|
 | Method switch | `FragmentAnalysis::getTopFragmentMatches` (`FragmentAnalysis.cpp:931`, switch at `:950`) | `AnnotationMethod::Refine` → `runRefineMatching_`, else `runTagBasedFragmentMatching_`. Resets `result.refine` first |
 | MS2 annotation | `runRefineMatching_` (`FragmentAnalysis.cpp:794`) | masses ascending → `Refine::ladder` → `detect` → `assemble`; prints `[LEVELS]`/`[CANDIDATES]`; the best path fills the `ProteoformMatch` |
-| Round setup | `finalizeMS2` step 3b (`ProteoformTracker.cpp:458`) | winner's `RefineCandidates` → `RefineState`; with ≥ 2 totals, `Refine::discriminating` → `DiscriminatingRecord`s |
-| Planning | `planNextScans` (`:567`) → `planDiscriminating_` (`:1032`) | undecided: the records not yet dispatched, intensity-desc, up to `max_targets` species (a b-only record goes out **unassigned**, `'u'`/0); decided (or no record): **ambiguity**. A round that can never close — pool exhausted with nothing outstanding, or the winner MS2 not MS3-capable — is decided **without recount or pooled row** (`[DISCRIMINATING] … decided=fallthrough reason=pool_exhausted\|winner_scan_not_ms3_capable`) and ambiguity is planned in the same call; a dispatched record still unreturned makes it wait instead |
-| MS3 return | `recordDiscriminatingScan` (`:1137`), called from `FLASHIda.cpp`'s regular MS3 branch | `Refine::pieceTest` pools fits per record; true when every dispatched record has returned; false once the decision has fired (the record is frozen) |
-| Decision | `FLASHIda::refineRoundClose_` (`FLASHIda.cpp:391`) → `decideRefine` (`ProteoformTracker.cpp:1182`) | `Refine::recount` over every record; a flip re-seeds mods + fragments from path b; pooled row trigger `MS3-DECIDE` |
+| Round setup | `finalizeMS2` step 3b (`ProteoformTracker.cpp:441`) | winner's `RefineCandidates` → `RefineState`; with ≥ 2 totals, `Refine::discriminating` → `DiscriminatingRecord`s |
+| Planning | `planNextScans` (`:550`) → `planDiscriminating_` (`:1014`) | undecided: the records not yet dispatched, intensity-desc, up to `max_targets` species (a b-only record goes out **unassigned**, `'u'`/0); decided (or no record): **ambiguity**. A round that can never close — pool exhausted with nothing outstanding — is decided **without recount or pooled row** (`[DISCRIMINATING] … decided=fallthrough reason=pool_exhausted`) and ambiguity is planned in the same call (an ETD winner is no longer a reason: its round runs, ADR-0054); a dispatched record still unreturned makes it wait instead |
+| MS3 return | `recordDiscriminatingScan` (`:1116`), called from `FLASHIda.cpp`'s regular MS3 branch | `Refine::pieceTest` pools fits per record; true when every dispatched record has returned; false once the decision has fired (the record is frozen) |
+| Decision | `FLASHIda::refineRoundClose_` (`FLASHIda.cpp:391`) → `decideRefine` (`ProteoformTracker.cpp:1161`) | `Refine::recount` over every record; a flip re-seeds mods + fragments from path b; pooled row trigger `MS3-DECIDE`. If no dispatched record has a b/y side (an ETD winner's c/z records, whose pieces `pieceTest` cannot predict), path a is kept **without** a recount: `[DISCRIMINATING] … decided=kept reason=no_annotatable_pieces`, no `[MS3-DECIDE]`, no pooled row (ADR-0054) |
 | Re-dispatch | `Exploration::dispatchFromModel` (`Exploration.cpp:1064`) | the `initiateNextLevel` tail, extracted byte-identical, replaying `winner_cmd` as stage 0 |
 
 Both MS2 routes reach the switch — the regular MS2 through `ProteoformTracker::selectNextLevelTargets`,

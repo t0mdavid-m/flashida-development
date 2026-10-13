@@ -62,6 +62,9 @@ logged rather than matched.
    wins the identification, the pool is that rung's scan; if the rung was ETD, every mass in it is
    MS3-incapable (`isMs3CapableActivation` is `HCD || CID`, because an MS3's `stage[0]` replays the
    MS2 that made the fragment — ADR-0003), so the mode plans nothing for that Precursor.
+   *(Amended by [ADR-0054](0054-an-ms3-is-acquired-behind-any-activation-and-annotated-only-on-a-b-or-y-precursor.md),
+   2026-10-13: no activation refuses an MS3 any more — the capability gate, and D-b with it, is
+   deleted. An ETD rung's targets are c/z ions, whose MS3 is acquired and logged but not annotated.)*
 
 4. **Ranking is intensity, descending, with no ordering tiebreak.** *(Amended 2026-08-13: the code
    uses `std::stable_sort`, not `std::sort`, so equal intensities keep pool order rather than an

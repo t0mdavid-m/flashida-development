@@ -347,8 +347,8 @@ and no measured window: **matchable as evidence, addressable only through theory
 Its absence is a claim scoped to one m/z window over one scan range — "predicted, and
 not seen *within the MS2's own scan range*" — so a charge state whose m/z fell outside
 that range was never observable and its absence carries no information. Every MS3
-target the model selects today is drawn from the complement of this set (`planNextScans`
-requires `best_ms2_ms3_capable`), which is why the middle of a proteoform can be
+target the model selects today is drawn from the complement of this set (a target needs
+an MS2 observation to isolate), which is why the middle of a proteoform can be
 unreachable: the fragments that span it are all unobserved.
 _Avoid_: "missing peak" (pre-deconvolution, and a peak carries no ion identity);
 reading absence as proof the cleavage did not occur (dynamic range and charge
@@ -435,6 +435,20 @@ with the optional CE sweep centered on them.
 _Avoid_: thinking the best-MS2 parameters set the MS3 fragmentation chemistry —
 they set the MS2 fragmentation (`stage[0]`) that *feeds* the MS3 (`stage[1]`).
 More fragment ion = more MS3 precursor = strictly better.
+
+**Annotatable MS3 precursor**:
+A **Mapped fragment** whose MS3 sub-ions FLASHIda can predict correctly: a **b- or y-ion**, and
+nothing else. A c, z, a or x fragment has a frame — a known prefix or suffix span, so it can be a
+**Containing fragment** or a **Coverage target** and its MS3 is acquired like any other — but its
+MS3 is **acquired and logged, never annotated**: no matched sub-ions, no coverage, no modification
+narrowing, no MS3 fold, no piece test. (An MS3 exploration variant's whole-protein match is a
+different reading — full-protein ions, right whatever the precursor — and is unaffected.) Annotatability is a property of the targeted
+ion's type, never of the activation that produced it: an EThcD MS2 yields b, c, y and z fragments,
+and only its b/y targets are annotated. An MS3 exploration sweep on an unannotatable target runs
+its configured metric unchanged — under a reading metric every variant scores 0.
+_Avoid_: "ETD MS3 is unsupported" (it is acquired; only its annotation is missing); reading an
+unannotated MS3 as an empty one (it carries real sub-ions nobody predicted); conflating it with an
+**Unassigned mass**, which has no frame at all.
 
 **Isolation window**:
 The m/z interval a fragmentation stage transmits — the ions that will be fragmented and whose
@@ -1149,10 +1163,11 @@ _Avoid_: assuming a per-scan parameter can be defaulted from a neighbouring scan
 **Activation-coupled parameter**:
 A scan parameter that is meaningful only for particular activation types, and which must
 therefore travel with the activation whenever it is set: `collision_energy` for HCD / CID /
-EThcD, and `reaction_time` + `reagent_max_it` + `reagent_agc_target` for ETD / EThcD (the
-ion–ion reaction settings). Carrying one activation's coupled parameters onto a scan using a
+EThcD / ETciD, and `reaction_time` + `reagent_max_it` + `reagent_agc_target` for ETD / EThcD /
+ETciD (the ion–ion reaction settings). `ETciD` is the one spelling (PSI-MS MS:1003182, and
+what the instrument's method editor shows); `EtCID` is not. Carrying one activation's coupled parameters onto a scan using a
 different activation is incoherent — e.g. an HCD scan has no reagent and nothing to react.
-_Avoid_: "ETD settings" (they also apply to EThcD); treating reaction time as a generic
+_Avoid_: "ETD settings" (they also apply to EThcD and ETciD); treating reaction time as a generic
 scan parameter.
 
 **Follow-up scan**:

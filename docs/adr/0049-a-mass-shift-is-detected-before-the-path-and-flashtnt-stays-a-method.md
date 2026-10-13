@@ -224,7 +224,10 @@ At implementation (2026-10-13):
   in an earlier survey — and a winner scan that cannot be isolated for MS3 (an ETD MS2 among them).
   Both print `[DISCRIMINATING] precursor_id=… decided=fallthrough reason=pool_exhausted|
   winner_scan_not_ms3_capable`, set the decision without a recount or a pooled row, and plan the
-  containing-fragment MS3s of the best path at once. A round with a dispatched MS3 still outstanding
+  containing-fragment MS3s of the best path at once. *(Amended by ADR-0054, 2026-10-13: the second case
+  is gone — an ETD winner's round runs, and if no dispatched record has a b/y side it closes with
+  `decided=kept reason=no_annotatable_pieces`, path a kept without a recount; `pool_exhausted` is the
+  fall-through's only reason.)* A round with a dispatched MS3 still outstanding
   waits, as before. In the same pass: a discriminating mass only path b explains is dispatched with the
   unassigned ion label (as `exhaustive` marks a mass with no identity) instead of path b's label stated
   against path a's model; and a record is frozen once the decision has fired — a late MS3 of a

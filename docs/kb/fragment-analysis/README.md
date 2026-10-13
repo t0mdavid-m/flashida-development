@@ -39,7 +39,7 @@ MS2 ion types, selected per fragmentation method via `FragmentAnalysis::getIonTy
 |---|---|
 | HCD, CID | `b`, `y` |
 | ETD | `c`, `z` |
-| EThcD, EtCID | `b`, `c`, `y`, `z` |
+| EThcD, ETciD | `b`, `c`, `y`, `z` |
 | UVPD | `a`, `b`, `c`, `x`, `y`, `z` |
 | Any other / unknown | `b`, `y` (default) |
 
@@ -51,6 +51,8 @@ MS3-local ion types, selected per precursor-fragment class via `MS3FragmentMatch
 | `y` / `x` / `z` — C-terminal subsequence (also default) | `a`, `b`, `y` |
 
 The cross-direction ion types (`yb`, `ya`) are MS3-only and only appear for N-terminal-subsequence precursors (`a`/`b`/`c`). They carry no water loss.
+
+**Only a `b` or `y` precursor is annotated** (ADR-0054, `MS3FragmentMatcher::isAnnotatableMs3Precursor`). The table reads `c`/`a` as if they were `b` and `z`/`x` as if they were `y`, so for those classes it predicts the sub-ions wrong (a `c` precursor's `yb`/`ya` ~17 Da low). Their MS3 — what an ETD, EThcD, ETciD or UVPD MS2 feeds — is acquired and logged but `calibrateAndScore` and `Refine::pieceTest` match nothing for it, and the regular MS3 return prints `[MS3-UNANNOTATED]`. They still have a frame (`isKnownIonClass`), so they are targeted like any other fragment.
 
 ## Read Order
 
