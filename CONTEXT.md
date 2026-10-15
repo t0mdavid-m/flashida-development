@@ -1067,7 +1067,9 @@ result the run is looking for. Named as one of the two conditions, never as a di
 numerator is whichever condition was declared first, so "up" is only meaningful relative to a
 declaration order that is nowhere in sight at the point of use, and reverses if that order changes.
 A species absent from one condition entirely is enriched in the other — the extreme case, not an
-exception to it.
+exception to it — but only when the other condition was measured in **every** one of its channels.
+Absence is read against a presence; a condition seen in only some of its replicates is a partial
+measurement, so the pair says nothing about which condition holds the species.
 _Avoid_: "up-regulated" / "down-regulated", which name a direction rather than a condition and
 invert silently; concluding a species was not enriched from the fold change alone, which carries no
 finite value when a condition is wholly absent.

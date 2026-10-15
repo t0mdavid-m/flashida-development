@@ -2,7 +2,8 @@
 
 Status: Accepted and IMPLEMENTED (2026-08-28). The `scan_results.tsv` quant columns landed first,
 sentinel-valued, so the 25-golden recapture they force could be reviewed on its own; the role
-inversion, the schema and the behaviour followed in the next push.
+inversion, the schema and the behaviour followed in the next push. Amended 2026-10-15: a
+wholly-empty condition is `differential` only against a fully measured one (see decision below).
 Related: [ADR-0014](0014-two-decision-sections-and-named-scan-configs.md) — the two-decision-section
 split and the "scan configs referenced by name" rule. This ADR keeps the split and takes the
 *other* branch on the reference: the quantification scan gets a bare `ms_settings` slot, the way
@@ -140,7 +141,12 @@ six-plex chemistry rejects every spectrum.
 and absent in the other is the strongest result the experiment can produce; `fold_change` has no
 finite value and is logged as `-1`, with `quant_condition_means` carrying the truth. A *partially*
 empty condition is still rejected — a zero dragged into a mean biases the ratio and there is no
-honest number to report. This makes `only_one_condition`'s intent unconditional and correct, so the
+honest number to report. *(Amended 2026-10-15: when one condition is wholly empty and the other
+only partially filled, the partial rule wins and the verdict is `incomplete_channels`. Absence is
+read only against a condition measured in every one of its channels; the two rules were stated
+without a precedence, and the code's order let a single reporter in one of three replicates against
+an empty condition read as `differential` and buy an identification scan — seen on hardware,
+2026-10-12 `methodquantseparate`, `scan_results.tsv` line 86.)* This makes `only_one_condition`'s intent unconditional and correct, so the
 key is **deleted** rather than revived.
 
 **Isotope correction is applied by default,** via `IsobaricQuantifier` with the selected method's
