@@ -1,6 +1,6 @@
 # 0040. Quantification votes across charge states, and the vote picks the identification charge
 
-Status: Accepted (2026-09-02), **not yet implemented**.
+Status: Accepted (2026-09-02), implemented (ran on hardware 2026-10-08). **Decision half superseded by [ADR-0056](0056-a-quantification-group-is-decided-by-one-test-on-its-aggregate-and-the-test-is-authored.md)** -- the vote, the dissent exclusion, the ballot floor and the `consensus_*` columns are retired; the acquisition floor and cap and the sibling exemption stand.
 Amends: [ADR-0038](0038-quantification-screens-and-identification-is-what-it-buys.md) — its
 "rostered once per selected precursor" clause and its screen-then-buy mechanism become
 **per-group** rather than per-scan. What is measured, the `'Q'`/`'R'` markers, the four

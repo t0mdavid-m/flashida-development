@@ -1044,7 +1044,7 @@ for one purpose — releasing the isobaric label's reporter group, which needs c
 *first* on every selected precursor — one scan per member of the **acquisition charge set** — and
 the only kind of scan in the run that is measured. What one of them produces is a verdict about one
 species *as seen through one isolation window*; what the **quantification group** produces is that
-species' **consensus verdict**.
+species' **group verdict**.
 _Avoid_: calling the scan a quantification result *buys* the quantification scan — it is the scan
 that does the measuring, and the one it buys is an identification scan; assuming an MS2 is a
 quantification scan because a run is labelled, which is what makes the distinction from the
@@ -1083,33 +1083,61 @@ The group is what buys an **identification scan** — never a member on its own 
 identification is bought once however many charge states were spent screening. Pooling reporter
 measurements across charge states is sound where pooling **fragments** across them is not: the
 reporter ion is released at the same m/z whatever the precursor's charge, so its ratio is a property
-of what was in the window rather than of the charge — which is exactly what makes disagreement
-between charges meaningful.
+of what was in the window rather than of the charge. A member is **usable** when every one of its
+assigned channels was measured; only usable members enter the group's aggregate, and a group with
+fewer usable members than its authored floor is a measurement failure, not a verdict.
 _Avoid_: calling it a Precursor (one scan per charge yields several, and the group spans them);
 reading it as pooled fragment evidence, which is a different thing and unsound; expecting a group to
-reach a verdict before every one of its members has returned.
+reach a verdict before every one of its members has returned; reading an unusable member as a vote
+against the others — it is absent from the aggregate, not opposed to it.
 
-**Consensus verdict**:
-A **quantification group's** single verdict, decided by majority vote over its members' verdicts,
-each read *with its direction* — so "differential" alone never counts as agreement when the members
-disagree about which condition is enriched. A member that measured nothing usable abstains rather
-than dissents. It is the consensus verdict, never a member's own, that the **quantification
-objective** cuts on, and the number reported beside it is weighted towards the members carrying the
-most ion current, those being the best measured. Too few usable votes is not a verdict about the
-species but about the measurement, and reads as one.
-_Avoid_: treating a member's verdict as the species' verdict; counting a member that could not be
-measured as disagreement; expecting a vote where only one charge state was ever acquired.
+**Group verdict**:
+A **quantification group's** single verdict, reached by **one quantification test on the group's
+aggregate**: each usable member's channels are scaled to their share of that scan's reporter signal,
+the members are combined per channel (by default their median), and the test is applied to those
+six numbers exactly as it would be to one scan. No member is excluded for disagreeing, so a window
+that held another population is absorbed by the aggregate rather than named. It is the group
+verdict, never a member's own, that the **quantification objective** cuts on, and the
+identification scan is taken from the usable member whose isolation window was purest.
+_Avoid_: "consensus verdict" (the retired majority vote, ADR-0040: there is no ballot and no
+dissent); treating a member's verdict as the species' verdict; reading the group's p-value as
+pooled over the members — it has the degrees of freedom of one scan, whatever the group's size.
 
 **Chimericity**:
-Members of one **quantification group** disagreeing about the same species' reporter ratio —
+Members of one **quantification group** reporting different ratios for the same species —
 evidence that their isolation windows did not hold the same population, since one clean species must
-give the same ratio at every charge. It is the reason to acquire more than one charge state at all.
-Disagreement short of a tie is settled by the majority and reported as such: the dissenting member
-is discarded rather than averaged in, and is deliberately never the window the identification is
-acquired from, because sequencing the interference would attribute the ratio to the wrong molecule.
+give the same ratio at every charge. The engine no longer detects it: a disagreeing member is
+averaged into the **group verdict** by the aggregate, and the only defence is that the
+identification scan is taken from the purest window rather than from the disagreeing one, because
+sequencing the interference would attribute the ratio to the wrong molecule. Finding it is the
+offline pipeline's job, with the whole run's scans of the species in hand.
 _Avoid_: reading it as a property of a single scan (it exists only *between* measurements);
-"co-isolation", which names an acquisition geometry and not a disagreement; treating a species whose
-members disagreed as unmeasured — the majority still carries a result.
+"co-isolation", which names an acquisition geometry and not a disagreement; expecting a log column
+to name a dissenting charge — none does any more.
+
+**Quantification test**:
+The rule that turns one set of six reporter channels — a scan's, or a group's aggregate — into
+`differential` or `not_differential`. Three are authorable: the **fold change** alone (the
+geometric ratio of the two conditions clears the threshold), the **Welch test** alone (a two-sided
+Welch t-test on the log2 channels, three against three, reaches the p-value threshold), or both.
+It is a purchase screen chosen to compute the same number the offline pipeline computes from the
+same channels, not the run's final statistic: on two to four degrees of freedom the Welch p is
+what it is, and the offline moderated test decides the hit list.
+_Avoid_: reading the live p-value as a calibrated significance (nothing corrects it for the run's
+many tests); "t-test on the intensities" — it is on their log2; the arithmetic ratio of channel
+means, which the engine no longer computes anywhere.
+
+**Empty condition**:
+A condition none of whose assigned channels carried a reporter, against a condition that carried
+one in **every** channel. What it means is authored: the strongest result the experiment can
+produce (the species is present on one side and not the other — `differential`, with no finite
+ratio), or a measurement that cannot be tested (`incomplete`, buying nothing). The reading is made
+**before** any quantification test, because a test has nothing to compute on one empty side. A
+condition empty in only *some* channels is never an empty condition; it is a partial measurement
+and is always refused.
+_Avoid_: "missing channel" (channel-level; this is condition-level); dropping the empty channels and
+testing what remains, which the engine never does; expecting the Welch test to be run on an empty
+condition under any setting.
 
 **Identification scan**:
 The MS2 acquired to **sequence a proteoform** — the ordinary MS2 of every mode, with the

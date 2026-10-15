@@ -4,6 +4,7 @@ Status: Accepted and IMPLEMENTED (2026-08-28). The `scan_results.tsv` quant colu
 sentinel-valued, so the 25-golden recapture they force could be reviewed on its own; the role
 inversion, the schema and the behaviour followed in the next push. Amended 2026-10-15: a
 wholly-empty condition is `differential` only against a fully measured one (see decision below).
+Amended by [ADR-0056](0056-a-quantification-group-is-decided-by-one-test-on-its-aggregate-and-the-test-is-authored.md) (2026-10-15): the wholly-empty-condition rule becomes the default of `quantification.empty_condition`, the fold change becomes the geometric ratio, and the ratio test becomes one of three authored `quantification.test` values; the per-group vote that ADR-0040 put on top of this ADR is retired.
 Related: [ADR-0014](0014-two-decision-sections-and-named-scan-configs.md) — the two-decision-section
 split and the "scan configs referenced by name" rule. This ADR keeps the split and takes the
 *other* branch on the reference: the quantification scan gets a bare `ms_settings` slot, the way
