@@ -77,18 +77,18 @@ reagent_max_it, reagent_agc_target, scan_description, precursor_id, ms3_proteofo
 
 ---
 
-## 2. Results Log (`scan_results`) — 50 columns
+## 2. Results Log (`scan_results`) — 53 columns
 
 **Verification: ✅ COMPLETE** for the reorder. All columns of the 2026-07 permutation are present
 exactly once; the deconv block has since been restructured and extended — see the note below.
 
 ⚠️ **The numbered list below is the 2026-07 permutation and is NOT the live header.** It has 29
-entries; the live stream has 50. Four blocks were appended after it was drafted, and one column was
+entries; the live stream has 53. Four blocks were appended after it was drafted, and one column was
 renamed in place: the identification-YIELD trio (`tag_count`, `fragment_count`, `tic_coverage`,
 after column 13); ADR-0038's quant block (`quant_channels`, `quant_condition_means`,
-`quant_fold_change`, `quant_verdict`, appended after `dequeue_ts`); ADR-0040's consensus block
-(`consensus_verdict`, `consensus_fold_change`, `consensus_agreement`, `consensus_charges`,
-`consensus_id_charge`); and ADR-0047's kinetic block (`fit_p0`, `fit_ce_max_s`, `fit_width`, `k2`,
+`quant_fold_change`, `quant_p_value`, `quant_verdict`, appended after `dequeue_ts`); the group block
+(ADR-0040, renamed by ADR-0056: `group_verdict`, `group_fold_change`, `group_p_value`,
+`group_channels`, `group_usable`, `group_charges`, `group_id_charge`); and ADR-0047's kinetic block (`fit_p0`, `fit_ce_max_s`, `fit_width`, `k2`,
 `modeled_ce`, `modeled_b`, `fit_points`, `fit_rss`, `energy_source` — written on the one row that
 completes a `kinetic_model` exploration group, sentinel-valued everywhere else; `energy_source`
 alone is also set on the completing row of every other metric, `measured` or `none`). Column 13

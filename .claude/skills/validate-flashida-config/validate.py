@@ -368,8 +368,8 @@ def validate(path, ref):
             rep.warn("A27", f"precursor_selection.min_charge_states is {min_cs} but "
                             "precursor_charges is \"single\", where the acquisition charge set is "
                             "always size 1 -- so the floor is INERT and every species passes it. "
-                            "Set precursor_charges to \"separate\" (one MS2 per charge, which is "
-                            "what the quantification majority vote needs) or \"multiplexed\".")
+                            "Set precursor_charges to \"separate\" (one MS2 per charge) or "
+                            "\"multiplexed\".")
         if max_cs > MAX_CHARGE_STATES_CEILING:
             rep.warn("A27", f"precursor_selection.max_charge_states is {max_cs}, above the "
                             f"instrument's {MAX_CHARGE_STATES_CEILING} windows per fragmentation "
@@ -423,7 +423,7 @@ def validate(path, ref):
         if not isinstance(conds, list) or len(conds) != 2:
             rep.error("A20", "quantification.conditions must name EXACTLY TWO conditions "
                              f"(got {len(conds) if isinstance(conds, list) else 0}). fold_change is "
-                             "mean(conditions[0]) / mean(conditions[1]), a two-group ratio; the "
+                             "gmean(conditions[0]) / gmean(conditions[1]), a two-group ratio; the "
                              "ARRAY ORDER is the direction.")
         if isinstance((cfg.get("precursor_selection") or {}).get("exploration"), dict):
             rep.error("A21", "quantification.enabled and precursor_selection.exploration are "
@@ -449,6 +449,53 @@ def validate(path, ref):
                              "scan that does the measuring. Required whenever quantification is "
                              "enabled -- inert under quantification.identify 'none', so the "
                              "objective stays a one-word edit.")
+
+    # --- ADR-0056: the authored test, the empty condition, the group aggregate -------------------
+    # Enum spellings are parsed whatever `enabled` says (Config parses them unconditionally); the
+    # structural rules sit inside `enabled`, as Config::validate puts them.
+    for key, valid, default in (("test", ("fold_change", "welch", "welch_and_fold_change"), "fold_change"),
+                                ("empty_condition", ("differential", "incomplete"), "differential"),
+                                ("aggregate", ("median", "mean", "sum"), "median")):
+        v = q.get(key)
+        if v is None:
+            v = default
+        if v not in valid:
+            rep.error("A29", f"unknown quantification.{key} '{v}'. Valid: {', '.join(valid)} "
+                             "(case-sensitive, ADR-0056). Rejected at load, never defaulted.")
+    qtest = q.get("test") or "fold_change"
+    min_us = q.get("min_usable_scans", 1)
+    if q.get("enabled"):
+        if qtest in ("welch", "welch_and_fold_change"):
+            for c in (q.get("conditions") or []):
+                if isinstance(c, dict) and len(c.get("channels") or []) < 2:
+                    rep.error("A28", f"quantification.test '{qtest}' needs at least two channels per "
+                                     f"condition (a Welch test computes a variance per condition); "
+                                     f"condition '{c.get('name')}' names "
+                                     f"{len(c.get('channels') or [])}. Config::validate() throws.")
+        ps_q = cfg.get("precursor_selection") or {}
+        pchg_q = ps_q.get("precursor_charges", "single")
+        max_q = ps_q.get("max_charge_states", 0)
+        min_q = ps_q.get("min_charge_states", 1)
+        if isinstance(min_us, int) and min_us > 1:
+            if pchg_q != "separate":
+                rep.error("A30", f"quantification.min_usable_scans is {min_us} but precursor_charges "
+                                 f"is '{pchg_q}': a quantification group has ONE member outside "
+                                 "'separate', so it could never decide. Config::validate() throws.")
+            elif isinstance(max_q, int) and max_q > 0 and min_us > max_q:
+                rep.error("A30", f"quantification.min_usable_scans ({min_us}) exceeds "
+                                 f"precursor_selection.max_charge_states ({max_q}): no group can "
+                                 "ever hold that many members. Config::validate() throws.")
+            elif isinstance(min_q, int) and min_us > min_q:
+                rep.warn("B12", f"quantification.min_usable_scans ({min_us}) exceeds "
+                                f"precursor_selection.min_charge_states ({min_q}): only species "
+                                "resolving more charges than admission requires can reach it; every "
+                                "other group ends incomplete_channels. The engine prints [CONFIG-WARN].")
+        if qtest == "fold_change" and q.get("p_value_threshold", 0.05) != 0.05:
+            rep.warn("B11", "quantification.p_value_threshold is authored but test is 'fold_change', "
+                            "which does not read it (the p-value is still logged). [CONFIG-WARN].")
+        if qtest == "welch" and q.get("fold_change_threshold", 1.4) != 1.4:
+            rep.warn("B11", "quantification.fold_change_threshold is authored but test is 'welch', "
+                            "which does not read it (the fold change is still logged). [CONFIG-WARN].")
 
     # --- ADR-0039: the quantification objective ------------------------------------------------
     # Parsed whatever `enabled` says, exactly as Config does: these two are read during parsing and
@@ -484,7 +531,7 @@ def validate(path, ref):
                              f"'{enriched_in}'. Valid: {known}, or 'either'. It names the CONDITION "
                              "a species must be enriched in for a differential verdict to buy the "
                              "identification scan -- never a direction, because fold_change is "
-                             "mean(conditions[0]) / mean(conditions[1]) and 'up' would mean "
+                             "gmean(conditions[0]) / gmean(conditions[1]) and 'up' would mean "
                              "'enriched in whichever condition is listed first'.")
         elif q.get("enabled") and identify != "differential":
             # The engine ACCEPTS this and says so at load. Exactly the category this skill exists
