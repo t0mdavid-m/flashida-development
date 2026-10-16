@@ -1,6 +1,6 @@
 # 0058. The key documentation is a JSON Schema no loader reads, held to the model by a test
 
-Status: Accepted (grilled 2026-10-11), **not implemented**.
+Status: Accepted (grilled 2026-10-11), implemented 2026-10-16 (FlashIDA `fb6080e`, Pages run 38945618649). Live at https://t0mdavid-m.github.io/FlashIDA/.
 Plan: `docs/superpowers/plans/2026-10-16-method-json-key-documentation-site.md`.
 
 ## Context
