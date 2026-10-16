@@ -591,6 +591,7 @@ if (tracker_.recordDiscriminatingScan(precursor_id, cached_ms2_ctx.fragment_mass
 ### Task 13: Docs
 
 - [ ] Root `CLAUDE.md`: ADR list gains 0049 with the hazards (method default; `refine` block refused under `flashtnt`; `discriminating` refine-only; identification has 41 columns; 30 golden modes; markers on stdout; the prototype is a generator, not an oracle). `OpenMS/CLAUDE.md`: `Refine` owns Detect/Assemble/pieces; `FragmentAnalysis` switches on the method; tracker's discriminating planner and round decision. `FlashIDA/CLAUDE.md`: the new golden, `refine/` fixtures, `test-scripts/refine/`. KB `docs/kb/fragment-analysis/`: a `refine.md` page + README three-mode map → four; refresh the stale anchors the audit found (`computeFragmentMatch_` :1345, `getTopFragmentMatches` :791, `calibrateAndScore` :541, identification header in `IdaLogger.cpp:153`). `FIXTURES.md` pointer. ADR-0049 status → Accepted with the landing date; CONTEXT.md unchanged.
+- [ ] Key documentation: update FlashIDA/docs/site/method.schema.json for characterization.method, characterization.refine.* and mode: discriminating (ADR-0058); confirm the Pages run republished.
 - [ ] Commit docs separately; push; watch; add the calibration row to `docker/README.md`; update memory `project-refine-annotation-method.md` to DONE with the run id.
 
 ---

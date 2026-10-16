@@ -1427,6 +1427,7 @@ END_SECTION
 - [ ] Root `CLAUDE.md`: the ADR list gains 0047/0048 with one-line hazards (k₂ never defaulted; `remaining_precursor_target` is a share; no baseline anywhere; 29→31 golden modes; `scan_results` has 50 columns; the `KineticModel` helper is the 16th); the "0029" sentence in the helper list and the "a baseline exists for every metric" claims are rewritten. The goldens table: 31 modes × 5 streams = 155 files.
 - [ ] `OpenMS/CLAUDE.md`: `KineticModel` owns the fit; `Exploration` decides by metric: measured winner or modeled maximum.
 - [ ] `FlashIDA/CLAUDE.md`: the two new golden tests, the MS3 ion+CE selector, `BuildMs2CeMap` glob.
+- [ ] Key documentation: update FlashIDA/docs/site/method.schema.json for every key this plan changed in meaning or allowed values (exploration.metric's kinetic_model value, kinetic_model.k2, remaining_precursor_target's new reading; ADR-0058) and confirm the Pages run republished.
 - [ ] KB exploration packet: rewrite `scoring-and-winner.md` (no baseline, share, kinetic decision, `energy_source`), `variants-and-sweeps.md` (grid rule), refresh anchors and `last_verified`.
 - [ ] Commit docs separately: `docs: ADR-0047/0048 implemented — CLAUDE.md x3, exploration KB, skill`.
 

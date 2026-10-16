@@ -138,6 +138,7 @@ Only three files gain a `tag_expansion` block.
 | C++ test **fixture JSON**, all at `3` / `50000` | 103 occurrences across 14 files (63 `"flashtnt"` blocks, 97 lines — 7 lines carry both keys) | **Delete** both keys |
 | C++ test **assertions** — `ConfigSchemaParity_test.cpp:87-88` | 2 | **Repoint**, not delete — see Tests |
 | `config_schema_reference.json` | 1 | **Regenerate** — never hand-edit |
+| `FlashIDA/docs/site/method.schema.json` | 1 | **Document** the changed tag_expansion keys (ADR-0058) |
 
 Deletion is value-preserving because the new defaults equal the old ones on both sides: C# emits
 `3`/`50000` for a config that omits the block, and a hand-written C++ fixture that omits it hits
