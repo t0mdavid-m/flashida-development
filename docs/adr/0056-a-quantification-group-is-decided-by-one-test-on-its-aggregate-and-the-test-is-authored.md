@@ -1,6 +1,6 @@
 # 0056. A quantification group is decided by one test on its aggregate, and the test is authored
 
-Status: Accepted (2026-10-15), **not yet implemented**.
+Status: Accepted (2026-10-15) and IMPLEMENTED (2026-10-16): OpenMS 08b1a255a1, FlashIDA 68b93b3, parent 070818b; CI run 38849844826 green (C# 193/192/0/1, ctest 30/30). No Welch run on hardware yet.
 Supersedes: [ADR-0040](0040-quantification-votes-across-charge-states.md) — the directional
 majority vote, the dissent exclusion, the `window_snr` tie-break, the ballot floor and the
 `consensus_*` columns. What 0040 added to *acquisition* — the authored floor and cap on the
