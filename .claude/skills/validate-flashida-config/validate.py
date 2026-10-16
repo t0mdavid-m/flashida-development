@@ -497,6 +497,29 @@ def validate(path, ref):
             rep.warn("B11", "quantification.fold_change_threshold is authored but test is 'welch', "
                             "which does not read it (the fold change is still logged). [CONFIG-WARN].")
 
+    # --- ADR-0057: authored channel normalisation ----------------------------------------------
+    # Parsed whatever `enabled` says, as Config parses it. Unknown channel NAMES are left to the
+    # engine: this script carries no per-labelling channel table.
+    cn = q.get("channel_normalization")
+    if cn is not None:
+        if not isinstance(cn, dict):
+            rep.error("A34", "quantification.channel_normalization must be an OBJECT mapping channel "
+                             "name to a positive divisor (ADR-0057). Config throws at load.")
+        elif cn:
+            for name, f in cn.items():
+                if isinstance(f, bool) or not isinstance(f, (int, float)) or not (f > 0) or f != f or f == float("inf"):
+                    rep.error("A34", f"quantification.channel_normalization['{name}'] is {f!r}; a channel "
+                                     "is DIVIDED by it, so it must be a finite number above 0 (ADR-0057).")
+            for c in (q.get("conditions") or []):
+                if not isinstance(c, dict):
+                    continue
+                for ch in (c.get("channels") or []):
+                    if ch not in cn:
+                        rep.error("A34", f"quantification.channel_normalization has no factor for channel "
+                                         f"'{ch}', which condition '{c.get('name')}' uses. Once authored it "
+                                         "must name every assigned channel -- a silent 1.0 would compare a "
+                                         "corrected channel against an uncorrected one (ADR-0057).")
+
     # --- ADR-0039: the quantification objective ------------------------------------------------
     # Parsed whatever `enabled` says, exactly as Config does: these two are read during parsing and
     # only their MUTUAL constraint is gated on enabled. config_schema_reference.json relies on that
