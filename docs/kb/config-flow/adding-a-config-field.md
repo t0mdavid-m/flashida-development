@@ -1,7 +1,7 @@
 ---
 title: Adding a Config Field
 applies_to: FlashIDA/src/Flash/MethodConfig.cs, FlashIDA/src/Flash/MethodParameters.cs, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp
-last_verified: 2026-07-13
+last_verified: 2026-10-16
 code_anchors:
   - FlashIDA/src/Flash/MethodConfig.cs:389   # MethodConfig root
   - FlashIDA/src/Flash/MethodConfig.cs:463   # JsonPrecursorSelectionConfig proxy (bridge-emit side)
@@ -15,6 +15,7 @@ code_anchors:
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:45   # default_level_
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp:84   # Config::Config parse
   - FlashIDA/test-data/config_schema_reference.json   # generated drift-guard reference (never hand-edit)
+  - FlashIDA/docs/site/method.schema.json   # hand-written key documentation (ADR-0058)
 see_also:
   - config-flow.md
   - developer-attribute.md
@@ -73,6 +74,12 @@ Example: add `precursor_selection.new_knob: double = 0.5`.
    optionally add an explicit assertion. If you wired only one side, a parity test — or the
    hard-reject `UnknownKey_Throws` — fails.
 
+7b. **Key documentation.** Add the key to `FlashIDA/docs/site/method.schema.json` with `type`,
+   `default` and `description` (ADR-0058); `KeyDocumentationParityTests` fails otherwise. The
+   same applies when an edit changes what an existing key does, its default or its allowed
+   values: no test can see stale prose. A push to `phase-containers` republishes
+   https://t0mdavid-m.github.io/FlashIDA/.
+
 8. **Test-mode sanity.** Add the key to a `method.json` test fixture. Run:
    `Flash.exe input_file output_file method.json [ms2_spectrum_file]`
    (signature per `FlashIDA/src/Flash/IDA/FLASHIdaWrapper.cs:399`). Confirm the new field
@@ -123,7 +130,8 @@ Use this when adding a new MS level (e.g., MS4) or a new field on the shared `MS
    field (or the new level) must be extended.
 
 6. **Drift guard + test-mode sanity.** Set the field in `BuildFullReferenceConfig` and regenerate
-   the reference (`REGEN_CONFIG_REFERENCE=1`, as in Scenario 1, step 7), then run the Flash
+   the reference (`REGEN_CONFIG_REFERENCE=1`, as in Scenario 1, step 7), document the key in
+   `FlashIDA/docs/site/method.schema.json` (Scenario 1, step 7b), then run the Flash
    test-mode CLI as in Scenario 1, step 8.
 
 ---

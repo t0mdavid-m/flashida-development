@@ -1,7 +1,7 @@
 ---
 title: Config Flow Packet
 applies_to: FlashIDA/src/Flash/MethodParameters.cs, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp
-last_verified: 2026-07-13
+last_verified: 2026-10-16
 code_anchors:
   - FlashIDA/src/Flash/MethodParameters.cs:92   # MethodParameters.Load entry
   - FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs:23   # Deserialize (reads the bridge schema)
@@ -61,8 +61,13 @@ unknown keys are hard-rejected on both sides. See ADR-0007.
   `Reject_UnknownKey_Throws`.
 - `ConfigSchemaParity_test` (C++ / ctest) — `EveryKey_ParsesToOnDiskValue` (each parsed field ==
   the on-disk value — a read-proof with no hard-coded sentinels), `UnknownKey_Throws`.
+- `KeyDocumentationParityTests` (C# / NUnit) — holds the hand-written key documentation
+  `FlashIDA/docs/site/method.schema.json` to the reference's key set and requires a description
+  per key; the fork's Pages workflow validates every committed config against it with ajv
+  (ADR-0058). The rendered site is https://t0mdavid-m.github.io/FlashIDA/.
 - `.claude/hooks/config-schema-drift-reminder.sh` (PreToolUse) — fires when `Config.{cpp,h}`,
-  `MethodConfig.cs`, `MethodParameters.cs`, or `MethodConfigSerializer.cs` is edited.
+  `MethodConfig.cs`, `MethodParameters.cs`, `MethodConfigSerializer.cs` or
+  `docs/site/method.schema.json` is edited; its step (4) is "document the key".
 
 ## Related Packets
 

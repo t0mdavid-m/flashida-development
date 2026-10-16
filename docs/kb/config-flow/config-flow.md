@@ -1,7 +1,7 @@
 ---
 title: Config Flow — one bridge schema, C# to C++ engine
 applies_to: FlashIDA/src/Flash/MethodParameters.cs, FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/Config.cpp
-last_verified: 2026-08-07   # NOTE: the "Schema Drift Guard" wording was corrected 2026-08-27 — the guard is test-gated, so both local containers run it as well as CI; every other claim carries the 2026-08-07 verification.
+last_verified: 2026-08-07   # NOTE: the "Schema Drift Guard" wording was corrected 2026-08-27 — the guard is test-gated, so both local containers run it as well as CI; every other claim carries the 2026-08-07 verification. The guard list gained the key documentation on 2026-10-16 (ADR-0058).
 code_anchors:
   - FlashIDA/src/Flash/MethodParameters.cs:92   # Load
   - FlashIDA/src/Flash/IDA/MethodConfigSerializer.cs:23   # Deserialize
@@ -181,8 +181,13 @@ side if a field is added to only one. A permanent, test-gated guard makes that a
 - `ConfigSchemaParity_test` (C++ / ctest) — `EveryKey_ParsesToOnDiskValue` asserts each parsed
   field equals the on-disk value (a read-proof with no hard-coded sentinels); `UnknownKey_Throws`
   proves the C++ reader rejects unknown keys.
-- `.claude/hooks/config-schema-drift-reminder.sh` (PreToolUse) — reminds you to move both sides
-  and regenerate the reference when a schema file is edited.
+- `KeyDocumentationParityTests` (C# / NUnit) — holds the hand-written key documentation
+  `FlashIDA/docs/site/method.schema.json` to the reference's key set and requires a description
+  per key; the fork's Pages workflow validates every committed config against it with ajv
+  (ADR-0058).
+- `.claude/hooks/config-schema-drift-reminder.sh` (PreToolUse) — reminds you to move both sides,
+  regenerate the reference and document the key when a schema file is edited, and fires on the
+  key documentation itself.
 
 ## Gotchas
 

@@ -165,5 +165,10 @@ gate passes against its own output and the schema silently drifts. Note this fil
 `test-data/golden`, so the golden write guard does not see it — widening the change detector to
 cover it is deferred until the owner rules on whether the container may regenerate it at all.
 
+**A key change also moves the key documentation.** `FlashIDA/docs/site/method.schema.json` must
+gain, lose or re-describe the key in the same change (ADR-0058, `KeyDocumentationParityTests`), and
+it renders the public site at https://t0mdavid-m.github.io/FlashIDA/. If a check in this script
+encodes a rule about a key, that key's description on the site should state the same rule.
+
 The behavioural checks are keyed to code anchors named in the messages; if one stops resolving, the
 check is stale and must be re-derived, not trusted.
