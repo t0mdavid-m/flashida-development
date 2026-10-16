@@ -86,7 +86,7 @@ Already done in the parent working tree during planning (uncommitted): ADR-0058,
 - A disagreement found between docs and engine while reading is **reported to the owner, not fixed** (no engine code in this plan).
 - Renderer: Node built-ins only (`fs`, `path`, `child_process`, `node:test`, `node:assert`). Output to `FlashIDA/docs/site/_site/` (gitignored).
 - ajv command, exactly (spiked 2026-10-16, exits 1 on an invalid file):
-  `npx --yes ajv-cli@5.0.0 validate --spec=draft2020 --strict=false --all-errors --errors=line -s docs/site/method.schema.json -d "test-data/configs/method_*.json" -d src/Flash/etc/method.json`
+  `npx --yes ajv-cli@5.0.0 validate --spec=draft2020 --strict=false --all-errors --errors=line -s docs/site/method.schema.json -d "test-data/configs/method_*.json" -d src/Flash/etc/method.json -d test-data/config_schema_reference.json`
 - Site title: "FLASHIda method.json keys". URL `https://t0mdavid-m.github.io/FlashIDA/`. Light theme only. System fonts.
 - Deploy branch: exactly `phase-containers`. Nothing else may deploy.
 - `FlashIDA/.gitattributes` forces CRLF on checkout. Never `sed -i` a file under `FlashIDA/` (memory: sed strips CRLF); use the Edit/Write tools or Node.
