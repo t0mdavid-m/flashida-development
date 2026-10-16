@@ -15,6 +15,9 @@ two-condition rule and the partial-condition rejection all stand.
 Related: [ADR-0039](0039-the-quantification-objective-decides-what-a-verdict-buys.md) —
 `identify` and `enriched_in` are untouched; they cut on the group verdict exactly as they cut on
 the consensus verdict, and `enriched_in` still reads the condition means.
+Amended by: [ADR-0057](0057-channel-normalisation-is-authored-and-corrects-only-what-the-test-reads.md) —
+the pipeline's run-wide channel-median normalisation, which this ADR could not reproduce live,
+enters as authored per-channel factors applied only to what the test reads.
 
 ## Context
 

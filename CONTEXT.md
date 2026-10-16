@@ -1127,6 +1127,19 @@ _Avoid_: reading the live p-value as a calibrated significance (nothing corrects
 many tests); "t-test on the intensities" — it is on their log2; the arithmetic ratio of channel
 means, which the engine no longer computes anywhere.
 
+**Channel normalisation factor**:
+One number per reporter channel, supplied by the user from a previous run's data, that each
+channel is divided by before the **quantification test** reads it. It corrects how much of each
+sample went in and how well it was labelled — the run-wide imbalance an offline evaluation removes by
+dividing each channel by its median over all species, which a live decision cannot compute because
+the run is not over. Only the factors' ratios to each other matter: scaling them all by one constant
+changes neither the fold change nor the Welch test. Without them, a loading imbalance shifts every
+species' ratio by the same amount and makes the replicates of one condition look less alike than
+they are.
+_Avoid_: "correction factor" or "correction matrix", which is the isotope-impurity correction — a
+property of the label lot, not of the sample; reading the factors as estimated by the engine — they
+are authored, and nothing the run measures changes them.
+
 **Empty condition**:
 A condition none of whose assigned channels carried a reporter, against a condition that carried
 one in **every** channel. What it means is authored: the strongest result the experiment can
