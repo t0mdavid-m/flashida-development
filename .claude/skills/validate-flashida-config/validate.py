@@ -59,6 +59,8 @@ SHARE_METRICS = {"remaining_precursor", "kinetic_model"}
 KNOWN_ANALYZERS = ("Orbitrap", "IonTrap", "")   # ADR-0045 decision 3; "" = instrument method default
 
 TARGETING_VALUES = {"none", "inclusion", "in_depth", "exclusion_masses"}
+# ADR-0059 -- precursor_selection.charge_selection, case-sensitive.
+CHARGE_SELECTION_VALUES = {"snr", "qscore", "intensity", "purity"}
 # ScanCommand.h -- MAX_NOTCHES_PER_STAGE (9) + the anchor. An ABI dimension (Notch notches[18],
 # ADR-0019), so precursor_selection.max_charge_states can only lower it, never raise it.
 MAX_CHARGE_STATES_CEILING = 10
@@ -350,6 +352,20 @@ def validate(path, ref):
     if targeting not in TARGETING_VALUES:
         rep.error("A16", f"precursor_selection.targeting '{targeting}' is not legal; expected one "
                          f"of {sorted(TARGETING_VALUES)}")
+
+    # --- charge_selection / reselect_charges (ADR-0059) ----------------------------------------
+    csel = ps.get("charge_selection", "snr")
+    if csel not in CHARGE_SELECTION_VALUES:
+        rep.error("A35", f"precursor_selection.charge_selection '{csel}' is not legal; expected one "
+                         f"of {sorted(CHARGE_SELECTION_VALUES)} (case-sensitive)")
+    elif csel == "purity" and ps.get("precursor_charges", "single") == "multiplexed":
+        rep.error("A35", "precursor_selection.charge_selection is \"purity\" under precursor_charges "
+                         "\"multiplexed\". Every notch shares one fill, so a notch's own purity does not "
+                         "rank what the scan transmits. Config::validate() throws on this.")
+    if ps.get("reselect_charges") is True and ps.get("precursor_charges", "single") == "multiplexed":
+        rep.warn("B13", "precursor_selection.reselect_charges is true under precursor_charges "
+                        "\"multiplexed\": a co-isolated set is never reselected, so the key is INERT. "
+                        "[CONFIG-WARN] (ADR-0059)")
 
     # --- charge-set bounds (ADR-0040) ---------------------------------------------------------
     # Both keys are inert at their defaults (min 1, max 0), so every check here fires only on a
