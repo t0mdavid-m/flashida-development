@@ -71,7 +71,7 @@ Two pushes plus docs:
 
 | Push | What | Goldens |
 |---|---|---|
-| 1 | Stamp journal (applied immediately, so behaviour is unchanged); queue plan registry, `replacePlan`, inbox, reconcile; `Exploration::dropGroup`. `replacePlan` is exercised only by tests. | none |
+| 1 | Stamp journal (write-only; rollback exists but is not called, so behaviour is unchanged); queue plan registry, `replacePlan`, inbox, reconcile; `Exploration::dropGroup`. `replacePlan` is exercised only by tests. | none |
 | 2 | Switch on: the survey routes through `replacePlan`; commit-at-dequeue; fold at survey start; remainder re-plan; bought-`R` adjust; two `scan_commands` columns; `ID=` / `Superseded=`; loader; join; retire `reselect_charges` | move — see Task 12 |
 | 3 | New ADR, CONTEXT.md, three CLAUDE.md, KB, schema site | — |
 
@@ -178,7 +178,7 @@ namespace OpenMS
 ```
 FLASHIda (analysis thread, holds analysis_mutex_)
  ├── PrecursorSelection selection_   memory_ = COMMITTED memory only (after Push 2)
- │      filterAndRank(...) → selectedPeakGroups() + journal()      (memory_ rolled back to entry snapshot)
+ │      filterAndRank(...) → selectedPeakGroups() + journal();  rollbackAcquisitionMemory() (Push 2)
  │      applyStamps(const std::vector<MemoryStamp>&)                (fold)
  ├── Exploration exploration_        + dropGroup(group_id)          (new)
  ├── Quantification quant_           closeGroup(group_id)           (exists)
@@ -250,148 +250,86 @@ tests = `OpenMS/src/tests/class_tests/openms/source/`.
 
 # PUSH 1 — byte-identical plumbing
 
-### Task 1: `PlanUnit.h` types and `wouldBar`
+### Task 1: DONE — OpenMS `f643769934`, parent `3bbb6ce` (review passed; not pushed)
 
-**Files:**
-- Create: `inc/FLASHIda/PlanUnit.h`
-- Create: tests `PlanUnit_test.cpp`; register in `executables.cmake` (`analysis_executables_list`, after
-  `FLASHIda_CandidateAdmission_test`), the yml `--target` block (after `FLASHIda_CandidateAdmission_test`), and the
-  `-R` alternation (`|PlanUnit_test`).
+Carried forward from its review, binding on later tasks:
+- `3bbb6ce` registers `PlanUnit_test` in the yml; it must ship in the **same push** as the OpenMS gitlink bump.
+- `wouldBar` takes the **last** `MassQscore` by vector position. Every `committed` vector passed to it (`inbox_`,
+  `committed_since_fold_`) must stay in commit order. Never sort or merge them out of order.
+- `wouldBar` doesn't model the sibling exemption or the selection-phase gating. It's used only for reconcile, against
+  a new unit's anchor, in the exclusion-applying phase.
 
-**Interfaces:**
-- Produces: the types in *Architecture*; `bool wouldBar(const std::vector<MemoryStamp>&, const UnitAdmissionKey&)`.
+### Task 2 (RE-PLANNED 2026-10-22): journal the acquisition writes; rollback is a separate call
 
-`wouldBar` is the exclusion and qscore gate of `admitCandidate`, evaluated against stamps instead of `SurveyMemory`:
+**Why re-planned.** The first version rolled back the whole `SurveyMemory` inside `filterAndRank`. It failed three ways
+(found by the Task 2 implementer before any edit):
+- **(a)** `window_id_` and `id_*_map_` live in `SurveyMemory` (H:263-269) and must keep advancing, so a whole-struct
+  rollback contradicts itself.
+- **(b)** The legacy charge erase writes `target_mass_charge_map_`, which isn't in `SurveyMemory`. A rollback misses it,
+  and the replay then erases twice.
+- **(c)** The replay test compared new code with new code.
 
-```cpp
-inline bool wouldBar(const std::vector<MemoryStamp>& committed, const UnitAdmissionKey& k)
-{
-  using K = MemoryStamp::Kind;
-  bool mass_barred = false, mz_barred = false, anchor_spent = false;
-  const double* qbar = nullptr;
-  for (const auto& s : committed)
-  {
-    if (s.kind == K::TqMassRt && s.key == k.nominal_mass) mass_barred = true;
-    if (s.kind == K::TqMzRt   && s.key == k.integer_mz)   mz_barred = true;
-    if (s.kind == K::AuthoredAcquired && s.key == k.nominal_mass && s.charge == k.anchor_charge) anchor_spent = true;
-    if (s.kind == K::MassQscore && s.key == k.nominal_mass) qbar = &s.value;   // last write wins, as the map's overwrite
-  }
-  if (k.has_authored) return anchor_spent;                         // CA:474-477: authored reads only its per-charge bar
-  if (mass_barred || mz_barred) return true;                       // CA:479-486
-  return qbar != nullptr && k.score < *qbar;                       // CA:529 ScoreNotBetter
-}
-```
+**The fix: journal in Push 1, roll back in Push 2.**
 
-- [ ] **Step 1: Write the failing tests** (`PlanUnit_test.cpp`)
-
-```
-START_SECTION(wouldBar_matches_admitCandidate_on_the_gate_table)      // bidirectional drift guard
-  for each row of a table {authored?, stamps present (TqMass / TqMz / Authored(z) / MassQscore=q), candidate score, anchor z}:
-    memory = SurveyMemory built from the same stamps
-    v = admitCandidate(ctx built from memory, …)                       // the real gate
-    TEST_EQUAL(wouldBar(stamps, key), v.reason == Barred || v.reason == ScoreNotBetter)
-  rows cover: none; TqMass only; TqMz only; both; authored spent z; authored other z; authored + TqMass (must NOT bar);
-              qbar above/below/equal score; two MassQscore writes (last wins)
-END_SECTION
-START_SECTION(wouldBar_empty_never_bars)   TEST_EQUAL(wouldBar({}, any key), false)
-```
-
-The drift guard is bidirectional: it fails if `admitCandidate` changes and `wouldBar` doesn't, and the reverse.
-
-- [ ] **Step 2:** `ci cpp PlanUnit_test` → FAIL (header missing).
-- [ ] **Step 3:** Write `PlanUnit.h` as above (with the OpenMS license header and `#pragma once`).
-- [ ] **Step 4:** `ci lists` shows `PlanUnit_test`; `ci cpp PlanUnit_test` → PASS.
-- [ ] **Step 5:** Commit `feat(FLASHIda): PlanUnit types and wouldBar, the reconcile gate`.
-
-### Task 2: Journal `PrecursorSelection`'s acquisition writes (applied immediately, so Push 1 is identical)
-
-**Files:**
-- Modify: `inc/FLASHIda/PrecursorSelection.h` (`SurveyMemory` H:237-276; public API near H:195)
-- Modify: `src/FLASHIda/PrecursorSelection.cpp`: the writes at C:697, 728, 826, 829-830, 835-840; `filterAndRank`
-  entry at C:191; the expiry at C:342-383 stays.
-- Test: `FLASHIda_ChargeModes_test.cpp` (builds `PrecursorSelection` directly, :276) — new sections only.
-
-**Interfaces:**
-- Produces: `const SelectionJournal& PrecursorSelection::journal() const;`
-  `void PrecursorSelection::applyStamps(const std::vector<MemoryStamp>& stamps);`
-  `static std::vector<MemoryStamp> flatten(const SpeciesStamps&);` (all species-level + all per-charge stamps)
-
-Mechanism. Within one survey, writes are deliberately read back (H:232-235): phase 1 and iteration 1 re-walk
-against phase 0's writes. So `filterAndRank` keeps writing into `memory_` exactly as today, and **in addition** records
-each write in the journal. Then:
-
-```cpp
-int PrecursorSelection::filterAndRank(...)
-{
-  journal_ = {};
-  // (expiry pass stays where it is, at the top of filterPeakGroupsUsingMassExclusion_)
-  const SurveyMemory entry = memory_;          // ← snapshot AFTER expiry (moved: see below)
-  ...                                          // unchanged selection, each memory_ write followed by record_(...)
-  memory_ = entry;                             // roll back: memory_ holds committed memory only
-  return (int)selected_peak_groups_.size();
-}
-```
-
-The snapshot has to be taken after expiry, which runs inside `filterPeakGroupsUsingMassExclusion_`. So take the
-snapshot at the end of the expiry block (after C:383) and roll back at that function's end.
-
-`record_` routing at each write site:
-
-| Site | Today | Journal entry |
+| | Push 1 (this task) | Push 2 (Task 8) |
 |---|---|---|
-| C:697 `all_mass_rt_map_[nm] = rt` | before the admit check | **pending** on the candidate; becomes `species[nm].species_level` if admitted this candidate, else `survey_level`. `// ISSUE: refused candidates also refresh the qscore bar's lifetime today; survey_level keeps that by committing at survey end, unchanged` |
-| C:728 authored `(nm, c) = rt` per acquired c | admitted, authored | `species[nm].per_charge[c]` |
-| C:826 `mass_qscore_map_[nm] = record_score` | admitted, non-authored | `species[nm].species_level` |
-| C:829-830 tq maps | admitted, arms_bars | `species[nm].species_level` (both) |
-| C:835-840 legacy target charge erase | mode 1, legacy .log | `species[nm].species_level`, `LegacyTargetChargeErase` `// ISSUE: `charges` can point at an earlier candidate's entry (audit §1); journaled exactly as erased, not fixed here` |
+| writes in `filterAndRank` | in place, exactly as today, **plus** a journal entry each | same |
+| rollback | **not called** — so Push 1 is byte-identical by construction (no replay, no identity wiring) | `selection_.rollbackAcquisitionMemory()` right after `filterAndRank` |
+| replay | — | the fold at survey start (`applyStamps(takeCommitted())`) |
 
-`applyStamps` replays the stamps in order, with the same operations (`operator[]=`, `erase`). The `id_*_map_` maps and
-`window_id_` are **not** journaled: nothing reads them for a decision (only `removeFromExclusionList`, which has no
-caller), and `window_id_` must keep increasing.
-
-**Push 1 wiring (identity):** in `FLASHIda::runSurveyMS1_`, right after `filterAndRank`:
-
+**Interfaces (produces):**
 ```cpp
-std::vector<MemoryStamp> all = selection_.journal().survey_level;
-for (const auto& [nm, sp] : selection_.journal().species)
-{ auto f = PrecursorSelection::flatten(sp); all.insert(all.end(), f.begin(), f.end()); }
-std::sort(all.begin(), all.end(), [](const MemoryStamp& x, const MemoryStamp& y) { return x.seq < y.seq; });
-selection_.applyStamps(all);   // exactly the original write sequence
+const SelectionJournal& PrecursorSelection::journal() const;
+/// Restore the ACQUISITION containers to their state at the end of this survey's expiry pass. Restores exactly:
+/// all_mass_rt_map_, mass_qscore_map_, tqscore_exceeding_mass_rt_map_, tqscore_exceeding_mz_rt_map_,
+/// authored_acquired_rt_map_ (SurveyMemory) and target_mass_charge_map_ (member).
+/// It does NOT touch window_id_ / id_*_map_ (window bookkeeping, never a decision input, keeps advancing)
+/// or anything else.
+void PrecursorSelection::rollbackAcquisitionMemory();
+void PrecursorSelection::applyStamps(const std::vector<MemoryStamp>& stamps);   // replay, same ops, in vector order
+static std::vector<MemoryStamp> PrecursorSelection::flatten(const SpeciesStamps&);
 ```
 
-This is **order-sensitive**. `mass_qscore_map_` is an overwrite and `all_mass_rt_map_` drives its expiry, so replay
-must reproduce the original write order. Record a monotone `seq` on each stamp, and in Push 1 apply all stamps of
-the survey merged by `seq`. Add `int seq` to `MemoryStamp`; `flatten` doesn't sort, and the Push 1 call site sorts the
-union by `seq`.
+**The snapshot.** At the end of the expiry block (after the old C:383, now shifted), copy the six containers into a
+private `AcquisitionSnapshot acq_entry_` (a struct holding those six). Do this every survey. `rollbackAcquisitionMemory`
+assigns them back. Nothing in Push 1 calls it.
 
-- [ ] **Step 1: Write the failing tests** (new sections in `FLASHIda_ChargeModes_test.cpp`):
+**Journal routing.** Same as before: C:697 `AllMassRt` is pending on the candidate, then goes to `species[nm]` if
+admitted or to `survey_level` if refused; C:728 goes to `per_charge[c]`; C:826 and C:829-830 go to `species_level`;
+C:835-840 goes to `species_level` as `LegacyTargetChargeErase {key = nominal, legacy_mass = the exact map key, charge}`.
+`legacy_mass` is the exact `target_mass_charge_map_` key (a double), because the erase dereferences the `charges`
+pointer chosen at C:557. Its stale-pointer quirk is journaled as it behaves, not fixed. Each stamp gets a monotone
+`seq`.
 
+**Tests** (new sections in `FLASHIda_ChargeModes_test.cpp`; this replaces the earlier list):
 ```
-START_SECTION(journal_replay_reproduces_in_place_memory)
-  for config in {single, separate, multiplexed, authored inclusion (method_inclusion_charge_set), in_depth two-iteration}:
-    A = PrecursorSelection run over the ms1 fixture sequence with the OLD semantics emulated:
-        after each filterAndRank, applyStamps(all journal stamps by seq)
-    B = FLASHIdaTestAccess::surveyMemory of an engine driven with runFullCycle over the same fixtures (production path)
-    TEST_EQUAL(A.memory == B.memory)   // whole-struct ==, SurveyMemory has operator== (H:273)
+START_SECTION(journal_replay_reproduces_in_place_memory)        // non-vacuous: old in-place path vs replay
+  for config in {single, separate, multiplexed, authored inclusion (method_inclusion_charge_set), in_depth (method_deep),
+                 legacy .log inclusion (mode 1 with test_target_log.log)}:
+    for each survey of the fixture sequence (forEachSurvey helper):
+      ps.filterAndRank(...)
+      A = acquisition containers of ps NOW               // in place, the unchanged production behaviour
+      ps.rollbackAcquisitionMemory()
+      ps.applyStamps(all journal stamps merged by seq)
+      B = acquisition containers of ps NOW               // entry state + replay
+      TEST_EQUAL(A == B)                                  // all six containers
 END_SECTION
-START_SECTION(filterAndRank_leaves_memory_at_its_entry_state)
-  m0 = memory after expiry; filterAndRank(fixture admitting ≥2 species); TEST_EQUAL(memory == m0)
+START_SECTION(rollback_restores_exactly_the_acquisition_containers)
+  e = acquisition containers + window_id_ after expiry (read via a survey with zero candidates)
+  filterAndRank(fixture admitting ≥2 species); w = window_id_
+  rollbackAcquisitionMemory()
+  TEST_EQUAL(acquisition containers == e); TEST_EQUAL(window_id_ == w)   // bookkeeping NOT rolled back
 END_SECTION
-START_SECTION(siblings_share_one_species_stamp_set)
-  fixture ms1_cytc (ADR-0036 split envelopes; method_inclusion_charge_set):
-  TEST_EQUAL(journal.species.count(nominal(cytC)), 1); per_charge holds every acquired charge across both PeakGroups
-END_SECTION
-START_SECTION(refused_candidate_stamp_is_survey_level)
-  two candidates, same nominal; the second ScoreNotBetter (lower qscore): survey_level holds its AllMassRt, species[] doesn't
-END_SECTION
+START_SECTION(siblings_share_one_species_stamp_set)              // unchanged
+START_SECTION(refused_candidate_stamp_is_survey_level)           // unchanged
 ```
+Container access for the tests goes through `FLASHIdaTestAccess` friend accessors in `FLASHIda_TestAccess.h` (a test
+file). No accessor is added to the production header beyond `journal()`, `rollbackAcquisitionMemory()`,
+`applyStamps()` and `flatten()`, which production uses in Push 2.
 
-- [ ] **Step 2:** `ci cpp FLASHIda_ChargeModes_test` → the new sections FAIL.
-- [ ] **Step 3:** Implement the journal, snapshot/rollback, `applyStamps`, `flatten`, and the identity wiring.
-- [ ] **Step 4:** `ci cpp FLASHIda_ChargeModes_test` PASS, then `ci cpp --full` PASS (30/30 + `PlanUnit_test`).
-  `FLASHIda_exploration_test`'s whole-struct `surveyMemory ==` monitor-neutrality checks (:4671-4888) must stay
-  green unchanged.
-- [ ] **Step 5:** Commit `refactor(FLASHIda): selection journals its acquisition writes; applied immediately`.
+**Push 1 is byte-identical by construction:** production makes the same writes in the same order, and the journal is
+write-only. Step 4 still runs `ci cpp --full`, and `FLASHIda_exploration_test`'s `surveyMemory ==` checks must stay
+green unchanged.
 
 ### Task 3: Drift guard on a real survey
 
@@ -612,7 +550,7 @@ New `runSurveyMS1_` order:
 ```
 0. fold:     selection_.applyStamps(queue_.takeCommitted());                   // committed since the last survey
              selection_.applyStamps(previous survey's survey_level stamps)     // kept from the last call (member)
-1. n = selection_.filterAndRank(...)                                           // memory_ rolled back inside
+1. n = selection_.filterAndRank(...); selection_.rollbackAcquisitionMemory()      // journal kept, memory = committed
 2. build units: group entries i by nominal mass (SpectralDeconvolution::getNominalMass(selected[i].getMonoMass()))
      for each species: PlanUnit{cv=faims_cv, nominal, decision_survey_id=parent_tracking_id,
                                 role = quant ? Quant : (exploration ? Sweep : Plain),
@@ -654,7 +592,7 @@ START_SECTION(siblings_form_one_unit)
 END_SECTION
 START_SECTION(depth1_drive_is_unchanged_without_a_stale_survey)
   runFullCycle(method_default, ms1_standard) → scan_commands rows identical (all columns except the 2 new) to a capture
-  taken with Task 2's identity wiring — re-planning never fires at depth 1 without a waiting same-CV unit
+  taken at the Push 1 tip (no rollback) — re-planning never fires at depth 1 without a waiting same-CV unit
 END_SECTION
 ```
 - [ ] Steps 2–4: fail → implement → `ci cpp FLASHIda_Replan_test` + `ci cpp --full` PASS.
@@ -880,7 +818,7 @@ Predicted golden movement. Any cell outside this table → STOP:
 | Exe | New | Changed ✎ | Deleted |
 |---|---|---|---|
 | `PlanUnit_test` (new exe) | `wouldBar_matches_admitCandidate_on_the_gate_table`, `wouldBar_empty_never_bars`, `wouldBar_agrees_with_selection_on_a_real_survey` | | |
-| `FLASHIda_ChargeModes_test` | `journal_replay_reproduces_in_place_memory`, `filterAndRank_leaves_memory_at_its_entry_state`, `siblings_share_one_species_stamp_set`, `refused_candidate_stamp_is_survey_level` | | |
+| `FLASHIda_ChargeModes_test` | `journal_replay_reproduces_in_place_memory`, `rollback_restores_exactly_the_acquisition_containers`, `siblings_share_one_species_stamp_set`, `refused_candidate_stamp_is_survey_level` | | |
 | `ScanCommandQueue_Concurrent_test` | 9 sections (Task 4) | | |
 | `FLASHIda_exploration_test` | `dropGroup_forgets_an_unsent_group`, `dropGroup_refuses_a_group_with_a_received_variant` | | |
 | `FLASHIda_Replan_test` (new exe) | 17 sections (Tasks 8–10) | | |
