@@ -221,8 +221,8 @@ Lock order stays analysis → queue. `replacePlan` returns the dropped group ids
    one commit. → Task 2, `siblings_share_one_species_stamp_set`; Task 8, `siblings_form_one_unit`.
 4. **FAIMS cycling: a survey at CV B arrives while CV A's MS2s wait.** Expect: CV A's units are untouched. → Task 9,
    `other_cv_survey_does_not_replan`.
-5. **A bought `R` whose better charge was not resolved on the `Q`'s survey.** Expect: it goes out unchanged, and
-   `decision_survey_id` = the `Q`'s survey. → Task 10, `bought_r_keeps_charge_unresolved_on_q_survey`.
+5. **A bought `R` whose better charge was not resolved on the `Q`'s survey.** Expect: it goes out at its charge, re-confirmed
+   on the newer survey if that survey resolves its current charge (otherwise `decision_survey_id` = the `Q`'s survey). → Task 10, `bought_r_keeps_charge_unresolved_on_q_survey`.
 
 ---
 
@@ -706,7 +706,7 @@ Each test, in the linear form:
   `FLASHIdaTestAccess::onBeforeReplan(ida, fn)` that runs `fn` between step 3 and step 4 (implemented as a
   `std::function` member in **FLASHIda_TestAccess.h's friend access**, not as a production hook: the production
   `runSurveyMS1_` calls a private `beforeReplan_` that is an empty inline unless the test access sets it).
-  `// ISSUE: this is the one production-visible seam; alternative is a pure timing loop with no guarantee of hitting the window. Needs your call.`
+  Owner ruling 2026-10-22: the private hook.
 - `TEST`: no nominal mass is dequeued twice within rt_window; every unregistered command is dequeued exactly once;
   `[REPLAN-INVARIANT]` never printed.
 
@@ -757,7 +757,9 @@ for unit in w.committed_units with unit.separate && unit.role == Plain && unit h
     the old remainder's queued commands → into the drop set: replacePlan drops them via `remainder_of` (its 4th argument)
 for (r, resolved_on_q) in w.adjustable:
     picks = selection_.rechooseCharges(nominal(r), {}, resolved_on_q, 1)  // must be resolved on BOTH surveys
-    if picks.empty() || picks[0].z == charge(r): continue (re-confirm resets nothing for a bought R: spec d.5 adjusts only on change)
+    if picks.empty(): continue                                        // keep as decided; decision survey unchanged
+    // owner 2026-10-22: a re-confirm on the SAME charge counts as re-chosen -> rewritten from this survey too,
+    // decision_survey_id = this survey, enqueue_ts reset
     rewritten = r with stages[0] charge/mz/width/scores from picks[0] (same geometry code as buildMS2 — factor
                 ScanCommandQueue::applyIsolation_(cmd, pg, z) out of buildMS2 :344-352 and call it in both)
     adjust.push_back({r.scan_id, rewritten, this survey, windowPurity(...)})
@@ -766,8 +768,8 @@ for (r, resolved_on_q) in w.adjustable:
 The old remainder is named in `replacePlan`'s `replace_remainder_of` (Task 4 signature): its **queued** commands are
 dropped and its sent history moves into the new remainder unit.
 
-`// ISSUE: the spec's "re-confirmed counts as re-chosen" for a bought R with the same charge: the spec table resets
-decision_survey_id on adjust only. A same-charge bought R keeps the Q's survey. Confirm, or ask to reset it on re-confirm too.`
+Owner ruling 2026-10-22: a bought R re-confirmed on the same charge resets `decision_survey_id` and `enqueue_ts`, exactly
+like a re-confirmed survey unit.
 
 Quant verdict (:721-723): after `stampAndPush_(ident, …)`, add
 `queue_.registerAdjustable(ident.scan_id, resolvedChargesOf(cons.winner_cmd's survey PeakGroup), q_survey_id)`. The
@@ -779,6 +781,8 @@ from the PeakGroup's SNR-admissible charges when the `Q` is built, and `int surv
   - `bought_r_adjusted_to_better_charge`: method_quant_welch; verdict buys R at z22; B ranks z23 first and both surveys
     resolve it → the R row's charge is 23, `decision_survey_id` is B, its parent is still the winning Q, and `enqueue_ts`
     is reset;
+  - `bought_r_reconfirmed_same_charge_resets_decision`: B ranks z22 first again → the R stays at z22, `decision_survey_id`
+    is B, `enqueue_ts` reset;
   - `bought_r_keeps_charge_unresolved_on_q_survey`: B ranks z24, which the Q survey didn't resolve → the R goes out at
     z22 with `decision_survey_id` = the Q's survey.
 - [ ] Commit `feat(FLASHIda): separate R remainder re-plan and bought R adjust`.
@@ -879,7 +883,7 @@ Predicted golden movement. Any cell outside this table → STOP:
 | `FLASHIda_ChargeModes_test` | `journal_replay_reproduces_in_place_memory`, `filterAndRank_leaves_memory_at_its_entry_state`, `siblings_share_one_species_stamp_set`, `refused_candidate_stamp_is_survey_level` | | |
 | `ScanCommandQueue_Concurrent_test` | 9 sections (Task 4) | | |
 | `FLASHIda_exploration_test` | `dropGroup_forgets_an_unsent_group`, `dropGroup_refuses_a_group_with_a_received_variant` | | |
-| `FLASHIda_Replan_test` (new exe) | 16 sections (Tasks 8–10) | | |
+| `FLASHIda_Replan_test` (new exe) | 17 sections (Tasks 8–10) | | |
 | `Config_SchemaProjection_test` | `reselect_charges_is_a_migration_error` | | `reselect_charges_parses` |
 | `ConfigSchemaParity_test` | | the `reselect_charges` line removed | |
 | `FLASHIda_Logging_test` | 2 join sections | `kCmdHeader` | |
@@ -889,9 +893,7 @@ Predicted golden movement. Any cell outside this table → STOP:
 
 ## Open calls flagged inline (`// ISSUE`)
 
-1. **Task 9:** the test seam `beforeReplan_`, a private hook that test access can set, is the only reliable way to hit
-   the plan-to-swap window. The alternative is a timing loop that can't guarantee it hits the window.
-2. **Task 10:** should a bought `R` whose re-rank lands on the same charge reset `decision_survey_id` and
-   `enqueue_ts`? The plan says no, because only a change counts as an adjustment.
+1. ~~Task 9 seam~~ — resolved: the private hook.
+2. ~~Task 10 re-confirm~~ — resolved: re-confirm resets.
 3. **Task 2:** the legacy `.log` target charge erase is journaled as it behaves today, including its stale-pointer
    quirk, and is not fixed here.
