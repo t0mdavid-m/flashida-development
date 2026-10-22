@@ -50,7 +50,7 @@ two of them lived under a level you were not configuring.
 | Code | Check |
 |---|---|
 | A1 | JSON parses |
-| A2 | **migration**: `selection_strategy` or a top-level `ms3` present; `ms_settings.ms2`/`ms3` still arrays; a `follow_up_scan` still an inline object. Reported alone — the rest of the checks read the new shape, and running them on an old file just produces a second confusing wall |
+| A2 | **migration**: `selection_strategy` or a top-level `ms3` present; `ms_settings.ms2`/`ms3` still arrays; a `follow_up_scan` still an inline object; `precursor_selection.reselect_charges` present at any value (retired before it shipped: every survey now re-plans the waiting work of its CV, ADR-0060). Reported alone — the rest of the checks read the new shape, and running them on an old file just produces a second confusing wall |
 | A3 | no unknown keys, recursively, against the generated `config_schema_reference.json` |
 | A4 | every `additional_scans` / `follow_up_scan` name resolves, and `additional_scans` has no duplicate |
 | A5 | scan-config names match `^[a-z][a-z0-9_]{0,31}$` and avoid the reserved words `ms1 ms2 ms3 none off all` |
@@ -104,7 +104,7 @@ two of them lived under a level you were not configuring.
 | B9 | `ms_settings.ms2_quant.first_mass` above the labelling scheme's lowest reporter ion | the quantification scan cannot contain a reporter ion, so every spectrum returns `extraction_failed`, no identification scan is ever bought, and the run degrades to plain DDA. Checked per scheme (`itraq8plex` 113.108, `itraq4plex` 114.111, every TMT 126.128); `first_mass: 0` means "instrument default" (ADR-0011) and is skipped. Gated on `ms2_quant` **existing**, not on `enabled`, so the trap is named before the switch is flipped |
 
 | B11 | a threshold the authored `quantification.test` does not read: `p_value_threshold` ≠ 0.05 under `fold_change`, `fold_change_threshold` ≠ 1.4 under `welch` | inert but logged; the engine prints `[CONFIG-WARN]` so a template survives a flip of `test` (ADR-0056) |
-| B13 | `precursor_selection.reselect_charges: true` under `precursor_charges: "multiplexed"` | inert: a co-isolated set is never reselected. `[CONFIG-WARN]` (ADR-0059) |
+| B13 | *retired with `reselect_charges` (ADR-0060)*; the key is now an **A2** migration error | — |
 | B12 | `quantification.min_usable_scans` above `min_charge_states` | only species resolving more charges than admission requires reach the floor; every other group ends `incomplete_channels`. `[CONFIG-WARN]` (ADR-0056) |
 | B11 | `exploration.kinetic_model.k2` names an activation the level does not sweep | parsed, bound and **inert** — the pool reads the swept activation's entry only. The engine prints `[CONFIG-WARN]` and loads (ADR-0047 decision 6). Under `metric: "none"` the whole object is dropped by the C# emitter before it crosses the bridge; that case is B3's |
 

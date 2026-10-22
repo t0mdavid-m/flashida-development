@@ -293,6 +293,11 @@ def validate(path, ref):
                         "reachable. A wholly-absent condition now reports 'differential' "
                         "unconditionally. Delete the key.")
         migrated = True
+    # Retired before it shipped: re-planning is no longer a switch, so either value is refused.
+    if "reselect_charges" in (cfg.get("precursor_selection") or {}):
+        rep.error("A2", "precursor_selection.reselect_charges is retired: every survey now re-plans "
+                        "the waiting work of its CV (ADR-0060). Delete the key.")
+        migrated = True
     if migrated:
         # Every check below reads the new shape; running them on an old file just
         # produces a second, confusing wall of errors.
@@ -353,7 +358,7 @@ def validate(path, ref):
         rep.error("A16", f"precursor_selection.targeting '{targeting}' is not legal; expected one "
                          f"of {sorted(TARGETING_VALUES)}")
 
-    # --- charge_selection / reselect_charges (ADR-0059) ----------------------------------------
+    # --- charge_selection (ADR-0059) ------------------------------------------------------------
     csel = ps.get("charge_selection", "snr")
     if csel not in CHARGE_SELECTION_VALUES:
         rep.error("A35", f"precursor_selection.charge_selection '{csel}' is not legal; expected one "
@@ -362,10 +367,6 @@ def validate(path, ref):
         rep.error("A35", "precursor_selection.charge_selection is \"purity\" under precursor_charges "
                          "\"multiplexed\". Every notch shares one fill, so a notch's own purity does not "
                          "rank what the scan transmits. Config::validate() throws on this.")
-    if ps.get("reselect_charges") is True and ps.get("precursor_charges", "single") == "multiplexed":
-        rep.warn("B13", "precursor_selection.reselect_charges is true under precursor_charges "
-                        "\"multiplexed\": a co-isolated set is never reselected, so the key is INERT. "
-                        "[CONFIG-WARN] (ADR-0059)")
 
     # --- charge-set bounds (ADR-0040) ---------------------------------------------------------
     # Both keys are inert at their defaults (min 1, max 0), so every check here fires only on a
