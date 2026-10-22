@@ -213,7 +213,7 @@ Lock order stays analysis → queue. `replacePlan` returns the dropped group ids
 
 1. **A `separate` species whose first charge is sent between plan computation and swap.** Expect: the new plan's unit
    for it is reconciled away, the old remainder is kept and then re-planned by the remainder pass. No charge is sent
-   twice, and none is silently lost. → Task 9, `race_separate_commit_between_plan_and_swap`.
+   twice, and none is silently lost. → Task 7b.4 (`remainder_replacement_skips_a_charge_sent_after_waitingAt`) and Task 9, `race_separate_commit_between_plan_and_swap`.
 2. **A queued command expired by `cleanupExpired` (`scan_timeout`)** while it belongs to a uncommitted unit. Expect: it
    leaves the registry; a unit that empties is discarded along with its stamps (never acquired, never excluded). → Task 4,
    `expired_member_leaves_registry`.
@@ -248,271 +248,105 @@ tests = `OpenMS/src/tests/class_tests/openms/source/`.
 
 ---
 
-# PUSH 1 — byte-identical plumbing
+# PUSH 1 — DONE 2026-10-22 (CI run 39754982907 green on attempt 3; C# 201/200/0/1, ctest 31/31)
 
-### Task 1: DONE — OpenMS `f643769934`, parent `3bbb6ce` (review passed; not pushed)
+OpenMS `f643769934..3e5e58437b`, parent `3bbb6ce` + gitlink `62b6636`. Tasks 1–5 each implemented TDD and passed an
+adversarial review; the container Windows leg could not run (engine down) so CI was the Windows gate. Attempts 1–2 failed
+only `Golden_Inclusion_MS3_CytC` with the known 246↔247 first-survey deconvolution flip (12320.19 / 12320.20); no
+other cell moved. **What Push 1 landed, as the code actually is** (Push 2 builds on this, not on the old task text):
 
-Carried forward from its review, binding on later tasks:
-- `3bbb6ce` registers `PlanUnit_test` in the yml; it must ship in the **same push** as the OpenMS gitlink bump.
-- `wouldBar` takes the **last** `MassQscore` by vector position. Every `committed` vector passed to it (`inbox_`,
-  `committed_since_fold_`) must stay in commit order. Never sort or merge them out of order.
-- `wouldBar` doesn't model the sibling exemption or the selection-phase gating. It's used only for reconcile, against
-  a new unit's anchor, in the exclusion-applying phase.
-
-### Task 2 (RE-PLANNED 2026-10-22): journal the acquisition writes; rollback is a separate call
-
-**Why re-planned.** The first version rolled back the whole `SurveyMemory` inside `filterAndRank`. It failed three ways
-(found by the Task 2 implementer before any edit):
-- **(a)** `window_id_` and `id_*_map_` live in `SurveyMemory` (H:263-269) and must keep advancing, so a whole-struct
-  rollback contradicts itself.
-- **(b)** The legacy charge erase writes `target_mass_charge_map_`, which isn't in `SurveyMemory`. A rollback misses it,
-  and the replay then erases twice.
-- **(c)** The replay test compared new code with new code.
-
-**The fix: journal in Push 1, roll back in Push 2.**
-
-| | Push 1 (this task) | Push 2 (Task 8) |
+| Symbol | Where | Note for Push 2 |
 |---|---|---|
-| writes in `filterAndRank` | in place, exactly as today, **plus** a journal entry each | same |
-| rollback | **not called** — so Push 1 is byte-identical by construction (no replay, no identity wiring) | `selection_.rollbackAcquisitionMemory()` right after `filterAndRank` |
-| replay | — | the fold at survey start (`applyStamps(takeCommitted())`) |
-
-**Interfaces (produces):**
-```cpp
-const SelectionJournal& PrecursorSelection::journal() const;
-/// Restore the ACQUISITION containers to their state at the end of this survey's expiry pass. Restores exactly:
-/// all_mass_rt_map_, mass_qscore_map_, tqscore_exceeding_mass_rt_map_, tqscore_exceeding_mz_rt_map_,
-/// authored_acquired_rt_map_ (SurveyMemory) and target_mass_charge_map_ (member).
-/// It does NOT touch window_id_ / id_*_map_ (window bookkeeping, never a decision input, keeps advancing)
-/// or anything else.
-void PrecursorSelection::rollbackAcquisitionMemory();
-void PrecursorSelection::applyStamps(const std::vector<MemoryStamp>& stamps);   // replay, same ops, in vector order
-static std::vector<MemoryStamp> PrecursorSelection::flatten(const SpeciesStamps&);
-```
-
-**The snapshot.** At the end of the expiry block (after the old C:383, now shifted), copy the six containers into a
-private `AcquisitionSnapshot acq_entry_` (a struct holding those six). Do this every survey. `rollbackAcquisitionMemory`
-assigns them back. Nothing in Push 1 calls it.
-
-**Journal routing.** Same as before: C:697 `AllMassRt` is pending on the candidate, then goes to `species[nm]` if
-admitted or to `survey_level` if refused; C:728 goes to `per_charge[c]`; C:826 and C:829-830 go to `species_level`;
-C:835-840 goes to `species_level` as `LegacyTargetChargeErase {key = nominal, legacy_mass = the exact map key, charge}`.
-`legacy_mass` is the exact `target_mass_charge_map_` key (a double), because the erase dereferences the `charges`
-pointer chosen at C:557. Its stale-pointer quirk is journaled as it behaves, not fixed. Each stamp gets a monotone
-`seq`.
-
-**Tests** (new sections in `FLASHIda_ChargeModes_test.cpp`; this replaces the earlier list):
-```
-START_SECTION(journal_replay_reproduces_in_place_memory)        // non-vacuous: old in-place path vs replay
-  for config in {single, separate, multiplexed, authored inclusion (method_inclusion_charge_set), in_depth (method_deep),
-                 legacy .log inclusion (mode 1 with test_target_log.log)}:
-    for each survey of the fixture sequence (forEachSurvey helper):
-      ps.filterAndRank(...)
-      A = acquisition containers of ps NOW               // in place, the unchanged production behaviour
-      ps.rollbackAcquisitionMemory()
-      ps.applyStamps(all journal stamps merged by seq)
-      B = acquisition containers of ps NOW               // entry state + replay
-      TEST_EQUAL(A == B)                                  // all six containers
-END_SECTION
-START_SECTION(rollback_restores_exactly_the_acquisition_containers)
-  e = acquisition containers + window_id_ after expiry (read via a survey with zero candidates)
-  filterAndRank(fixture admitting ≥2 species); w = window_id_
-  rollbackAcquisitionMemory()
-  TEST_EQUAL(acquisition containers == e); TEST_EQUAL(window_id_ == w)   // bookkeeping NOT rolled back
-END_SECTION
-START_SECTION(siblings_share_one_species_stamp_set)              // unchanged
-START_SECTION(refused_candidate_stamp_is_survey_level)           // unchanged
-```
-Container access for the tests goes through `FLASHIdaTestAccess` friend accessors in `FLASHIda_TestAccess.h` (a test
-file). No accessor is added to the production header beyond `journal()`, `rollbackAcquisitionMemory()`,
-`applyStamps()` and `flatten()`, which production uses in Push 2.
-
-**Push 1 is byte-identical by construction:** production makes the same writes in the same order, and the journal is
-write-only. Step 4 still runs `ci cpp --full`, and `FLASHIda_exploration_test`'s `surveyMemory ==` checks must stay
-green unchanged.
-
-### Task 3: Drift guard on a real survey
-
-One section in `PlanUnit_test.cpp`, after Task 2 exists:
-
-```
-START_SECTION(wouldBar_agrees_with_selection_on_a_real_survey)
-  drive survey N (ms1_ecoli_rich, max_precursors 3), apply its journal; survey N+1 with the SAME spectrum:
-  for every PeakGroup p admitted at N:  TEST_EQUAL(wouldBar(all applied stamps, key(p)), selection at N+1 refuses p)
-END_SECTION
-```
-
-- [ ] Steps 1–5 as before; commit `test(FLASHIda): wouldBar agrees with selection on a real survey`.
-
-### Task 4: Queue plan registry, `replacePlan`, commit-at-dequeue, inbox
-
-**Files:**
-- Modify: `inc/FLASHIda/ScanCommandQueue.h` (public API after `cancelByScanIds` :170; private state after :280)
-- Modify: `src/FLASHIda/ScanCommandQueue.cpp`: `dequeue_` (:697-713), `cleanupExpired` (:741-773), new methods
-- Fix the stale doc at SCQ.h:159 ("from pending_scan_map_" → "from the queued deques") and SCQ.h:168 (baseline abort,
-  removed by ADR-0048).
-- Test: `ScanCommandQueue_Concurrent_test.cpp` — new sections.
-
-**Interfaces:**
-
-```cpp
-struct AdjustRequest { int scan_id; ScanCommand rewritten; int decision_survey_id; double isolation_purity; };
-struct DecisionInfo  { int decision_survey_id = 0; double isolation_purity = -1.0; };
-struct ReplanResult
-{
-  std::vector<int> dropped_scan_ids;          // for ida.log Superseded= and forgetTracking_
-  std::vector<int> dropped_quant_groups;      // caller: quant_.closeGroup
-  std::vector<int> dropped_sweep_groups;      // caller: exploration_.dropGroup
-  std::vector<int> reconciled_unit_ids;       // new units refused because their species committed meanwhile
-  int kept = 0, added = 0, adjusted = 0;
-};
-
-/// Atomically: drop every UNCOMMITTED unit at @p cv; insert @p units (minus reconciled ones) at the back of their
-/// priority deques; apply @p adjust in place. Stamps enqueue_timestamp_ms on everything inserted or adjusted.
-/// @p replace_remainder_of: committed units whose QUEUED commands are dropped because @p units carries their
-/// re-planned remainder (Task 10, non-quant `separate` R only).
-ReplanResult replacePlan(double cv, std::vector<PlanUnit> units, const std::vector<AdjustRequest>& adjust,
-                         const std::vector<int>& replace_remainder_of);
-
-/// Register a bought R as adjustable (never droppable). resolved_charges = charges resolved on the Q's survey.
-void registerAdjustable(int scan_id, std::vector<int> resolved_charges, int q_survey_id);
-
-/// Commands of committed units at @p cv that are still queued, grouped by unit (for the remainder re-plan), and
-/// the adjustable bought Rs still queued. Snapshot copies.
-struct Waiting { std::vector<PlanUnit> committed_units; std::vector<std::pair<ScanCommand, std::vector<int>>> adjustable; };
-Waiting waitingAt(double cv) const;
-
-/// Move out every stamp committed since the last call (analysis thread folds them).
-std::vector<MemoryStamp> takeCommitted();
-
-/// Take (find + erase) the decision info written for @p scan_id; nullopt for commands no survey decided.
-std::optional<DecisionInfo> takeDecisionInfo(int scan_id);
-```
-
-`dequeue_` gets a commit block after `pending_scan_map_[cmd.scan_id] = cmd;`:
-
-```cpp
-auto u = unit_of_.find(cmd.scan_id);
-if (u != unit_of_.end())
-{
-  PlanUnit& unit = units_.at(u->second);
-  const int z = cmd.num_stages > 0 ? std::abs(cmd.stages[0].charge_state) : 0;
-  if (!unit.committed)
-  {
-    unit.committed = true;
-    for (auto& s : unit.stamps.species_level) { inbox_.push_back(s); committed_since_fold_.push_back(s); }
-  }
-  auto pc = unit.stamps.per_charge.find(z);
-  if (pc != unit.stamps.per_charge.end())
-  { for (auto& s : pc->second) { inbox_.push_back(s); committed_since_fold_.push_back(s); } unit.stamps.per_charge.erase(pc); }
-  unit.sent_charges.push_back(z);
-  unit_of_.erase(u);
-  if (unit.commands_left == 0) units_.erase(unit.unit_id);   // commands_left decremented here; see below
-}
-adjustable_.erase(cmd.scan_id);
-```
-
-(`PlanUnit` gets an `int commands_left` set on insert and decremented here.)
-
-Causal invariant: `push_` decodes `cmd.parent_scan_id`; if it names a scan id still in `unit_of_` (registered and
-never dequeued), print `[REPLAN-INVARIANT] child=<id> parent=<id>` — a child of a command that never went out.
-
-`replacePlan` reconcile: a new unit is refused if `wouldBar(committed_since_fold_, key)` holds for its anchor command.
-`takeCommitted()` clears both `inbox_` and `committed_since_fold_` in the same lock hold. `cleanupExpired` erasing a
-registered id decrements `commands_left`, erases it from `unit_of_` and `adjustable_`, and erases an uncommitted unit
-that empties, **stamps discarded**.
-
-Writing `decision_info_[scan_id]` for every command in an inserted unit (`{unit.decision_survey_id,
-cmd isolation purity}`) and for adjusted Rs is part of `replacePlan`. Purity is passed per command (see Task 8):
-add `std::vector<double> purity` to `PlanUnit`, index-parallel to `commands`.
-
-- [ ] **Step 1: Write the failing tests** (`ScanCommandQueue_Concurrent_test.cpp`):
-
-```
-START_SECTION(replacePlan_drops_uncommitted_units_at_its_cv_only)
-  q.replacePlan(cv=-40, {U1(A: 2 cmds)}, {}); q.replacePlan(cv=-60, {U2(C)}, {});
-  r = q.replacePlan(cv=-40, {U3(B)}, {})
-  TEST_EQUAL(r.dropped_scan_ids == ids(U1)); queued ids == ids(U2) ∪ ids(U3)
-END_SECTION
-START_SECTION(dequeue_commits_the_unit_and_keeps_it)
-  insert U1(A: Q z13, Q z14); dequeue → z13 ; r = replacePlan(same cv, {}, {})
-  TEST_EQUAL(r.dropped_scan_ids.empty()); next dequeue == z14 ; takeCommitted() == U1.species_level + per_charge[13] + per_charge[14]
-END_SECTION
-START_SECTION(per_charge_stamps_commit_with_their_own_command)
-  U(separate, A: z13,z14,z16, per_charge stamps each); dequeue z13 → takeCommitted has species + (A,13) only
-END_SECTION
-START_SECTION(reconcile_refuses_a_unit_committed_since_the_fold)
-  U1(A) inserted, dequeued (committed, stamps TqMassRt A); r = replacePlan(cv, {U2(A again)}, {})  // no takeCommitted between
-  TEST_EQUAL(r.reconciled_unit_ids == {U2}); U2's commands never queued
-END_SECTION
-START_SECTION(unregistered_commands_are_never_dropped)
-  push(F follow-up) ; push(monitor MS1) ; replacePlan(cv, {}, {}) → both still dequeued exactly once
-END_SECTION
-START_SECTION(adjustable_is_rewritten_never_dropped)
-  push(bought R); registerAdjustable(id, {13,14}, q_survey); replacePlan(cv, {}, {{id, rewritten(z14), s2, 0.7}})
-  dequeued R has charge 14, enqueue_ts reset (> original), takeDecisionInfo(id) == {s2, 0.7}; replacePlan(cv,{},{}) never drops it
-END_SECTION
-START_SECTION(expired_member_leaves_registry)
-  timeout_ms = 1; insert U1(A, 2 cmds); sleep 5ms; cleanupExpired(); TEST_EQUAL(takeCommitted().empty()); units_ empty
-END_SECTION
-START_SECTION(enqueue_timestamp_reset_on_insert_and_adjust)
-END_SECTION
-START_SECTION(replacePlan_vs_concurrent_dequeue_conservation)           // the race, queue level
-  4 drain threads × dequeue in a loop ; 1 thread × 500 replacePlan calls with random units + random unregistered pushes
-  join; every unregistered id dequeued exactly once; no scan id dequeued twice; every dequeued registered id belonged to a
-  unit that was never reported dropped; every dropped id never dequeued
-END_SECTION
-```
-
-- [ ] **Step 2:** `ci cpp ScanCommandQueue_Concurrent_test` → FAIL.
-- [ ] **Step 3:** Implement.
-- [ ] **Step 4:** `ci cpp ScanCommandQueue_Concurrent_test` PASS ×20 (`ctest --repeat until-fail:20`); `ci cpp --full` PASS.
-- [ ] **Step 5:** Commit `feat(FLASHIda): queue plan registry, replacePlan, commit at dequeue`.
-
-### Task 5: `Exploration::dropGroup`
-
-**Files:** `inc/FLASHIda/Exploration.h` (near `activeGroupCount`), `src/FLASHIda/Exploration.cpp` (near :1243).
-Test: `FLASHIda_exploration_test.cpp` (new section).
-
-```cpp
-/// Forget an exploration group none of whose variants was sent (a re-planned survey dropped it). Returns false if
-/// the group is unknown or any variant was already received. Caller republishes the exploration atomics.
-bool Exploration::dropGroup(int group_id)
-{
-  auto g = active_groups_.find(group_id);
-  if (g == active_groups_.end()) return false;
-  for (const auto& v : g->second.variants) if (v.received) return false;
-  for (const auto& v : g->second.variants) variant_tracking_map_.erase(v.cmd.scan_id);
-  active_groups_.erase(g);
-  std::cout << "[EXPL-DROP] group=" << group_id << std::endl;
-  return true;
-}
-```
-
-Also give `initiate` a way to report its new group id: add `int Exploration::lastGroupId() const { return next_group_id_ - 1; }`.
-
-- [ ] **Step 1: Test**
-```
-START_SECTION(dropGroup_forgets_an_unsent_group)
-  initiate(2, …) → group g with k variants; TEST_EQUAL(activeGroupCount(2), 1)
-  TEST_EQUAL(dropGroup(g), true); activeGroupCount(2) == 0; isExplorationVariant(variant id) == false
-  TEST_EQUAL(dropGroup(g), false)
-END_SECTION
-START_SECTION(dropGroup_refuses_a_group_with_a_received_variant)
-END_SECTION
-```
-- [ ] Steps 2–4: `ci cpp FLASHIda_exploration_test` fail → implement → pass; `ci cpp --full`.
-- [ ] **Step 5:** Commit `feat(FLASHIda): Exploration::dropGroup for a re-planned unsent sweep`.
-
-### Task 6: Push 1 gate
-
-- [ ] `ci cpp --full` PASS; `ci cs` PASS with C# `total/passed` equal to the last calibration (201/200/0/1) and **no golden
-  diff** (`ci golden-diff` reports zero moved cells). Any moved cell → STOP.
-- [ ] `git pull --rebase` ×3; push OpenMS, then the parent gitlink; watch CI to green.
+| `PlanUnit.h` types, `wouldBar` | `inc/FLASHIda/PlanUnit.h` | last `MassQscore` **by vector position**: `committed_since_fold_` stays in commit order |
+| `journal()`, `rollbackAcquisitionMemory()`, `applyStamps()`, `flatten()` | `PrecursorSelection.h:183-199` | snapshot `acq_entry_` taken at C:388-395 on the MS1 path only; `journal_` reset at C:186 **before** the `ms_level != 1` return |
+| `replacePlan(cv, units, adjust, replace_remainder_of)` | `ScanCommandQueue.h:217` | returns only `reconciled_unit_ids` for reconciled units; mints ids into the moved vector; does not carry `sent_charges` |
+| `AdjustRequest`, `DecisionInfo`, `ReplanResult` | namespace scope, `ScanCommandQueue.h:61-86` | not nested in the class |
+| `ScanCommandQueue::Waiting`, `waitingAt`, `takeCommitted`, `takeDecisionInfo`, `registerAdjustable` | `ScanCommandQueue.h` | `Waiting::adjustable` = (cmd, resolved charges) |
+| commit block | `dequeue_`, `ScanCommandQueue.cpp:720-751` | reads **only** `stages[0].charge_state` — fixed in Task 7b |
+| `forgetQueued_` | `ScanCommandQueue.cpp:758` | called by `cleanupExpired` only — `cancelByScanIds` fixed in Task 7b |
+| `Exploration::dropGroup`, `lastGroupId` | `Exploration.cpp:1256-1271` | `initiate` can return empty at :143 **before** minting, so `lastGroupId` then names the previous group |
 
 ---
 
 # PUSH 2 — switch on
+
+Order: 7b → 7 → 8 → 10 → 9 → 11 → 12. Same workflow shape as Push 1 (implementer → adversarial reviewer per task, stop
+on any issue). The Windows container is unavailable, so Task 12's Windows leg is CI: push the code with goldens **unchanged**,
+let CI's `log-golden-capture` artifact be the capture, assess every moved cell against Task 12's table, and promote only
+after owner sign-off, in a second push. Expected: that first CI run is red in log goldens only.
+
+### Task 7b: Push 1 review fixes (before anything calls the registry)
+
+Five findings from the Push 1 reviews. All are unreachable today (no production caller), so this task is byte-identical
+and lands as the first commits of Push 2.
+
+**1. A multiplexed command commits every charge it isolates.** `dequeue_` reads only the anchor, so under
+`multiplexed` + an authored charge set the notch charges' `AuthoredAcquired` stamps (ADR-0028, journaled at
+C:752-756) are erased with the unit and never committed — after switch-on those charges would be re-selectable.
+
+```cpp
+// ScanCommandQueue.cpp, a private static helper next to forgetQueued_
+static std::vector<int> isolatedCharges_(const ScanCommand& cmd)   // anchor first, then stage-0 notches
+{
+  std::vector<int> zs;
+  if (cmd.num_stages <= 0) return zs;
+  zs.push_back(std::abs(cmd.stages[0].charge_state));
+  auto [n, cnt] = notchesForStage(cmd, 0);                          // ScanCommand.h:230
+  for (int j = 0; j < cnt; ++j) zs.push_back(std::abs(n[j].charge_state));
+  return zs;
+}
+// dequeue_ commit block: replace the single z with
+for (int z : isolatedCharges_(cmd))
+{
+  auto pc = unit.stamps.per_charge.find(z);
+  if (pc != unit.stamps.per_charge.end()) { /* move to inbox_ + committed_since_fold_ as today */ unit.stamps.per_charge.erase(pc); }
+  unit.sent_charges.push_back(z);
+}
+```
+
+**2. `cancelByScanIds` cleans the registry.** It calls `forgetQueued_(id)` for each id it removes, exactly as
+`cleanupExpired` does (no unit leak, no false `[REPLAN-INVARIANT]`).
+
+**3. `ReplanResult` reports reconciled units in full,** so Task 8 never has to keep a shadow copy keyed on ids it cannot
+see. Three fields added: `reconciled_scan_ids`, `reconciled_quant_groups`, `reconciled_sweep_groups`. An empty unit
+(no commands) is skipped **before** an id is minted.
+
+**4. A remainder replacement is reconciled at the swap** (Review focus 1). For a new `committed` unit whose nominal mass
+matches a unit named in `replace_remainder_of`: it inherits that unit's `sent_charges` **at swap time**, and any of its
+commands whose charge is already in them is not inserted. If the named unit no longer exists (it emptied between
+`waitingAt` and the swap), the new remainder is refused and reported in `reconciled_*`. So no charge is sent twice and
+`count` is never exceeded.
+
+**5. Rollback is guarded.** `acq_entry_valid_` is set where the snapshot is taken and cleared where `journal_` is
+reset; `rollbackAcquisitionMemory()` is a no-op when it is false. A rollback after a non-MS1 `filterAndRank` can then
+never restore an older survey's state.
+
+**Tests** (new sections, `ScanCommandQueue_Concurrent_test.cpp`):
+```
+START_SECTION(multiplexed_command_commits_every_notch_charge)
+  U(A: one cmd z13 with notches z14,z16; per_charge stamps for 13,14,16); dequeue
+  TEST_EQUAL(takeCommitted() == species_level + per_charge[13] + [14] + [16])     // today: only [13]
+END_SECTION
+START_SECTION(cancelled_member_leaves_registry)
+  insert U1(A, 2 cmds); cancelByScanIds({first}); dequeue second → planUnitCount == 0; push(child of first) prints no [REPLAN-INVARIANT]
+END_SECTION
+START_SECTION(reconciled_unit_is_reported_in_full)
+  as reconcile_refuses_a_unit_committed_since_the_fold, U2 with quant_group 5, sweep_group 7
+  TEST_EQUAL(r.reconciled_scan_ids == ids(U2)); reconciled_quant_groups == {5}; reconciled_sweep_groups == {7}
+END_SECTION
+START_SECTION(remainder_replacement_skips_a_charge_sent_after_waitingAt)
+  committed separate U1(A: z14, z16 queued; z13 sent); w = waitingAt(cv); dequeue z14
+  replacePlan(cv, {R(A: z14, z17, committed)}, {}, {U1}) → only z17 queued; dequeue order never repeats 14
+END_SECTION
+START_SECTION(remainder_replacement_refused_when_old_unit_emptied)
+  as above but dequeue z14 and z16 before the swap → R refused, r.reconciled_unit_ids == {R}
+END_SECTION
+```
+`FLASHIda_ChargeModes_test`: one new section `rollback_after_a_non_ms1_call_is_a_noop`.
+
+- [ ] Fail → implement → `ci cpp ScanCommandQueue_Concurrent_test FLASHIda_ChargeModes_test` PASS (Concurrent ×20) →
+  `ci cpp --full` → commit `fix(FLASHIda): commit every isolated charge; registry hygiene on cancel; full reconcile report`.
+
 
 ### Task 7: Retire `reselect_charges`
 
@@ -536,7 +370,7 @@ The ADR number is assigned in Push 3. Use `ADR-0060` here, and Task 13 creates `
 
 ### Task 8: The survey builds a plan and calls `replacePlan`
 
-**Files:** `src/TOPDOWN/FLASHIda.cpp` `runSurveyMS1_` (:205-345), `inc/TOPDOWN/FLASHIda.h` (helpers);
+**Files:** `src/TOPDOWN/FLASHIda.cpp` `runSurveyMS1_` (:205-352), `inc/TOPDOWN/FLASHIda.h` (helpers);
 `src/FLASHIda/PrecursorSelection.cpp` (`unitKey` helper).
 
 **Interfaces:**
@@ -551,6 +385,7 @@ New `runSurveyMS1_` order:
 0. fold:     selection_.applyStamps(queue_.takeCommitted());                   // committed since the last survey
              selection_.applyStamps(previous survey's survey_level stamps)     // kept from the last call (member)
 1. n = selection_.filterAndRank(...); selection_.rollbackAcquisitionMemory()      // journal kept, memory = committed
+     // the ONLY rollback call; it follows an MS1 filterAndRank by construction (and is guarded, Task 7b.5)
 2. build units: group entries i by nominal mass (SpectralDeconvolution::getNominalMass(selected[i].getMonoMass()))
      for each species: PlanUnit{cv=faims_cv, nominal, decision_survey_id=parent_tracking_id,
                                 role = quant ? Quant : (exploration ? Sweep : Plain),
@@ -561,14 +396,16 @@ New `runSurveyMS1_` order:
      precursor ids allocated as today; setPrecursorForTracking_ for every command BEFORE replacePlan (happens-before
      edge preserved: replacePlan releases queue_mutex_, dequeue acquires it)
      quant: addMember as today (it needs scan_id and window_snr, both final); record group id in unit.quant_group_ids
-     sweep: unit.sweep_group_ids.push_back(exploration_.lastGroupId()) after each initiate
+     sweep: after each initiate, IF it returned a non-empty command list, unit.sweep_group_ids.push_back(lastGroupId())
+            (an empty return exits before the id is minted, Exploration.cpp:143, so lastGroupId would name the previous group)
 3. remainder + adjust (Task 10) → std::vector<AdjustRequest> adjust, plus remainder units appended to `units`
-4. r = queue_.replacePlan(faims_cv, std::move(units), adjust, remainder_of)
+4. r = queue_.replacePlan(faims_cv, std::move(units), adjust, replace_remainder_of)
 5. outside the queue lock:
      for g in r.dropped_quant_groups: quant_.closeGroup(g)
      for g in r.dropped_sweep_groups: exploration_.dropGroup(g)
-     forgetTracking_(r.dropped_scan_ids) ; forgetTracking_(ids of reconciled units' commands)
-     reconciled units' quant/sweep groups: closed/dropped the same way
+     for g in r.reconciled_quant_groups: quant_.closeGroup(g)      // Task 7b.3 fields
+     for g in r.reconciled_sweep_groups: exploration_.dropGroup(g)
+     forgetTracking_(r.dropped_scan_ids) ; forgetTracking_(r.reconciled_scan_ids)
      publishExplorationState_()
      std::cout << "[REPLAN] cv=" << faims_cv << " survey=" << enc(parent_tracking_id) << " kept=" << r.kept
                << " dropped=" << r.dropped_scan_ids.size() << " added=" << r.added << " adjusted=" << r.adjusted << std::endl;
@@ -582,7 +419,7 @@ survey's fold is identical, because no read happens between this survey's end an
 The quant `addMember` and exploration `initiate` side effects happen before `replacePlan`. A reconciled unit
 therefore has to undo them, which is why step 5 treats reconciled units like dropped ones.
 
-The FAIMS CV-transition MS1 push (:330-345) stays exactly as it is, after `replacePlan`.
+The FAIMS CV-transition MS1 push (:329-345) stays exactly as it is, after `replacePlan`.
 
 - [ ] **Step 1: Failing tests** (new exe `FLASHIda_Replan_test.cpp`, registered in all three lists — Task 9 holds the
   full list; this task adds the first sections):
@@ -698,13 +535,25 @@ for (r, resolved_on_q) in w.adjustable:
     if picks.empty(): continue                                        // keep as decided; decision survey unchanged
     // owner 2026-10-22: a re-confirm on the SAME charge counts as re-chosen -> rewritten from this survey too,
     // decision_survey_id = this survey, enqueue_ts reset
-    rewritten = r with stages[0] charge/mz/width/scores from picks[0] (same geometry code as buildMS2 — factor
-                ScanCommandQueue::applyIsolation_(cmd, pg, z) out of buildMS2 :344-352 and call it in both)
-    adjust.push_back({r.scan_id, rewritten, this survey, windowPurity(...)})
+    // owner 2026-10-22: a MULTIPLEXED bought R re-chooses its whole SET: count = max_charge_states (0 → all), anchor =
+    // picks[0], notches = picks[1..]; a single-charge R uses count 1
+    picks = selection_.rechooseCharges(nominal(r), {}, resolved_on_q, r has notches ? cap : 1)
+    rewritten = ScanCommandQueue::reisolate(r, picks, marker 'R')   // see below
+    adjust.push_back({r.scan_id, rewritten, this survey, windowPurity(raw_ms1, anchor window, anchor intensity)})
 ```
 
-The old remainder is named in `replacePlan`'s `replace_remainder_of` (Task 4 signature): its **queued** commands are
-dropped and its sent history moves into the new remainder unit.
+The old remainder is named in `replacePlan`'s `replace_remainder_of`: its **queued** commands are dropped. The caller sets
+the new unit's `sent_charges = unit.sent_charges` from `waitingAt`, and `replacePlan` re-syncs them at the swap (Task 7b.4),
+so a charge sent in between is neither re-sent nor counted twice.
+
+**`reisolate` (new, `ScanCommandQueue`).** `buildMS2` mints a tracking id under the lock (SCQ.cpp:306-308), so it cannot
+build a rewrite. Factor its geometry out, byte-identically, into two private statics that `buildMS2` then calls:
+`applyIsolation_(cmd, pg, z, margin)` (SCQ.cpp:344-353: centre, width, `stages[0].charge_state`) and the multiplexed notch
+write (:379-401, from an explicit charge list). The public
+`static ScanCommand reisolate(const ScanCommand& r, const std::vector<std::pair<int, const PeakGroup*>>& picks, double margin, char marker)`
+copies `r`, applies the anchor geometry from `picks[0]`, clears and rewrites stage-0 notches from `picks[1..]` (each from
+the PeakGroup that resolved it), and **rebuilds `scan_description`** keeping `r`'s 3-char id: `replacePlan`'s adjust does
+not touch the description, so a stale `@z` would otherwise reach the instrument and every log.
 
 Owner ruling 2026-10-22: a bought R re-confirmed on the same charge resets `decision_survey_id` and `enqueue_ts`, exactly
 like a re-confirmed survey unit.
@@ -723,6 +572,11 @@ from the PeakGroup's SNR-admissible charges when the `Q` is built, and `int surv
     is B, `enqueue_ts` reset;
   - `bought_r_keeps_charge_unresolved_on_q_survey`: B ranks z24, which the Q survey didn't resolve → the R goes out at
     z22 with `decision_survey_id` = the Q's survey.
+  - `bought_r_multiplexed_set_rechosen` (owner 2026-10-22): method_quant_multiplexed (cap 3); the verdict buys an R
+    isolating {a,b,c}; B ranks a different top-3 within the charges both surveys resolved → the R's anchor + notches are B's
+    top 3, its `scan_description` `@z` is the new anchor, `decision_survey_id` is B.
+  - `reisolate_matches_buildMS2_geometry` (`ScanCommandQueue_Concurrent_test`): for a PeakGroup and charge set, `reisolate`
+    of any command yields the same stage-0 geometry, notches and description suffix as `buildMS2` on that set.
 - [ ] Commit `feat(FLASHIda): separate R remainder re-plan and bought R adjust`.
 
 ### Task 11: Logging, loader, join, comparer
@@ -731,7 +585,7 @@ from the PeakGroup's SNR-admissible charges when the `Q` is built, and `int surv
 
 `IdaLogger.cpp`:
 - header (:71-106): insert `decision_survey_id`, `isolation_purity` before `enqueue_ts` → 36 columns;
-- `writeScanCommandRow` (:348-492): new trailing parameter `const ScanCommandQueue::DecisionInfo* decision`.
+- `writeScanCommandRow` (:348-492): new trailing parameter `const DecisionInfo* decision` (namespace scope, `ScanCommandQueue.h:61-74`).
   It writes `encode(decision_survey_id)` or empty, and `isolation_purity` at fixed 4 decimals or empty. The drain
   (:1296) passes `queue_.takeDecisionInfo(out.scan_id)`;
 - `writeIDALogEntry` (:226-334): Mass= line gets `<< "\tID=" << encode(cmd.scan_id)` before `"\n"`. A new parameter
@@ -817,11 +671,10 @@ Predicted golden movement. Any cell outside this table → STOP:
 
 | Exe | New | Changed ✎ | Deleted |
 |---|---|---|---|
-| `PlanUnit_test` (new exe) | `wouldBar_matches_admitCandidate_on_the_gate_table`, `wouldBar_empty_never_bars`, `wouldBar_agrees_with_selection_on_a_real_survey` | | |
-| `FLASHIda_ChargeModes_test` | `journal_replay_reproduces_in_place_memory`, `rollback_restores_exactly_the_acquisition_containers`, `siblings_share_one_species_stamp_set`, `refused_candidate_stamp_is_survey_level` | | |
-| `ScanCommandQueue_Concurrent_test` | 9 sections (Task 4) | | |
-| `FLASHIda_exploration_test` | `dropGroup_forgets_an_unsent_group`, `dropGroup_refuses_a_group_with_a_received_variant` | | |
-| `FLASHIda_Replan_test` (new exe) | 17 sections (Tasks 8–10) | | |
+| *(Push 1, landed)* `PlanUnit_test`, `FLASHIda_ChargeModes_test`, `ScanCommandQueue_Concurrent_test`, `FLASHIda_exploration_test` | as planned | | |
+| `ScanCommandQueue_Concurrent_test` | **Task 7b:** `multiplexed_command_commits_every_notch_charge`, `cancelled_member_leaves_registry`, `reconciled_unit_is_reported_in_full`, `remainder_replacement_skips_a_charge_sent_after_waitingAt`, `remainder_replacement_refused_when_old_unit_emptied`; **Task 10:** `reisolate_matches_buildMS2_geometry` | | |
+| `FLASHIda_ChargeModes_test` | **Task 7b:** `rollback_after_a_non_ms1_call_is_a_noop` | | |
+| `FLASHIda_Replan_test` (new exe) | 18 sections (Tasks 8–10; + `bought_r_multiplexed_set_rechosen`) | | |
 | `Config_SchemaProjection_test` | `reselect_charges_is_a_migration_error` | | `reselect_charges_parses` |
 | `ConfigSchemaParity_test` | | the `reselect_charges` line removed | |
 | `FLASHIda_Logging_test` | 2 join sections | `kCmdHeader` | |
@@ -830,6 +683,8 @@ Predicted golden movement. Any cell outside this table → STOP:
 | C# `FLASHIdaLogGolden_test` | | goldens recaptured (Task 12) | |
 
 ## Open calls flagged inline (`// ISSUE`)
+
+0. ~~Multiplexed bought R~~ — resolved 2026-10-22: it re-chooses its whole set (Task 10).
 
 1. ~~Task 9 seam~~ — resolved: the private hook.
 2. ~~Task 10 re-confirm~~ — resolved: re-confirm resets.
