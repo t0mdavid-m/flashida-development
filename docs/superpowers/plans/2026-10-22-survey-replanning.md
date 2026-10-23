@@ -270,7 +270,12 @@ other cell moved. **What Push 1 landed, as the code actually is** (Push 2 builds
 
 # PUSH 2 — switch on
 
-Order: 7b → 7 → 8 → 10 → 9 → 11 → 12. Same workflow shape as Push 1 (implementer → adversarial reviewer per task, stop
+**Status 2026-10-23:** 7b (OpenMS cad7934e97), 7 (OpenMS fe713dea08, FlashIDA f5db0a4, parent 45a4ff6), 8 (OpenMS
+15ce3e5bec, parent a319836; review passed) and 10 (OpenMS e9880e69b5, 5796c92784) are committed locally; nothing is pushed.
+Task 10's review **failed** on one blocking finding, so Task 10f below follows before 9 → 11 → 12. At the push, bump both
+gitlinks (OpenMS, FlashIDA) in the parent, or CI cannot build `FLASHIda_Replan_test` (parent a319836 registers it).
+
+Order: 7b → 7 → 8 → 10 → **10f** → 9 → 11 → 12. Same workflow shape as Push 1 (implementer → adversarial reviewer per task, stop
 on any issue). The Windows container is unavailable, so Task 12's Windows leg is CI: push the code with goldens **unchanged**,
 let CI's `log-golden-capture` artifact be the capture, assess every moved cell against Task 12's table, and promote only
 after owner sign-off, in a second push. Expected: that first CI run is red in log goldens only.
@@ -579,6 +584,57 @@ from the PeakGroup's SNR-admissible charges when the `Q` is built, and `int surv
     of any command yields the same stage-0 geometry, notches and description suffix as `buildMS2` on that set.
 - [ ] Commit `feat(FLASHIda): separate R remainder re-plan and bought R adjust`.
 
+### Task 10f: Bought-R charge set, fixed after Task 10's review (owner rulings 2026-10-23)
+
+**Why.** The Task 10 reviewer found that the "resolved on both surveys" rule **fails open**. `resolved_on_q` comes from
+`rechooseCharges(nominal, {}, {}, INT_MAX)` on the Q's survey, which gates on `snr_threshold`. For a Q that a matched
+inclusion target admitted under the SNR waiver (`PrecursorSelection.cpp:599`, `CandidateAdmission.h:456`), that set is empty.
+`rechooseCharges` reads an empty `allowed` as "no restriction" (`PrecursorSelection.cpp:1094`). So a newer survey can move
+the R to any charge it sees, and nothing logs it.
+
+**Owner rulings:**
+1. A bought R may move only to the **best charge the group's Q scans covered**: a charge isolated by one of the group's
+   measured Qs (the anchor or a notch). It no longer means "SNR-resolved on the Q's survey". In practice:
+   - Under `single`, the one Q covers one charge, so the R can only be re-confirmed (same charge, decision survey reset) or kept.
+   - Under `separate`, the R may move among the group's Q charges.
+   - Under `multiplexed`, the R may move among the Q's anchor and notch charges.
+2. Multiplexed: if the newer survey re-chooses fewer than `min_charge_states` covered charges, the R is **kept as decided**,
+   with its set and decision survey unchanged. This re-applies the ADR-0040 floor; `max_charge_states` already caps the set.
+
+**Changes:**
+
+| # | Where | Change |
+|---|---|---|
+| 1 | `Quantification` `GroupMember` / `GroupDecision` | Replace `resolved_charges` with `isolated_charges`, which is `ScanCommandQueue::isolatedCharges`'s anchor+notch list of the member's Q `ScanCommand`. `GroupDecision::winner_resolved_charges` becomes `q_covered_charges`: the union over every member whose Q returned a spectrum, sorted and unique. To reach it from `Quantification`, promote the 7b helper `isolatedCharges_` to a public static. |
+| 2 | `FLASHIda.cpp` ~:367 | Delete the species-wide `rechooseCharges(…, INT_MAX)` at `addMember`. The covered set comes from the Q command itself. |
+| 3 | `FLASHIda.cpp` ~:911 quant verdict | `registerAdjustable(ident.scan_id, cons.q_covered_charges, cons.winner_survey_id, nominal)`. Skip registration when `q_covered_charges` is empty: the R stays as decided. |
+| 4 | `ScanCommandQueue` `registerAdjustable` / `Waiting::adjustable` | Carry the species' **nominal mass at registration**. The adjust loop keys `rechooseCharges` on it, not on `getNominalMass(r.mono_mass)`, which `reisolate` rewrites, so the key cannot drift by 1 Da per re-plan. |
+| 5 | `FLASHIda.cpp` ~:444-460 adjust loop | If the allowed set is empty, `continue` (defence in depth). Multiplexed (`r` has notches): if `picks.size() < max(1, min_charge_states)`, `continue`. |
+
+**Logging authority:** recorded here and carried into ADR-0060 in Task 13. The `scan_commands` row of the R is what was
+**sent**: its charge, notches, `decision_survey_id` and purity. The `scan_results` verdict columns (`group_id_charge`, …)
+stay the **verdict-time** record. A difference between the two is how an adjust is seen.
+
+**Tests** (`FLASHIda_Replan_test`; ✎ = changed from Task 10, needs your sign-off):
+- ✎ `bought_r_adjusted_to_better_charge`: `method_quant_welch`. The verdict buys the R at the winning Q's charge, and the newer
+  survey ranks the **other Q's** charge first → the R moves there, `decision_survey_id` = B, `enqueue_ts` reset.
+- ✎ `bought_r_keeps_charge_unresolved_on_q_survey` → renamed `bought_r_keeps_charge_when_no_covered_charge_resolves`.
+  The newer survey resolves only charges no Q covered → the R goes out unchanged, `decision_survey_id` = the Q's survey.
+- `bought_r_reconfirmed_same_charge_resets_decision`: unchanged.
+- ✎ `bought_r_multiplexed_set_rechosen`: the allowed set is the Q's anchor+notches. The newer survey re-ranks them → the R's
+  anchor and notches are B's order, within that set.
+- **new** `bought_r_moves_only_among_covered_charges`: the newer survey ranks an uncovered charge first and a covered one
+  second → the R moves to the covered one. This catches an ignored filter.
+- **new** `bought_r_multiplexed_below_floor_is_kept`: `min_charge_states` 2. The newer survey resolves one covered charge →
+  the R is unchanged.
+- **new** `bought_r_empty_covered_set_is_not_adjustable`: a group whose Q returned no spectrum leaves `q_covered_charges`
+  empty → no adjustable is registered (`FLASHIdaTestAccess::adjustableResolvedCharges` absent) and the R is sent unchanged.
+  Where the Q's notches cannot be emptied, drive `registerAdjustable` with an empty set on the queue directly, in
+  `ScanCommandQueue_Concurrent_test`.
+
+- [ ] Fail → implement → `ci cpp FLASHIda_Replan_test ScanCommandQueue_Concurrent_test Quantification_test` →
+  `ci cpp --full` (wait for the verdict) → commit `fix(FLASHIda): a bought R moves only among the charges its Q scans covered`.
+
 ### Task 11: Logging, loader, join, comparer
 
 **Files and changes:**
@@ -674,7 +730,7 @@ Predicted golden movement. Any cell outside this table → STOP:
 | *(Push 1, landed)* `PlanUnit_test`, `FLASHIda_ChargeModes_test`, `ScanCommandQueue_Concurrent_test`, `FLASHIda_exploration_test` | as planned | | |
 | `ScanCommandQueue_Concurrent_test` | **Task 7b:** `multiplexed_command_commits_every_notch_charge`, `cancelled_member_leaves_registry`, `reconciled_unit_is_reported_in_full`, `remainder_replacement_skips_a_charge_sent_after_waitingAt`, `remainder_replacement_refused_when_old_unit_emptied`; **Task 10:** `reisolate_matches_buildMS2_geometry` | | |
 | `FLASHIda_ChargeModes_test` | **Task 7b:** `rollback_after_a_non_ms1_call_is_a_noop` | | |
-| `FLASHIda_Replan_test` (new exe) | 18 sections (Tasks 8–10; + `bought_r_multiplexed_set_rechosen`) | | |
+| `FLASHIda_Replan_test` (new exe) | 18 sections (Tasks 8–10; + `bought_r_multiplexed_set_rechosen`); **Task 10f:** `bought_r_moves_only_among_covered_charges`, `bought_r_multiplexed_below_floor_is_kept`, `bought_r_empty_covered_set_is_not_adjustable` | **Task 10f:** `bought_r_adjusted_to_better_charge`, `bought_r_keeps_charge_unresolved_on_q_survey` → `…_when_no_covered_charge_resolves`, `bought_r_multiplexed_set_rechosen` | |
 | `Config_SchemaProjection_test` | `reselect_charges_is_a_migration_error` | | `reselect_charges_parses` |
 | `ConfigSchemaParity_test` | | the `reselect_charges` line removed | |
 | `FLASHIda_Logging_test` | 2 join sections | `kCmdHeader` | |
