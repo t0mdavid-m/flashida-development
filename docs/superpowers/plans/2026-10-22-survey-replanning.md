@@ -280,7 +280,8 @@ Order: 7b → 7 → 8 → 10 → **10f** → 9 → 11 → 12.
 **Status 2026-10-23 (2):** 10f is committed (OpenMS fdf67596a5) and passed review; `ci cpp --full` passed 32/32. **Task 9
 blocked** because a plan claim does not hold. Its uncommitted test work is still in the tree (`FLASHIda_Replan_test.cpp`,
 `FLASHIda_TestAccess.h`, `FLASHIda_TestHelpers.h`). Of its 12 sections, 8 already pass. Task 9 is resumed under the
-amendments in "Task 9 amendments" below. Same workflow shape as Push 1 (implementer → adversarial reviewer per task, stop
+amendments in "Task 9 amendments" below. **Status 2026-10-23 (3):** Task 9 stopped again: 10 of 12 sections pass. The two failures come from a noise-only
+fixture scan and a one-species assertion, not from the engine. See "Task 9 amendments, round 2". Same workflow shape as Push 1 (implementer → adversarial reviewer per task, stop
 on any issue). The Windows container is unavailable, so Task 12's Windows leg is CI: push the code with goldens **unchanged**,
 let CI's `log-golden-capture` artifact be the capture, assess every moved cell against Task 12's table, and promote only
 after owner sign-off, in a second push. Expected: that first CI run is red in log goldens only.
@@ -524,6 +525,28 @@ made the race's "no nominal mass dequeued twice" assertion false in 43 of 200 ro
 | 6 | `push_site_inventory` reads `FLASHIda.cpp` through the build-dir-relative path (no `OPENMS_SOURCE_DIR` exists), and its table includes the idle-survey `queue_.pushAndDequeue` in `getNextScanCommand`. Accepted. | accepted deviation |
 
 If a section still fails after these changes and the failure is an engine defect: STOP. No engine fixes inside Task 9.
+
+#### Task 9 amendments, round 2 (2026-10-23, after the second stop)
+
+With amendments 1–6 applied, 10 of 12 sections pass, including both races (200 ecoli, 24 cytC, a commit in the gap every
+round, no double send). Two sections fail. A diagnostic run, using a temporary test-only probe that has been removed, the
+file confirmed byte-identical, showed that **neither failure is an engine defect**:
+
+- `ms1_cytc[9]` is a near-empty scan: total intensity 7.05e4, against 1.52e10 for scan 8. It deconvolves to **0
+  PeakGroups**. Survey B does run (it prints its own `[REPLAN]`), and the remainder pass correctly finds nothing and keeps
+  X's remainder. Indices 0, 4–6, 9–11, 14 and 16–18 are noise as well. Indices 1–3, 7, 8, 12, 13, 15 and 19 are real surveys.
+- With B = 7, 12 or 13, the engine re-derives X's remainder exactly as the test's rule expects. With B = 12 the
+  remainder becomes {z15, z16}, parented by B, against A's {13, 16}, so the non-vacuity check holds.
+- The SNR gate plays no part: X's charges sit at SNR 86–3174. The inclusion waiver zeroes only the anchor's gate,
+  `rechooseCharges` uses the same unwaived gate as `selectNotches`, so the re-plan is not inert for inclusion targets.
+
+| # | Change | Kind |
+|---|---|---|
+| 7 | `kSeparateB` (`FLASHIda_Replan_test.cpp:672`) changes 9 → **12**: scan 191, rt 21.3724, the nearest real survey after scan 8. Its comment is corrected. Both the separate race and `separate_r_remainder_is_rederived` read it. The race must be re-run at 24 rounds with it. | test fix ✎ needs sign-off |
+| 8 | `separate_r_remainder_kept_when_unresolved`: `TEST_EQUAL(r.dropped, 0)` → `TEST_EQUAL(r.dropped, a_plan.size() − x_plan.size())`. B's dropped commands are the second, never-sent species (12367.3, z14/z8/z18), and dropping it is correct. A new assertion is added: no command of X's is among the dropped ones (X's z13/z16 still drain with parent A). | test fix ✎ needs sign-off |
+
+Then resume as planned: `ctest -R FLASHIda_Replan --repeat until-fail:10`, `ci cpp --full`, commit, adversarial review,
+then Task 11 → the Linux gate → push with goldens unchanged (Task 12 via CI's `log-golden-capture`).
 
 - [ ] Steps: write all → fail → (implementation is Tasks 8 and 10) → PASS; `ctest -R FLASHIda_Replan --repeat until-fail:10`.
 - [ ] Commit `test(FLASHIda): re-plan semantics, races, push-site inventory`.
