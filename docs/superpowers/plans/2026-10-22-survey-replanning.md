@@ -275,7 +275,7 @@ other cell moved. **What Push 1 landed, as the code actually is** (Push 2 builds
 Task 10's review **failed** on one blocking finding, so Task 10f below follows before 9 → 11 → 12. At the push, bump both
 gitlinks (OpenMS, FlashIDA) in the parent, or CI cannot build `FLASHIda_Replan_test` (parent a319836 registers it).
 
-Order: 7b → 7 → 8 → 10 → **10f** → 9 → 11 → 12.
+Order: 7b → 7 → 8 → 10 → **10f** → 9 → 11 → **Task 11 amendments 9–10** → 12.
 
 **Status 2026-10-23 (2):** 10f is committed (OpenMS fdf67596a5) and passed review; `ci cpp --full` passed 32/32. **Task 9
 blocked** because a plan claim does not hold. Its uncommitted test work is still in the tree (`FLASHIda_Replan_test.cpp`,
@@ -730,6 +730,33 @@ if (!row.decision_survey_id.empty())
 
 - [ ] Fail → implement → `ci cpp FLASHIda_Logging_test FLASHIda_LoggingFields_test` PASS → commit per repo
   `feat(logging): decision_survey_id, isolation_purity, ida.log ID= and Superseded=`.
+
+#### Task 11 amendments (2026-10-23, after the third stop)
+
+**Status 2026-10-23 (4):** Task 9 is committed (OpenMS e6b4cb7b6c; ×10 repeat green; `--full` 32/32; review passed with
+three minor findings). Task 11 is committed locally (OpenMS 64701ad682, FlashIDA bab7745), its own tests are green, and the
+C# comparer test passes in a net8 scratch harness (and fails against the old comparer). `ci cpp --full` is **31/32**: Task 9's
+`FLASHIda_Replan_test` breaks on two collisions between Task 9's tests and Task 11's specified behaviour. No engine defect.
+
+| # | Failure | Cause | Change | Kind |
+|---|---|---|---|---|
+| 9 | `depth1_drive_is_unchanged_without_a_stale_survey` :938, row width 35 vs 33 (×59) | `stableCommandRows` (:201) strips only `enqueue_ts`; the frozen Push-1-tip capture `kDepth1PushOneTip` has no decision columns | `stableCommandRows` also drops `decision_survey_id` and `isolation_purity` **by header name**. The capture stays untouched. This is what Task 8 always said: "identical (all columns except the 2 new)". | test fix ✎ needs sign-off |
+| 10 | 5 sections (:982, :1052, :1118, :1158, :1257) read `decided_by == 0` | They read `FLASHIdaTestAccess::decisionInfo` **after** the drain, but Task 11's drain consumes it via `takeDecisionInfo` (erases, so the map cannot leak) | Those 5 sections take `decision_survey_id` from the **`scan_commands.tsv` row** of each drained MS2 (`topn5Config(freshLogDir(...))` / the separate config with a log dir; `TSVFile::parse`, join on `scan_id`). The engine keeps erasing. The log value is the decided value, so this also pins Task 11's writer on the re-plan paths. The bought-R sections read `decisionInfo` before the drain and are unchanged. | test fix ✎ needs sign-off |
+
+Not chosen: making the drain read without erasing. That leaks one map entry per command for the whole run.
+
+Also carried from the Task 9 review, minor and **not** changed: the comment in the ecoli race that `b_sent == added`
+holds only because topn5 is `single` (one command per unit) is added (comment only, no assertion change).
+
+Task 11's own deviation 7 (C# `LogColumnReorderTests.NewCommandsHeader` left at 34 names) stays: it is that test's
+fixture data, not the engine header. CI's net48 run is the check.
+
+Then: amend Task 9's test file (a third OpenMS commit, `test(FLASHIda): read the decision survey from scan_commands`),
+`ci cpp FLASHIda_Replan_test`, `ctest -R '^FLASHIda_Replan_test$' --repeat until-fail:3`, `ci lists`, `ci cpp --full`
+(32/32, wait for the verdict), adversarial review of Task 11 + this fix. Then the push with goldens unchanged:
+`git pull --rebase` ×3, bump both gitlinks, push OpenMS → FlashIDA → parent, one poller; expected red only in log
+goldens (`Reference_IsNeverStale` and every other C# test must pass); Task 12 assessment from the
+`log-golden-capture` artifact; STOP for owner review before any golden is promoted.
 
 ### Task 12: Push 2 gate and goldens
 
