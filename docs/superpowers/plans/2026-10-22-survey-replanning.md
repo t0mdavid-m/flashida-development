@@ -275,7 +275,12 @@ other cell moved. **What Push 1 landed, as the code actually is** (Push 2 builds
 Task 10's review **failed** on one blocking finding, so Task 10f below follows before 9 → 11 → 12. At the push, bump both
 gitlinks (OpenMS, FlashIDA) in the parent, or CI cannot build `FLASHIda_Replan_test` (parent a319836 registers it).
 
-Order: 7b → 7 → 8 → 10 → **10f** → 9 → 11 → 12. Same workflow shape as Push 1 (implementer → adversarial reviewer per task, stop
+Order: 7b → 7 → 8 → 10 → **10f** → 9 → 11 → 12.
+
+**Status 2026-10-23 (2):** 10f is committed (OpenMS fdf67596a5) and passed review; `ci cpp --full` passed 32/32. **Task 9
+blocked** because a plan claim does not hold. Its uncommitted test work is still in the tree (`FLASHIda_Replan_test.cpp`,
+`FLASHIda_TestAccess.h`, `FLASHIda_TestHelpers.h`). Of its 12 sections, 8 already pass. Task 9 is resumed under the
+amendments in "Task 9 amendments" below. Same workflow shape as Push 1 (implementer → adversarial reviewer per task, stop
 on any issue). The Windows container is unavailable, so Task 12's Windows leg is CI: push the code with goldens **unchanged**,
 let CI's `log-golden-capture` artifact be the capture, assess every moved cell against Task 12's table, and promote only
 after owner sign-off, in a second push. Expected: that first CI run is red in log goldens only.
@@ -501,6 +506,24 @@ set of call lines (by enclosing function name plus call text, not by line number
 `replacePlan` once (`runSurveyMS1_`), `registerAdjustable` once (quant verdict), `stampAndPush_` at 6 permanent sites
 (refine, exploration MS2 return, bought R, tag follow-up, MS3 targeting, exploration MS3 return), and `queue_.push` at 3
 MS1-family sites. A new or moved site fails until the table is updated.
+
+#### Task 9 amendments (owner rulings 2026-10-23)
+
+The blocker: on `method_default_topn5` + `ms1_ecoli_rich`, species 2414 (qscore 0.85) is re-acquired by survey B **with no
+re-planning involved**. Its qscore is below the twin's `tqscore_threshold` 0.9, so A never stamps a hard `TqMassRt` bar,
+and the existing qscore bar re-admits it at equal score. That is the soft-exclusion ratchet working as designed, and it
+made the race's "no nominal mass dequeued twice" assertion false in 43 of 200 rounds.
+
+| # | Change | Kind |
+|---|---|---|
+| 1 | **Both race twins set `tqscore_threshold` 0.0** (owner ruling). Every admitted species then gets a hard bar, so a second send can only come from the race. The assertion is unchanged. | owner ruling |
+| 2 | **Rounds:** `race_commit_between_plan_and_swap` runs 200 rounds (ecoli, cheap); `race_separate_commit_between_plan_and_swap` runs **24** (cytC, ~5 s per round). The seam forces the gap every round. | owner ruling |
+| 3 | **The seam must actually commit in the gap.** In the blocked run `committed_in_gap` was 0. The `onBeforeReplan` callback itself dequeues (on the analysis thread, inside the seam, holding no queue lock) at least one of A's still-waiting commands, so every round exercises reconcile. Each round asserts `committed_in_gap ≥ 1`; the free-running drain thread adds timing variety. | test fix |
+| 4 | **Separate fixtures pick two species.** On `ms1_cytc[8]` the inclusion target admits 12351.3 and 12367.3. The `separate_r_remainder_*` sections and the separate race filter the plan to X's nominal mass, and `kSeparateB` (`ms1_cytc[9]`) is verified to resolve X before its assertions run. | test fix |
+| 5 | **Remove the scaffolding before the commit:** the `DIAG_TEMP` section, every `std::cerr` DIAG print, and the `i < 2` loop bounds. | cleanup |
+| 6 | `push_site_inventory` reads `FLASHIda.cpp` through the build-dir-relative path (no `OPENMS_SOURCE_DIR` exists), and its table includes the idle-survey `queue_.pushAndDequeue` in `getNextScanCommand`. Accepted. | accepted deviation |
+
+If a section still fails after these changes and the failure is an engine defect: STOP. No engine fixes inside Task 9.
 
 - [ ] Steps: write all → fail → (implementation is Tasks 8 and 10) → PASS; `ctest -R FLASHIda_Replan --repeat until-fail:10`.
 - [ ] Commit `test(FLASHIda): re-plan semantics, races, push-site inventory`.
