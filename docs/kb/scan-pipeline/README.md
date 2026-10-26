@@ -41,6 +41,9 @@ C# acquisition loop → GetNextScanCommand (bridge) → queue.dequeue
 5. [offline-coupling.md](offline-coupling.md) — the one consumer of `scan_commands.tsv` outside the
    acquisition: how FLASHDeconv joins an mzML spectrum to its command by tracking id and locates
    the commanded precursor in the survey that command was decided from (ADR-0046).
+6. [survey-replanning.md](survey-replanning.md) — why a queued MS2 is only a plan until the drain
+   sends it, what a newer same-CV survey may replace or adjust, and the two `scan_commands` columns
+   and `ida.log` lines that record it (ADR-0060).
 
 ## Out of Scope
 

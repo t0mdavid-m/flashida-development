@@ -18,6 +18,9 @@ the consensus verdict, and `enriched_in` still reads the condition means.
 Amended by: [ADR-0057](0057-channel-normalisation-is-authored-and-corrects-only-what-the-test-reads.md) —
 the pipeline's run-wide channel-median normalisation, which this ADR could not reproduce live,
 enters as authored per-channel factors applied only to what the test reads.
+Amended by: [ADR-0060](0060-a-survey-re-plans-waiting-work-and-only-the-drain-commits.md) — the bought `R`
+still starts at the group's purest window, but a newer survey may move it among the charges the group's `Q`
+scans covered.
 
 ## Context
 

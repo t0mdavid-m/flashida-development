@@ -19,7 +19,7 @@ so **no recapture** is required. Motivation: human readability of live acquisiti
 
 ---
 
-## 1. Command Log (`scan_commands`) — 34 columns
+## 1. Command Log (`scan_commands`) — 36 columns
 
 **Verification: ✅ COMPLETE** for the reorder. All 31 columns of the 2026-07 permutation are
 present exactly once. `faims_enabled` was subsequently added at index 30 (ADR-0012), between
@@ -31,6 +31,8 @@ still ≤ 30 (`faims_cv` 29, `faims_enabled` 30 — `FLASHIda_LoggingFields_test
 stays `headers.back()`. Like ADR-0012's, this is an **addition**, not a
 permutation, so it moves `scan_commands.tsv` in all 22 golden modes, which recapture in the same
 push.
+`decision_survey_id` and `isolation_purity` followed at indices 33 and 34 (ADR-0060), in the same gap
+and for the same reason; all 33 golden modes were recaptured with them (FlashIDA `a6181ca`).
 
 New (desired) order:
 
@@ -67,7 +69,9 @@ New (desired) order:
 31. faims_enabled
 32. first_mass
 33. last_mass
-34. enqueue_ts
+34. decision_survey_id
+35. isolation_purity
+36. enqueue_ts
 
 Current order (for reference): tracking_id, ms_level, scan_type, enqueue_ts, priority,
 faims_cv, mono_mass, charge, precursor_mz, isolation_width, collision_energy, activation,

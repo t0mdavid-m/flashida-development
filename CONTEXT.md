@@ -12,11 +12,11 @@ A molecular species selected from MS1 for fragmentation, identified by its
 `round(monoisotopic_mass × 0.999497)` (`SpectralDeconvolution::getNominalMass`,
 `SpectralDeconvolution.cpp:79`), the same key DDA mass-exclusion uses. A Precursor
 is detected **once** at MS1 and acquired at one **acquisition charge set** — by
-default a single **representative charge** (highest-SNR `getRepAbsCharge`, one m/z
+default a single **anchor charge** (the first under the run's one charge ranking, one m/z
 isolation window). That one detection schedules the whole downstream cascade — its
 MS2 (plus any CE-sweep exploration variants over that *same* charge set) and the
 MS3 scans that increase coverage — and the mass enters **acquisition memory**
-at once, so it is not re-detected as a *new* Precursor unless a later survey
+as soon as the first of those scans is handed to the instrument (see **Staged / committed**), so it is not re-detected as a *new* Precursor unless a later survey
 resolves it **better** than the survey that acquired it did; once it has been
 acquired well enough, not even that reopens it. Both halves apply to inclusion
 targets too. So one Precursor's evidence comes from **one charge set**, never
@@ -62,7 +62,9 @@ isolated together in one scan as separate **notches**, sharing one isolation eve
 acquired as one scan per member, which yields that many independent Precursors
 rather than one. The set's size is bounded at both ends, and both bounds are authored: a **floor**,
 below which the species is not acquired at all, its charge states being too few to be worth the
-scans; and a **cap** on how many are kept, which keeps the most intense and drops the rest.
+scans; and a **cap** on how many are kept. Which members the cap keeps follows the **same single
+ranking that chooses the Anchor charge** — by signal-to-noise, qscore, intensity or **Isolation
+purity** — so the anchor is always the set's first member and never a separate judgement.
 Co-isolation additionally meets a hard instrument limit on simultaneous windows. One scan per
 member meets no such limit — there its size is a scan count rather than a geometry — so leaving
 the cap unauthored leaves that count unbounded.
@@ -109,10 +111,13 @@ the Precursor is owed).
 
 **Anchor charge**:
 The member of an acquisition charge set that a scan's **identity and per-charge
-scores** are attributed to — the highest-SNR member. Under an **authored charge
-set** it is the highest-SNR *authored* member, chosen there even when that member
-does not clear the signal-to-noise gate, since a matched target's anchor is exempt
-from it. What a scan is *keyed* by is the anchor's (its tracking id, its scan
+scores** are attributed to, and the window a single-charge scan isolates. **Which
+member it is follows one authored ranking**: the highest-SNR charge, the best-qscore
+charge, the most intense charge, or the charge whose window has the highest **Isolation
+purity**. The same ranking orders the rest of the **Acquisition charge set**. An
+**authored charge set** only narrows the members the rule chooses among; it does not
+change the rule. The authored anchor is chosen even when it does not clear the
+signal-to-noise gate, since a matched target's anchor is exempt from it. What a scan is *keyed* by is the anchor's (its tracking id, its scan
 description, the charge on its identification row); what the scan *isolates* is
 the whole set. A single-charge
 acquisition acquires the anchor and nothing else.
@@ -191,23 +196,56 @@ which also names ion–ion reaction time.
 
 **Acquisition effect**:
 The set of writes one species' selection makes to acquisition memory in a single
-survey, together with the scans that selection produced. It is the unit that can be
-undone, and it belongs to the **species**, not to any one scan: a species is
-fragmented at mass level once, however many scans that acquisition takes.
+survey, together with the scans that selection produced. It belongs to the **species**,
+not to any one scan: a species is fragmented at mass level once, however many scans that
+acquisition takes. A survey's selection of one species, with its scans and its effect, is
+one **Plan unit**.
 _Avoid_: treating it as per-scan — one selection can produce several scans (one per
 co-isolated charge, one per named MS2 configuration, one per exploration variant),
 and they share a single effect.
 
-**Retaining / releasing an effect**:
-The two ways an acquisition effect ends. It is **retained** when any scan built from
-it comes back: the acquisition happened, so the memory stands and can never be
-undone. It is **released** when every scan built from it was dropped before reaching
-the instrument: nothing was acquired, so the species is given back and becomes
-selectable again. A scan that was sent but never returned does neither — its effect
-simply ages out.
-_Avoid_: "commit/abort", which imports transaction vocabulary for something that is
-not a transaction; reading a release as a failure — a species released is a species
-rescued, not an error recorded.
+**Plan unit**:
+One species of one survey's selection at one FAIMS CV: its scans, waiting in FLASHIda's
+queue, together with the **acquisition effect** they would have. A survey hands its whole
+selection over as plan units, and the next survey at the same CV **replaces** every unit of
+its predecessor that is still wholly unsent: it may drop the species, choose it again with
+other charges, or add a species the older survey never saw. A unit any of whose scans has
+been sent is never replaced; what follows in it goes out as decided, with two exceptions:
+a species acquired one charge per scan has its unsent charges re-chosen on the newer
+survey, and an **Identification scan** a quantification verdict bought may move to a
+better charge among those its quantification scans covered. Only the scans a survey
+planned belong to plan units. A follow-up, an MS3 or any MS1 is never replaced.
+_Avoid_: "the exclusion list" for what a waiting unit holds (nothing it would bar is
+barred yet); reading a replaced unit as a failure — it is a decision revised on newer
+evidence; supposing a newer survey at another CV touches it.
+
+**Staged / committed**:
+The two states of an **acquisition effect**. It is **staged** while its plan unit waits:
+selection has computed it and nothing yet obeys it, so the next survey decides as though
+the species had never been chosen. It is **committed** the moment FLASHIda hands the
+unit's first scan to the instrument, and from then on it is acquisition memory like any
+other: it bars what it bars and ages out over the **retention-time window**. A staged
+effect that is replaced is simply gone: the species was never acquired, and nothing it
+would have barred was barred. A committed one is never undone, even if the instrument
+loses the scan; it then ages out. Under one-scan-per-charge acquisition each charge's own
+record commits with that charge's scan.
+_Avoid_: "retained / released" (the earlier names, which put the turning point at a scan's
+*return*; it is now the hand-off); committing at selection or at queueing (which is
+exactly what stopped a newer survey from reconsidering); "abort" for a replaced effect.
+
+**Decision survey**:
+The survey whose ranking last chose a scan's isolation window: the one that selected it,
+or a newer survey of the same CV that re-planned or re-confirmed it while it waited. It is
+where that window's **Isolation purity** was read, and it is the survey a data file's
+reader should look in to find the commanded precursor. It is not the scan's **parent**,
+which records lineage. The two agree for a scan a survey planned. They differ for an
+**Identification scan** bought by a quantification verdict: its parent is the
+quantification scan whose result bought it, and its decision survey is that scan's survey,
+or the newer survey that moved it. A scan no survey chose (a follow-up, an MS3, an MS1)
+has none.
+_Avoid_: "parent survey" for this (the parent of a follow-up is an MSn scan); assuming the
+survey just before a scan in the data file decided it — commands wait, often across
+several newer surveys.
 
 **Proteoform model** (`ProteoformModel`):
 The pooled, evolving best-known identification of a single Precursor: the winning
@@ -477,6 +515,19 @@ analyzer reads out rather than what the stage transmits; reconstructing a window
 and a theoretical mass; recognising a commanded scan in the data file by its window bounds — a
 scan is recognised by its **tracking id**, which is an identity, where a pair of bounds is only
 a coincidence waiting to be rounded.
+
+**Isolation purity**:
+The fraction of an **Isolation window**'s MS1 signal that belongs to the species it was opened
+for: the intensity of that species' own isotope peaks at the window's charge, over the intensity
+of every peak inside the window. It is read on **one MS1 scan**, and the value depends on which
+one: a species is selected on a survey where it stands out, so the survey it was selected on
+reads it purer than a later survey taken nearer the moment the instrument actually isolates it.
+A purity is therefore quoted together with its survey. A window holding nothing but the species
+reads 1; one where a co-isolated neighbour carries most of the signal reads below one half.
+_Avoid_: "SNR" or "window SNR" (a ratio against the *rest* of the window, unbounded, and not the
+same scale); charge SNR (FLASHDeconv's per-charge noise estimate over the isotope span alone,
+which does not see a neighbour's envelope inside the window's margin); **Precursor share** (read
+on the MSn scan, against the whole spectrum, and it measures depletion rather than contamination).
 
 **Notch**:
 One of several isolation windows a single scan opens **in parallel within one

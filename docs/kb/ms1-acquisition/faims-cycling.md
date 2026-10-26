@@ -71,6 +71,10 @@ groups from other CVs. Consequently:
   CV, each counted against that CV's own quota.
 - The adaptive skip in `updateSkip` is the only mechanism that links CV performance across
   cycles. Selection itself is stateless with respect to CV history.
+- **Re-planning is per CV** (ADR-0060). A survey replaces only the still-unsent MS2s of its *own*
+  CV, so a CV-transition MS1 that runs ahead of another CV's waiting MS2s leaves them alone, and the
+  next survey back at that CV re-plans them. This is the one golden mode where re-planning is
+  visible: the 2026-10-25 `faims` recapture superseded four waiting MS2s this way.
 
 ## Gotchas
 

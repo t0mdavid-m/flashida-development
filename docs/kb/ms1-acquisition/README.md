@@ -32,6 +32,9 @@ no longer exist.
   constrains which precursors are eligible.
 - `faims-cycling.md` — per-MS1 FAIMS CV cycling state machine and how child
   MS2 scans inherit the CV value.
+- `../scan-pipeline/survey-replanning.md` — what happens to a survey's selection
+  after it leaves `filterAndRank`: it is a plan until the drain sends a scan, and a
+  newer survey at the same CV may replace it (ADR-0060).
 
 Exploration (MS2 and MS3) now has its own packet — see
 `../exploration/README.md`.

@@ -122,6 +122,13 @@ filters.
 
 ## Gotchas
 
+- **Selection no longer writes acquisition memory for keeps** (ADR-0060). `filterAndRank` still
+  admits against memory and writes as it goes, but `runSurveyMS1_` then calls
+  `rollbackAcquisitionMemory()` and keeps the writes only as the `journal()`'s stamps; they enter
+  memory through `applyStamps` once the drain has sent one of the species' scans. Memory therefore
+  holds **committed** acquisitions only, and a species still waiting in the queue is selectable
+  again by the next survey at its CV. See `../scan-pipeline/survey-replanning.md`.
+
 - Per-charge QScore ranking (`sortByQscore`) is the default, not "best charge across all states".
   Enabling `consider_all_charges` changes both sort order and the `trigger_charges_` value —
   these two must be understood together, not separately.

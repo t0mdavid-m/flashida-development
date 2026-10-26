@@ -6,6 +6,9 @@ described under *Consequences*.
 
 Amends ADR-0035 (decisions 7 and 8, and its "third identity channel" consequence).
 
+Amended by: [ADR-0060](0060-a-survey-re-plans-waiting-work-and-only-the-drain-commits.md) — the join locates on
+the row's `decision_survey_id` when the column exists; the parent walk below is the fallback for older files.
+
 ## Context
 
 FLASHDeconv assigns an MS2 its precursor in two steps

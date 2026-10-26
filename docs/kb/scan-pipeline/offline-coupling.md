@@ -1,14 +1,14 @@
 ---
 title: Offline coupling — how FLASHDeconv finds a commanded scan's precursor
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHDeconvAlgorithm.cpp, OpenMS/src/openms_gui/source/VISUAL/DIALOGS/FLASHDeconvTabWidget.cpp
-last_verified: 2026-09-20
+last_verified: 2026-10-26
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:63     # struct ScanCommandJoin
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:110    # trackingIdOf
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:117    # massRank (locator tolerance + isotope ladder)
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:135    # parse (columns by header name)
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:206    # join (validation, fails closed)
-  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:291    # surveyScanNumber_ (parent-chain walk)
+  - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:299    # surveyScanNumber_ (decision_survey_id, else the parent-chain walk)
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHDeconvAlgorithm.cpp:468    # run(): parse + join before any deconvolution
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHDeconvAlgorithm.cpp:547    # peakGroupFromCommand_ (rebuild from the row)
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHDeconvAlgorithm.cpp:584    # `located` for this MS2
@@ -34,8 +34,9 @@ see_also:
 
 ```
 mzML spectrum  ── meta value "scan description", first 3 chars ──►  tracking id
-tracking id    ──►  its scan_commands.tsv row  (mono_mass, anchor charge, parent_tracking_id)
-parent chain   ──  walked UP the rows to the ms_level 1 row ──►  the survey the command was decided from
+tracking id    ──►  its scan_commands.tsv row  (mono_mass, anchor charge, decision_survey_id, parent_tracking_id)
+decision_survey_id ──► an ms_level 1 row ──►  the survey whose ranking last chose the window (ADR-0060)
+  (no such column or cell: the parent chain, walked UP the rows to the ms_level 1 row)
 FLASHDeconv    ──  takes ITS OWN PeakGroup nearest mono_mass in THAT survey, same isotope
                    · else the window's highest-charge-SNR species
                    · else, only for a window holding nothing at all, one rebuilt from the row
@@ -63,8 +64,13 @@ species; it competes as an ordinary candidate.
 
 ## Rules that are easy to get wrong
 
+- **The decision survey wins over the parent** (ADR-0060). A command a newer same-CV survey
+  re-planned or re-confirmed, and a bought `'R'` a newer survey moved, name that newer survey in
+  `decision_survey_id`; `surveyScanNumber_` reads it first. Files written before 2026-10-25 have no
+  such column and keep the walk below.
 - **One hop up is not the survey.** A follow-up MS2 (`'C'`, or the `'R'` a quantification verdict
-  buys) names the MS2 that *triggered* it as its parent. `surveyScanNumber_` walks until an MS1 row.
+  buys) names the MS2 that *triggered* it as its parent. Without a decision survey,
+  `surveyScanNumber_` walks until an MS1 row.
 - **The join fails closed, before any deconvolution.** Tracking ids restart in every run, so a
   foreign `scan_commands.tsv` joins **100 %** of scans by id. What tells it apart is the
   row-vs-spectrum check: MS level, and the anchor `precursor_mz` within 0.01 m/z of an isolation
