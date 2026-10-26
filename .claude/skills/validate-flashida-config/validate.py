@@ -61,6 +61,8 @@ KNOWN_ANALYZERS = ("Orbitrap", "IonTrap", "")   # ADR-0045 decision 3; "" = inst
 TARGETING_VALUES = {"none", "inclusion", "in_depth", "exclusion_masses"}
 # ADR-0059 -- precursor_selection.charge_selection, case-sensitive.
 CHARGE_SELECTION_VALUES = {"snr", "qscore", "intensity", "purity"}
+# FDmerge 1fe5ee0b3e -- precursor_selection.log_target_charges, case-sensitive (Config.cpp throws otherwise).
+LOG_TARGET_CHARGES_VALUES = {"any", "reference"}
 # ScanCommand.h -- MAX_NOTCHES_PER_STAGE (9) + the anchor. An ABI dimension (Notch notches[18],
 # ADR-0019), so precursor_selection.max_charge_states can only lower it, never raise it.
 MAX_CHARGE_STATES_CEILING = 10
@@ -367,6 +369,15 @@ def validate(path, ref):
         rep.error("A35", "precursor_selection.charge_selection is \"purity\" under precursor_charges "
                          "\"multiplexed\". Every notch shares one fill, so a notch's own purity does not "
                          "rank what the scan transmits. Config::validate() throws on this.")
+
+    # --- ida.log target options (FDmerge) -----------------------------------------------------
+    ltc = ps.get("log_target_charges", "any")
+    if ltc not in LOG_TARGET_CHARGES_VALUES:
+        rep.error("A36", f"precursor_selection.log_target_charges '{ltc}' is not legal; expected one "
+                         f"of {sorted(LOG_TARGET_CHARGES_VALUES)} (case-sensitive)")
+    ltrw = ps.get("log_target_rt_window", True)
+    if not isinstance(ltrw, bool):
+        rep.error("A36", f"precursor_selection.log_target_rt_window must be true or false, not {ltrw!r}")
 
     # --- charge-set bounds (ADR-0040) ---------------------------------------------------------
     # Both keys are inert at their defaults (min 1, max 0), so every check here fires only on a
