@@ -1,7 +1,7 @@
 ---
 title: Offline coupling — how FLASHDeconv finds a commanded scan's precursor
 applies_to: OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h, OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHDeconvAlgorithm.cpp, OpenMS/src/openms_gui/source/VISUAL/DIALOGS/FLASHDeconvTabWidget.cpp
-last_verified: 2026-10-26
+last_verified: 2026-10-27
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:63     # struct ScanCommandJoin
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/ScanCommandJoin.h:110    # trackingIdOf
@@ -86,6 +86,10 @@ species; it competes as an ordinary candidate.
 - **Every file the engine has ever written must parse.** Columns resolve by header name; the
   locator tolerance (0.06 Da + 10 ppm) absorbs the six-significant-digit `mono_mass` of files written
   before ADR-0046.
+- **Id cells may be quoted.** Since the FDmerge merge the engine writes each id cell through
+  `LogCell.h`'s `quoteLogCell`: a cell beginning with `"` (ids 8,836–17,671) is RFC 4180-quoted.
+  `parse` reads `tracking_id`, `parent_tracking_id` and `decision_survey_id` back through
+  `unquoteLogId`. A file written before the merge has no quoted cells and parses unchanged.
 
 ## What runs where
 

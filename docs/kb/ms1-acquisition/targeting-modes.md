@@ -4,7 +4,8 @@ applies_to: OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelectio
 last_verified: 2026-08-25
 code_anchors:
   - OpenMS/src/openms/include/OpenMS/ANALYSIS/TOPDOWN/FLASHIda/Config.h:143        # TargetingConfig::mode
-  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:187  # inclusion target list load
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:63   # target-log loader
+  - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:277  # ida.log targets active within rt_window (GTM)
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:222  # deep RT-window exclusion load
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:320  # tqscore accumulation loop
   - OpenMS/src/openms/source/ANALYSIS/TOPDOWN/FLASHIda/PrecursorSelection.cpp:378  # outer iteration loop (mode 2)
@@ -60,8 +61,17 @@ Precursors are ranked against an explicit target list. Two list formats are supp
   `single` takes one per survey and walks the set across surveys on per-charge exclusion,
   `separate` emits one MS2 per named charge, `multiplexed` co-isolates them as notches. The
   `[CHARGE-SET]` stdout line reports which named charges were acquired and why the rest were not.
-- **Log/out files** (`target_log_files`): legacy format populated into `target_mass_rt_map_` and
-  `target_mass_qscore_map_` (:100).
+- **Log/out files** (`target_log_files`, authored as `files.target_logs`; loader :63): read only when
+  no TSV rows are loaded. The loader fills `target_mass_rt_map_` and `target_mass_qscore_map_`, and it
+  files each `AllMass` line under its own survey. Since FDmerge's GTM change (`20db11cef3`) a logged mass
+  is a target only while the current RT is within `rt_window` of an RT at which a reference acquired it
+  (:277), and it matches at any charge. Two `precursor_selection` keys restore the earlier behaviour:
+  - `log_target_rt_window: false` makes it a target at every RT.
+  - `log_target_charges: "reference"` matches only at a charge the reference acquired, and each
+    acquisition uses that charge up (`target_mass_charge_map_`, journaled as a
+    `LegacyTargetChargeErase` stamp).
+
+  FASTA tag-expanded targets are added to these targets rather than replacing them.
 
 On each MS1 scan, active targets (those whose RT window covers the current RT) are extracted into
 `target_masses_` (:187-220) and passed to the deconvolution engine via `setTargetMasses`.
